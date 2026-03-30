@@ -443,7 +443,9 @@ fn run_status(
     Ok(())
 }
 
-const fn cargo_status_label(entry: &github_actions_maintainer::CargoDependencyEntry) -> &'static str {
+const fn cargo_status_label(
+    entry: &github_actions_maintainer::CargoDependencyEntry,
+) -> &'static str {
     if !entry.managed {
         "unmanaged"
     } else if entry.update_needed {
