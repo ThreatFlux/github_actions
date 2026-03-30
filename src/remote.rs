@@ -5,12 +5,11 @@ use std::{
     time::{SystemTime, UNIX_EPOCH},
 };
 
-use anyhow::{Context, Result, anyhow, bail};
+use anyhow::{Result, anyhow, bail};
 
 use crate::{
     github::{GitHubClient, TreeEntry},
-    model::PinChange,
-    workflow::apply_changes_to_content,
+    model::{FileUpdate, UpdateChange},
 };
 
 #[derive(Debug, Clone, Eq, PartialEq)]
@@ -45,10 +44,11 @@ impl RemoteUpdatePublisher {
 
     pub fn publish(
         &self,
-        changes: &[PinChange],
+        file_updates: &[FileUpdate],
+        changes: &[UpdateChange],
         options: &PullRequestOptions,
     ) -> Result<Option<PullRequestResult>> {
-        if changes.is_empty() {
+        if file_updates.is_empty() {
             return Ok(None);
         }
 
@@ -72,21 +72,21 @@ impl RemoteUpdatePublisher {
         self.github.create_branch(&options.owner, &options.repo, &branch_name, &base_commit_sha)?;
 
         let mut tree_entries = Vec::new();
-        let grouped_changes = changes.iter().fold(
-            BTreeMap::<&Path, Vec<&PinChange>>::new(),
-            |mut grouped, change| {
-                grouped.entry(change.file.as_path()).or_default().push(change);
+        let grouped_updates = file_updates.iter().fold(
+            BTreeMap::<&Path, &FileUpdate>::new(),
+            |mut grouped, update| {
+                grouped.insert(update.file.as_path(), update);
                 grouped
             },
         );
 
-        for (file, file_changes) in grouped_changes {
-            let content = std::fs::read_to_string(file)
-                .with_context(|| format!("failed to read local file '{}'", file.display()))?;
-            let updated_content = apply_changes_to_content(&content, &file_changes)?;
+        for (file, file_update) in grouped_updates {
             let relative_path = relative_repository_path(&options.repo_root, file)?;
-            let blob_sha =
-                self.github.create_blob(&options.owner, &options.repo, &updated_content)?;
+            let blob_sha = self.github.create_blob(
+                &options.owner,
+                &options.repo,
+                &file_update.updated_content,
+            )?;
 
             tree_entries.push(TreeEntry { path: relative_path, sha: blob_sha });
         }
@@ -137,7 +137,7 @@ fn default_branch_name() -> String {
         .duration_since(UNIX_EPOCH)
         .map(|duration| duration.as_secs())
         .unwrap_or_default();
-    format!("github-actions-updates-{timestamp}")
+    format!("dependency-updates-{timestamp}")
 }
 
 fn relative_repository_path(repo_root: &Path, file: &Path) -> Result<String> {
@@ -151,17 +151,18 @@ fn relative_repository_path(repo_root: &Path, file: &Path) -> Result<String> {
     Ok(path)
 }
 
-fn generate_pr_body(changes: &[PinChange]) -> String {
-    let mut body = String::from("This PR updates GitHub Actions to newer pinned versions:\n\n");
+fn generate_pr_body(changes: &[UpdateChange]) -> String {
+    let mut body = String::from("This PR updates repository dependencies:\n\n");
 
     for change in changes {
         writeln!(
             body,
-            "* `{}` in `{}`: {} -> {}",
-            change.action_slug,
+            "* {} `{}` in `{}`: {} -> {}",
+            change.kind.label(),
+            change.subject,
             change.file.display(),
             change.from_version,
-            change.to_sha
+            change.to_version
         )
         .expect("writing to a String cannot fail");
     }
@@ -180,7 +181,10 @@ mod tests {
     use tempfile::tempdir;
 
     use super::{PullRequestOptions, RemoteUpdatePublisher};
-    use crate::{github::GitHubClient, model::PinChange};
+    use crate::{
+        github::GitHubClient,
+        model::{FileUpdate, UpdateChange, UpdateChangeKind},
+    };
 
     #[test]
     fn publish_creates_branch_commit_and_pull_request() {
@@ -256,16 +260,19 @@ mod tests {
         let publisher = RemoteUpdatePublisher::new(github);
         let result = publisher
             .publish(
-                &[PinChange {
-                    file: workflow,
-                    line_number: 2,
-                    action_slug: String::from("actions/checkout"),
-                    from_version: String::from("v4"),
-                    to_sha: String::from("de0fac2e4500dabe0009e67214ff5f5447ce83dd"),
-                    original_line: String::from("  - uses: actions/checkout@v4"),
-                    rewritten_line: String::from(
-                        "  - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd  # v4",
+                &[FileUpdate {
+                    file: workflow_dir.join("ci.yml"),
+                    updated_content: String::from(
+                        "steps:\n  - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd  # v4\n",
                     ),
+                }],
+                &[UpdateChange {
+                    kind: UpdateChangeKind::GitHubAction,
+                    file: workflow,
+                    line_number: Some(2),
+                    subject: String::from("actions/checkout"),
+                    from_version: String::from("v4"),
+                    to_version: String::from("de0fac2e4500dabe0009e67214ff5f5447ce83dd"),
                 }],
                 &PullRequestOptions {
                     repo_root,
@@ -283,5 +290,108 @@ mod tests {
 
         assert_eq!(result.number, 42);
         assert_eq!(result.url, "https://example.test/pr/42");
+    }
+
+    #[test]
+    fn publish_supports_cargo_manifest_updates() {
+        let temp_dir = tempdir().expect("tempdir");
+        let repo_root = temp_dir.path().to_path_buf();
+        let manifest = repo_root.join("Cargo.toml");
+        fs::write(
+            &manifest,
+            "[package]\nname = \"demo\"\nversion = \"0.1.0\"\n\n[dependencies]\nreqwest = \"0.12.13\"\n",
+        )
+        .expect("write manifest");
+
+        let mut server = Server::new();
+        let _user = server
+            .mock("GET", "/user")
+            .match_header("authorization", Matcher::Regex("^Bearer\\s+ghp_testtoken$".into()))
+            .with_status(200)
+            .with_header("x-oauth-scopes", "repo, workflow")
+            .with_body(r#"{"login":"octocat"}"#)
+            .create();
+        let _repo = server
+            .mock("GET", "/repos/acme/demo")
+            .with_status(200)
+            .with_body(r#"{"default_branch":"main"}"#)
+            .create();
+        let _ref = server
+            .mock("GET", "/repos/acme/demo/git/ref/heads/main")
+            .with_status(200)
+            .with_body(r#"{"object":{"sha":"basecommitsha"}} "#)
+            .create();
+        let _commit = server
+            .mock("GET", "/repos/acme/demo/git/commits/basecommitsha")
+            .with_status(200)
+            .with_body(r#"{"tree":{"sha":"basetreesha"}}"#)
+            .create();
+        let _create_branch = server
+            .mock("POST", "/repos/acme/demo/git/refs")
+            .with_status(201)
+            .with_body(r#"{"ref":"refs/heads/github-actions-updates-test"}"#)
+            .create();
+        let _blob = server
+            .mock("POST", "/repos/acme/demo/git/blobs")
+            .match_body(Matcher::Regex("0\\.12\\.15".into()))
+            .with_status(201)
+            .with_body(r#"{"sha":"blobsha"}"#)
+            .create();
+        let _tree = server
+            .mock("POST", "/repos/acme/demo/git/trees")
+            .with_status(201)
+            .with_body(r#"{"sha":"treesha"}"#)
+            .create();
+        let _create_commit = server
+            .mock("POST", "/repos/acme/demo/git/commits")
+            .with_status(201)
+            .with_body(r#"{"sha":"commitsha"}"#)
+            .create();
+        let _update_ref = server
+            .mock("PATCH", "/repos/acme/demo/git/refs/heads/github-actions-updates-test")
+            .with_status(200)
+            .with_body(r#"{"object":{"sha":"commitsha"}}"#)
+            .create();
+        let _pull = server
+            .mock("POST", "/repos/acme/demo/pulls")
+            .with_status(201)
+            .with_body(r#"{"number":43,"html_url":"https://example.test/pr/43"}"#)
+            .create();
+
+        let github = GitHubClient::new(server.url(), Some(String::from("ghp_testtoken")))
+            .expect("github client");
+        let publisher = RemoteUpdatePublisher::new(github);
+        let result = publisher
+            .publish(
+                &[FileUpdate {
+                    file: manifest.clone(),
+                    updated_content: String::from(
+                        "[package]\nname = \"demo\"\nversion = \"0.1.0\"\n\n[dependencies]\nreqwest = \"0.12.15\"\n",
+                    ),
+                }],
+                &[UpdateChange {
+                    kind: UpdateChangeKind::CargoDependency,
+                    file: manifest,
+                    line_number: None,
+                    subject: String::from("reqwest"),
+                    from_version: String::from("0.12.13"),
+                    to_version: String::from("0.12.15"),
+                }],
+                &PullRequestOptions {
+                    repo_root,
+                    owner: String::from("acme"),
+                    repo: String::from("demo"),
+                    base_branch: None,
+                    branch_name: Some(String::from("github-actions-updates-test")),
+                    labels: Vec::new(),
+                    title: String::from("Update dependencies"),
+                    commit_message: String::from("Update dependencies"),
+                },
+            )
+            .expect("publish remote update")
+            .expect("pull request result");
+
+        assert_eq!(result.number, 43);
+        assert_eq!(result.url, "https://example.test/pr/43");
     }
 }

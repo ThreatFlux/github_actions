@@ -3,8 +3,9 @@ use std::path::PathBuf;
 use anyhow::Result;
 use clap::{Args, Parser, Subcommand};
 use github_actions_maintainer::{
-    GitHubClient, PinMode, PinOptions, PullRequestOptions, RemoteUpdatePublisher, UpdateMode,
-    UpdateOptions, WorkflowPinner, WorkflowUpdater,
+    CargoUpdateOptions, CargoUpdater, CratesIoClient, FileUpdate, GitHubClient, PinMode,
+    PinOptions, PullRequestOptions, RemoteUpdatePublisher, UpdateChange, UpdateMode, UpdateOptions,
+    WorkflowPinner, WorkflowUpdater,
 };
 
 #[derive(Debug, Parser)]
@@ -19,6 +20,9 @@ struct Cli {
 
     #[arg(long, env = "GITHUB_API_BASE_URL", hide = true, global = true)]
     github_api_base_url: Option<String>,
+
+    #[arg(long, env = "CRATES_IO_API_BASE_URL", hide = true, global = true)]
+    crates_api_base_url: Option<String>,
 }
 
 #[derive(Debug, Subcommand)]
@@ -66,15 +70,15 @@ struct RepoArgs {
     branch_name: Option<String>,
 
     /// Labels to add to a created pull request, comma-separated.
-    #[arg(long, default_value = "dependencies,security")]
+    #[arg(long, default_value = "dependencies")]
     labels: String,
 
     /// Pull request title for remote update mode.
-    #[arg(long, default_value = "Update GitHub Actions dependencies")]
+    #[arg(long, default_value = "Update dependencies")]
     title: String,
 
     /// Commit message for remote update mode.
-    #[arg(long, default_value = "Update GitHub Actions dependencies")]
+    #[arg(long, default_value = "Update dependencies")]
     commit_message: String,
 }
 
@@ -82,6 +86,10 @@ struct RepoArgs {
 struct PinArgs {
     #[command(flatten)]
     repo: RepoArgs,
+
+    #[command(flatten)]
+    #[allow(dead_code)]
+    targets: TargetArgs,
 
     /// Show changes without rewriting files.
     #[arg(long, default_value_t = false, num_args = 0..=1, default_missing_value = "true")]
@@ -93,6 +101,9 @@ struct UpdateArgs {
     #[command(flatten)]
     repo: RepoArgs,
 
+    #[command(flatten)]
+    targets: TargetArgs,
+
     /// Show available updates without rewriting files.
     #[arg(long, default_value_t = false, num_args = 0..=1, default_missing_value = "true")]
     dry_run: bool,
@@ -103,8 +114,46 @@ struct StatusArgs {
     #[command(flatten)]
     repo: RepoArgs,
 
+    #[command(flatten)]
+    targets: TargetArgs,
+
     #[arg(long, hide = true, default_value_t = false, num_args = 0..=1, default_missing_value = "true")]
     _dry_run: bool,
+}
+
+#[derive(Debug, Args, Clone, Default)]
+struct TargetArgs {
+    /// Include GitHub Actions workflow updates.
+    #[arg(long = "github-actions", default_value_t = false, num_args = 0..=1, default_missing_value = "true")]
+    github_actions: bool,
+
+    /// Include cargo package dependency updates.
+    #[arg(long, default_value_t = false, num_args = 0..=1, default_missing_value = "true")]
+    cargo: bool,
+
+    /// Include both GitHub Actions and cargo package updates.
+    #[arg(long, default_value_t = false, num_args = 0..=1, default_missing_value = "true")]
+    all: bool,
+}
+
+#[derive(Debug, Clone, Copy)]
+struct SelectedTargets {
+    github_actions: bool,
+    cargo: bool,
+}
+
+impl TargetArgs {
+    const fn resolve(&self) -> SelectedTargets {
+        if self.all {
+            return SelectedTargets { github_actions: true, cargo: true };
+        }
+
+        if !self.github_actions && !self.cargo {
+            return SelectedTargets { github_actions: true, cargo: false };
+        }
+
+        SelectedTargets { github_actions: self.github_actions, cargo: self.cargo }
+    }
 }
 
 fn main() {
@@ -119,8 +168,12 @@ fn run() -> Result<()> {
 
     match cli.command {
         Commands::Pin(args) => run_pin(args, cli.github_api_base_url),
-        Commands::Update(args) => run_update(args, cli.github_api_base_url),
-        Commands::Status(args) => run_status(args, cli.github_api_base_url),
+        Commands::Update(args) => {
+            run_update(args, cli.github_api_base_url, cli.crates_api_base_url)
+        }
+        Commands::Status(args) => {
+            run_status(args, cli.github_api_base_url, cli.crates_api_base_url)
+        }
     }
 }
 
@@ -172,44 +225,82 @@ fn run_pin(args: PinArgs, github_api_base_url: Option<String>) -> Result<()> {
     Ok(())
 }
 
-fn run_update(args: UpdateArgs, github_api_base_url: Option<String>) -> Result<()> {
+fn run_update(
+    args: UpdateArgs,
+    github_api_base_url: Option<String>,
+    crates_api_base_url: Option<String>,
+) -> Result<()> {
     let repo_args = args.repo;
     let repo_root = repo_args.repo.clone();
     let workflows_path = repo_args.workflows_path.clone();
     let token = repo_args.token.clone();
     let remote_mode = repo_args.create_pr;
-    let github = GitHubClient::new(
-        github_api_base_url.unwrap_or_else(|| String::from("https://api.github.com")),
-        token,
-    )?;
-    let updater = WorkflowUpdater::new(github.clone());
-    let report = updater.update(&UpdateOptions {
-        repo_root: repo_root.clone(),
-        workflows_path,
-        mode: if args.dry_run || remote_mode { UpdateMode::DryRun } else { UpdateMode::Apply },
-    })?;
+    let targets = args.targets.resolve();
+    let update_mode =
+        if args.dry_run || remote_mode { UpdateMode::DryRun } else { UpdateMode::Apply };
 
-    if report.changes.is_empty() {
-        println!(
-            "All scanned GitHub Actions are already current and pinned. Scanned {} references across {} workflow files.",
-            report.references_scanned, report.workflow_files
-        );
+    let action_report = if targets.github_actions {
+        let github = GitHubClient::new(
+            github_api_base_url.clone().unwrap_or_else(|| String::from("https://api.github.com")),
+            token.clone(),
+        )?;
+        let updater = WorkflowUpdater::new(github);
+        Some(updater.update(&UpdateOptions {
+            repo_root: repo_root.clone(),
+            workflows_path,
+            mode: update_mode,
+        })?)
+    } else {
+        None
+    };
+
+    let cargo_report = if targets.cargo {
+        let crates_io = CratesIoClient::new(
+            crates_api_base_url.unwrap_or_else(|| String::from("https://crates.io/api/v1")),
+        )?;
+        let updater = CargoUpdater::new(crates_io);
+        Some(
+            updater
+                .update(&CargoUpdateOptions { repo_root: repo_root.clone(), mode: update_mode })?,
+        )
+    } else {
+        None
+    };
+
+    let mut combined_changes = Vec::new();
+    let mut combined_file_updates = Vec::new();
+    if let Some(report) = &action_report {
+        combined_changes.extend(report.changes.clone());
+        combined_file_updates.extend(report.file_updates.clone());
+    }
+    if let Some(report) = &cargo_report {
+        combined_changes.extend(report.changes.clone());
+        combined_file_updates.extend(report.file_updates.clone());
+    }
+
+    if combined_changes.is_empty() {
+        print_update_noop_summary(action_report.as_ref(), cargo_report.as_ref());
         return Ok(());
     }
 
     if remote_mode {
         if args.dry_run {
             println!(
-                "Would create a pull request with {} action updates across {} files.",
-                report.changes.len(),
-                report.changed_files()
+                "Would create a pull request with {} dependency updates across {} files.",
+                combined_changes.len(),
+                count_changed_files(&combined_file_updates)
             );
         } else {
+            let github = GitHubClient::new(
+                github_api_base_url.unwrap_or_else(|| String::from("https://api.github.com")),
+                token,
+            )?;
             let (owner, repo_name) = resolve_remote_repository(&repo_args)?;
             let publisher = RemoteUpdatePublisher::new(github);
             let result = publisher
                 .publish(
-                    &report.changes,
+                    &combined_file_updates,
+                    &combined_changes,
                     &PullRequestOptions {
                         repo_root,
                         owner,
@@ -229,37 +320,19 @@ fn run_update(args: UpdateArgs, github_api_base_url: Option<String>) -> Result<(
             );
         }
 
-        for change in &report.changes {
-            println!(
-                "- {}:{} {} {} -> {}",
-                change.file.display(),
-                change.line_number,
-                change.action_slug,
-                change.from_version,
-                change.to_sha
-            );
-        }
+        print_update_changes(&combined_changes);
 
         return Ok(());
     }
 
     println!(
-        "{} {} action references across {} files.",
-        if args.dry_run { "Would update" } else { "Updated" },
-        report.changes.len(),
-        report.changed_files()
+        "{} {} dependency updates across {} files.",
+        if args.dry_run { "Would apply" } else { "Applied" },
+        combined_changes.len(),
+        count_changed_files(&combined_file_updates)
     );
 
-    for change in &report.changes {
-        println!(
-            "- {}:{} {} {} -> {}",
-            change.file.display(),
-            change.line_number,
-            change.action_slug,
-            change.from_version,
-            change.to_sha
-        );
-    }
+    print_update_changes(&combined_changes);
 
     Ok(())
 }
@@ -285,36 +358,147 @@ fn resolve_remote_repository(args: &RepoArgs) -> Result<(String, String)> {
     anyhow::bail!("--owner and --repo-name are required when --create-pr is enabled")
 }
 
-fn run_status(args: StatusArgs, github_api_base_url: Option<String>) -> Result<()> {
-    let github = GitHubClient::new(
-        github_api_base_url.unwrap_or_else(|| String::from("https://api.github.com")),
-        args.repo.token,
-    )?;
-    let updater = WorkflowUpdater::new(github);
-    let report = updater.update(&UpdateOptions {
-        repo_root: args.repo.repo,
-        workflows_path: args.repo.workflows_path,
-        mode: UpdateMode::Status,
-    })?;
+fn run_status(
+    args: StatusArgs,
+    github_api_base_url: Option<String>,
+    crates_api_base_url: Option<String>,
+) -> Result<()> {
+    let targets = args.targets.resolve();
+    let printed_section = if targets.github_actions {
+        let github = GitHubClient::new(
+            github_api_base_url.unwrap_or_else(|| String::from("https://api.github.com")),
+            args.repo.token.clone(),
+        )?;
+        let updater = WorkflowUpdater::new(github);
+        let report = updater.update(&UpdateOptions {
+            repo_root: args.repo.repo.clone(),
+            workflows_path: args.repo.workflows_path.clone(),
+            mode: UpdateMode::Status,
+        })?;
 
-    let updates_needed = report.entries.iter().filter(|entry| entry.update_needed).count();
-    println!(
-        "Scanned {} action references across {} workflow files. {} need changes.",
-        report.references_scanned, report.workflow_files, updates_needed
-    );
-
-    for entry in &report.entries {
+        let updates_needed = report.entries.iter().filter(|entry| entry.update_needed).count();
         println!(
-            "- {}:{} {} current={} latest={} pinned={} status={}",
-            entry.file.display(),
-            entry.line_number,
-            entry.action_slug,
-            entry.current_version,
-            entry.latest_version,
-            entry.pinned,
-            if entry.update_needed { "update-needed" } else { "current" }
+            "Scanned {} action references across {} workflow files. {} need changes.",
+            report.references_scanned, report.workflow_files, updates_needed
         );
+
+        for entry in &report.entries {
+            println!(
+                "- {}:{} {} current={} latest={} pinned={} status={}",
+                entry.file.display(),
+                entry.line_number,
+                entry.action_slug,
+                entry.current_version,
+                entry.latest_version,
+                entry.pinned,
+                if entry.update_needed { "update-needed" } else { "current" }
+            );
+        }
+
+        true
+    } else {
+        false
+    };
+
+    if targets.cargo {
+        if printed_section {
+            println!();
+        }
+
+        let crates_io = CratesIoClient::new(
+            crates_api_base_url.unwrap_or_else(|| String::from("https://crates.io/api/v1")),
+        )?;
+        let updater = CargoUpdater::new(crates_io);
+        let report = updater
+            .update(&CargoUpdateOptions { repo_root: args.repo.repo, mode: UpdateMode::Status })?;
+
+        let updates_needed = report.entries.iter().filter(|entry| entry.update_needed).count();
+        println!(
+            "Scanned {} cargo dependencies across {} manifests. {} need changes; {} are unmanaged.",
+            report.dependencies_scanned,
+            report.manifest_files,
+            updates_needed,
+            report.unmanaged_dependencies
+        );
+
+        for entry in &report.entries {
+            let reason_suffix = entry
+                .reason
+                .as_deref()
+                .map(|reason| format!(" reason={reason}"))
+                .unwrap_or_default();
+            println!(
+                "- {} {} current={} latest={} managed={} status={}{}",
+                entry.file.display(),
+                entry.dependency_name,
+                entry.current_requirement.as_deref().unwrap_or("n/a"),
+                entry.latest_version.as_deref().unwrap_or("n/a"),
+                entry.managed,
+                cargo_status_label(entry),
+                reason_suffix
+            );
+        }
     }
 
     Ok(())
+}
+
+const fn cargo_status_label(entry: &github_actions_maintainer::CargoDependencyEntry) -> &'static str {
+    if !entry.managed {
+        "unmanaged"
+    } else if entry.update_needed {
+        "update-needed"
+    } else {
+        "current"
+    }
+}
+
+fn print_update_noop_summary(
+    action_report: Option<&github_actions_maintainer::UpdateReport>,
+    cargo_report: Option<&github_actions_maintainer::CargoUpdateReport>,
+) {
+    if let Some(report) = action_report {
+        println!(
+            "All scanned GitHub Actions are already current and pinned. Scanned {} references across {} workflow files.",
+            report.references_scanned, report.workflow_files
+        );
+    }
+
+    if let Some(report) = cargo_report {
+        println!(
+            "All managed cargo dependencies are already current. Scanned {} dependencies across {} manifests; {} unmanaged dependencies were skipped.",
+            report.dependencies_scanned, report.manifest_files, report.unmanaged_dependencies
+        );
+    }
+}
+
+fn count_changed_files(file_updates: &[FileUpdate]) -> usize {
+    let mut files = file_updates.iter().map(|update| update.file.as_path()).collect::<Vec<_>>();
+    files.sort();
+    files.dedup();
+    files.len()
+}
+
+fn print_update_changes(changes: &[UpdateChange]) {
+    for change in changes {
+        match change.line_number {
+            Some(line_number) => println!(
+                "- {} {}:{} {} {} -> {}",
+                change.kind.label(),
+                change.file.display(),
+                line_number,
+                change.subject,
+                change.from_version,
+                change.to_version
+            ),
+            None => println!(
+                "- {} {} {} {} -> {}",
+                change.kind.label(),
+                change.file.display(),
+                change.subject,
+                change.from_version,
+                change.to_version
+            ),
+        }
+    }
 }

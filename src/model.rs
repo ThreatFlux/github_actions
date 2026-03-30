@@ -113,6 +113,38 @@ impl PinReport {
     }
 }
 
+#[derive(Debug, Clone, Copy, Eq, PartialEq)]
+pub enum UpdateChangeKind {
+    GitHubAction,
+    CargoDependency,
+}
+
+impl UpdateChangeKind {
+    #[must_use]
+    pub const fn label(self) -> &'static str {
+        match self {
+            Self::GitHubAction => "GitHub Action",
+            Self::CargoDependency => "cargo package",
+        }
+    }
+}
+
+#[derive(Debug, Clone, Eq, PartialEq)]
+pub struct UpdateChange {
+    pub kind: UpdateChangeKind,
+    pub file: PathBuf,
+    pub line_number: Option<usize>,
+    pub subject: String,
+    pub from_version: String,
+    pub to_version: String,
+}
+
+#[derive(Debug, Clone, Eq, PartialEq)]
+pub struct FileUpdate {
+    pub file: PathBuf,
+    pub updated_content: String,
+}
+
 #[must_use]
 pub fn is_full_length_sha(value: &str) -> bool {
     value.len() == 40 && value.bytes().all(|byte| byte.is_ascii_hexdigit())

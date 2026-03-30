@@ -1,11 +1,11 @@
-use std::path::PathBuf;
+use std::{collections::BTreeMap, fs, path::PathBuf};
 
 use anyhow::{Context, Result};
 
 use crate::{
     github::GitHubClient,
-    model::PinChange,
-    workflow::{apply_changes, discover_workflow_files, scan_workflow},
+    model::{FileUpdate, PinChange, UpdateChange, UpdateChangeKind},
+    workflow::{apply_changes_to_content, discover_workflow_files, scan_workflow},
 };
 
 #[derive(Debug, Clone, Copy, Eq, PartialEq)]
@@ -41,13 +41,15 @@ pub struct UpdateReport {
     pub references_scanned: usize,
     pub already_pinned: usize,
     pub entries: Vec<VersionEntry>,
-    pub changes: Vec<PinChange>,
+    pub changes: Vec<UpdateChange>,
+    pub file_updates: Vec<FileUpdate>,
 }
 
 impl UpdateReport {
     #[must_use]
     pub fn changed_files(&self) -> usize {
-        let mut files = self.changes.iter().map(|change| change.file.as_path()).collect::<Vec<_>>();
+        let mut files =
+            self.file_updates.iter().map(|update| update.file.as_path()).collect::<Vec<_>>();
         files.sort();
         files.dedup();
         files.len()
@@ -74,7 +76,7 @@ impl WorkflowUpdater {
         let mut references_scanned = 0usize;
         let mut already_pinned = 0usize;
         let mut entries = Vec::new();
-        let mut changes = Vec::new();
+        let mut pin_changes = Vec::new();
 
         for workflow_file in &workflow_files {
             for action in scan_workflow(workflow_file)? {
@@ -103,7 +105,7 @@ impl WorkflowUpdater {
                 });
 
                 if update_needed && options.mode != UpdateMode::Status {
-                    changes.push(PinChange {
+                    pin_changes.push(PinChange {
                         file: action.file.clone(),
                         line_number: action.line_number,
                         action_slug: action.action_slug.clone(),
@@ -116,9 +118,22 @@ impl WorkflowUpdater {
             }
         }
 
-        if options.mode == UpdateMode::Apply && !changes.is_empty() {
-            apply_changes(&changes)?;
+        let file_updates = build_file_updates(&pin_changes)?;
+        if options.mode == UpdateMode::Apply && !file_updates.is_empty() {
+            write_file_updates(&file_updates)?;
         }
+
+        let changes = pin_changes
+            .into_iter()
+            .map(|change| UpdateChange {
+                kind: UpdateChangeKind::GitHubAction,
+                file: change.file,
+                line_number: Some(change.line_number),
+                subject: change.action_slug,
+                from_version: change.from_version,
+                to_version: change.to_sha,
+            })
+            .collect();
 
         Ok(UpdateReport {
             workflow_files: workflow_files.len(),
@@ -126,8 +141,38 @@ impl WorkflowUpdater {
             already_pinned,
             entries,
             changes,
+            file_updates,
         })
     }
+}
+
+fn build_file_updates(changes: &[PinChange]) -> Result<Vec<FileUpdate>> {
+    let grouped_changes = changes.iter().fold(
+        BTreeMap::<&std::path::Path, Vec<&PinChange>>::new(),
+        |mut grouped, change| {
+            grouped.entry(change.file.as_path()).or_default().push(change);
+            grouped
+        },
+    );
+
+    let mut file_updates = Vec::new();
+    for (file, file_changes) in grouped_changes {
+        let content = fs::read_to_string(file)
+            .with_context(|| format!("failed to read workflow '{}'", file.display()))?;
+        let updated_content = apply_changes_to_content(&content, &file_changes)?;
+        file_updates.push(FileUpdate { file: file.to_path_buf(), updated_content });
+    }
+
+    Ok(file_updates)
+}
+
+fn write_file_updates(file_updates: &[FileUpdate]) -> Result<()> {
+    for update in file_updates {
+        fs::write(&update.file, &update.updated_content)
+            .with_context(|| format!("failed to write workflow '{}'", update.file.display()))?;
+    }
+
+    Ok(())
 }
 
 #[cfg(test)]

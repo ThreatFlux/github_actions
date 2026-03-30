@@ -1,6 +1,6 @@
 name: GitHub Actions Maintainer
 author: ThreatFlux
-description: Pin, update, and report GitHub Actions versions with optional remote pull request creation.
+description: Pin, update, and report GitHub Actions and cargo dependency versions with optional remote pull request creation.
 branding:
   icon: shield
   color: blue
@@ -34,6 +34,18 @@ inputs:
     description: Show changes without rewriting files.
     required: false
     default: "false"
+  github-actions:
+    description: Include GitHub Actions workflow updates for update and status commands.
+    required: false
+    default: "false"
+  cargo:
+    description: Include cargo package updates for update and status commands.
+    required: false
+    default: "false"
+  all:
+    description: Include both GitHub Actions and cargo package updates for update and status commands.
+    required: false
+    default: "false"
   create-pr:
     description: Create a branch and pull request remotely for update mode.
     required: false
@@ -49,15 +61,15 @@ inputs:
   labels:
     description: Labels to add to a created pull request.
     required: false
-    default: "dependencies,security"
+    default: "dependencies"
   title:
     description: Pull request title for remote update mode.
     required: false
-    default: "Update GitHub Actions dependencies"
+    default: "Update dependencies"
   commit-message:
     description: Commit message for remote update mode.
     required: false
-    default: "Update GitHub Actions dependencies"
+    default: "Update dependencies"
 
 runs:
   using: docker
@@ -88,3 +100,9 @@ runs:
     - ${{ inputs.commit-message }}
     - --dry-run
     - ${{ inputs.dry-run }}
+    - --github-actions
+    - ${{ inputs.github-actions }}
+    - --cargo
+    - ${{ inputs.cargo }}
+    - --all
+    - ${{ inputs.all }}
