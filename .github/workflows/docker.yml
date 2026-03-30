@@ -138,6 +138,7 @@ jobs:
     runs-on: ${{ vars.RUST_TEMPLATE_RUNNER_UBUNTU || 'ubuntu-latest' }}
     permissions:
       contents: read
+      packages: read
       security-events: write
     steps:
       - name: Download image (PRs)
