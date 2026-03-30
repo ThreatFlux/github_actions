@@ -1,0 +1,90 @@
+name: GitHub Actions Maintainer
+author: ThreatFlux
+description: Pin, update, and report GitHub Actions versions with optional remote pull request creation.
+branding:
+  icon: shield
+  color: blue
+
+inputs:
+  command:
+    description: Command to run. Use pin, update, or status.
+    required: false
+    default: "pin"
+  token:
+    description: Optional for read-only commands; required for remote pull request creation and recommended to raise API rate limits.
+    required: false
+    default: ""
+  owner:
+    description: Repository owner for remote PR creation.
+    required: false
+    default: ""
+  repo-name:
+    description: Repository name for remote PR creation.
+    required: false
+    default: ""
+  repo:
+    description: Path to the checked-out repository.
+    required: false
+    default: "."
+  workflows-path:
+    description: Relative path to the workflow directory.
+    required: false
+    default: ".github/workflows"
+  dry-run:
+    description: Show changes without rewriting files.
+    required: false
+    default: "false"
+  create-pr:
+    description: Create a branch and pull request remotely for update mode.
+    required: false
+    default: "false"
+  base-branch:
+    description: Base branch for remote PR creation.
+    required: false
+    default: ""
+  branch-name:
+    description: Override branch name for remote PR creation.
+    required: false
+    default: ""
+  labels:
+    description: Labels to add to a created pull request.
+    required: false
+    default: "dependencies,security"
+  title:
+    description: Pull request title for remote update mode.
+    required: false
+    default: "Update GitHub Actions dependencies"
+  commit-message:
+    description: Commit message for remote update mode.
+    required: false
+    default: "Update GitHub Actions dependencies"
+
+runs:
+  using: docker
+  image: Dockerfile
+  args:
+    - ${{ inputs.command }}
+    - --repo
+    - ${{ inputs.repo }}
+    - --workflows-path
+    - ${{ inputs.workflows-path }}
+    - --token
+    - ${{ inputs.token }}
+    - --owner
+    - ${{ inputs.owner }}
+    - --repo-name
+    - ${{ inputs.repo-name }}
+    - --create-pr
+    - ${{ inputs.create-pr }}
+    - --base-branch
+    - ${{ inputs.base-branch }}
+    - --branch-name
+    - ${{ inputs.branch-name }}
+    - --labels
+    - ${{ inputs.labels }}
+    - --title
+    - ${{ inputs.title }}
+    - --commit-message
+    - ${{ inputs.commit-message }}
+    - --dry-run
+    - ${{ inputs.dry-run }}

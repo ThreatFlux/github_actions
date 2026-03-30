@@ -1,0 +1,228 @@
+name: Auto Release
+
+concurrency:
+  group: auto-release-${{ github.event.workflow_run.head_branch || github.ref_name || 'main' }}
+  cancel-in-progress: true
+
+on:
+  workflow_run:
+    workflows: ["CI", "Security"]
+    types: [completed]
+    branches: [main]
+  schedule:
+    - cron: "0 9 * * 1"
+  workflow_dispatch:
+    inputs:
+      version_bump:
+        description: Version bump type
+        required: true
+        default: patch
+        type: choice
+        options:
+          - patch
+          - minor
+          - major
+
+permissions:
+  contents: write
+  pull-requests: write
+  actions: write
+
+env:
+  RUST_VERSION: 1.94.0
+
+jobs:
+  check:
+    name: Check for Release
+    runs-on: ${{ vars.RUST_TEMPLATE_RUNNER_UBUNTU || 'ubuntu-latest' }}
+    if: github.event.workflow_run.conclusion == 'success' || github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
+    outputs:
+      should_release: ${{ steps.check.outputs.should_release }}
+      next_version: ${{ steps.version.outputs.next_version }}
+      current_version: ${{ steps.version.outputs.current_version }}
+      target_sha: ${{ steps.target.outputs.sha }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          fetch-depth: 0
+          token: ${{ secrets.GITHUB_TOKEN }}
+          ref: ${{ github.event_name == 'workflow_run' && github.event.workflow_run.head_sha || github.ref_name }}
+
+      - name: Determine target SHA
+        id: target
+        run: |
+          if [[ "${{ github.event_name }}" == "workflow_run" ]]; then
+            echo "sha=${{ github.event.workflow_run.head_sha }}" >> "$GITHUB_OUTPUT"
+          else
+            echo "sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Check CI status
+        id: ci_status
+        run: |
+          TARGET_SHA="${{ steps.target.outputs.sha }}"
+          CI_STATUS=$(gh run list --workflow=ci.yml --branch=main --commit="$TARGET_SHA" --event=push --limit=1 --json conclusion --jq '.[0].conclusion // ""')
+          SECURITY_STATUS=$(gh run list --workflow=security.yml --branch=main --commit="$TARGET_SHA" --event=push --limit=1 --json conclusion --jq '.[0].conclusion // ""')
+          if [[ "$CI_STATUS" == "success" ]] && [[ "$SECURITY_STATUS" == "success" ]]; then
+            echo "all_passed=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "all_passed=false" >> "$GITHUB_OUTPUT"
+          fi
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Check for changes
+        id: check
+        run: |
+          LAST_TAG=$(git describe --tags --abbrev=0 2>/dev/null || echo "")
+          if [ -z "$LAST_TAG" ]; then
+            LAST_TAG=$(git rev-list --max-parents=0 HEAD)
+          fi
+
+          CHANGES=$(git log $LAST_TAG..HEAD --oneline --no-merges | wc -l)
+          FEAT_COUNT=$(git log $LAST_TAG..HEAD --grep="^feat" --oneline | wc -l)
+          FIX_COUNT=$(git log $LAST_TAG..HEAD --grep="^fix" --oneline | wc -l)
+          BREAKING_BODY_COUNT=$(git log $LAST_TAG..HEAD --grep="BREAKING CHANGE" --oneline | wc -l)
+          BREAKING_SUBJECT_COUNT=$(git log $LAST_TAG..HEAD --pretty=format:%s --no-merges | grep -Ec '^[[:alpha:]][[:alnum:]-]*(\([^)]+\))?!:' || true)
+          BREAKING_COUNT=$((BREAKING_BODY_COUNT + BREAKING_SUBJECT_COUNT))
+
+          if [[ "${{ github.event_name }}" == "workflow_dispatch" ]]; then
+            echo "should_release=true" >> "$GITHUB_OUTPUT"
+          elif [[ "${{ steps.ci_status.outputs.all_passed }}" != "true" ]]; then
+            echo "should_release=false" >> "$GITHUB_OUTPUT"
+          elif [[ $CHANGES -eq 0 ]]; then
+            echo "should_release=false" >> "$GITHUB_OUTPUT"
+          elif [[ $BREAKING_COUNT -gt 0 ]] || [[ $FEAT_COUNT -gt 0 ]] || [[ $FIX_COUNT -gt 0 ]]; then
+            echo "should_release=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "should_release=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Determine version
+        id: version
+        if: steps.check.outputs.should_release == 'true'
+        run: |
+          CURRENT_VERSION="$(python3 scripts/release_version.py current)"
+          echo "current_version=$CURRENT_VERSION" >> "$GITHUB_OUTPUT"
+          IFS='.' read -r MAJOR MINOR PATCH <<< "$CURRENT_VERSION"
+
+          if [[ "${{ github.event_name }}" == "workflow_dispatch" ]]; then
+            BUMP_TYPE="${{ github.event.inputs.version_bump }}"
+          else
+            LAST_TAG=$(git describe --tags --abbrev=0 2>/dev/null || echo "")
+            if [ -z "$LAST_TAG" ]; then
+            LAST_TAG=$(git rev-list --max-parents=0 HEAD)
+          fi
+
+            BREAKING_BODY=$(git log $LAST_TAG..HEAD --grep="BREAKING CHANGE" --oneline | wc -l)
+            BREAKING_SUBJECT=$(git log $LAST_TAG..HEAD --pretty=format:%s --no-merges | grep -Ec '^[[:alpha:]][[:alnum:]-]*(\([^)]+\))?!:' || true)
+            BREAKING=$((BREAKING_BODY + BREAKING_SUBJECT))
+            FEAT=$(git log $LAST_TAG..HEAD --grep="^feat" --oneline | wc -l)
+
+            if [[ $BREAKING -gt 0 ]]; then
+              BUMP_TYPE="major"
+            elif [[ $FEAT -gt 0 ]]; then
+              BUMP_TYPE="minor"
+            else
+              BUMP_TYPE="patch"
+            fi
+          fi
+
+          case $BUMP_TYPE in
+            major) MAJOR=$((MAJOR + 1)); MINOR=0; PATCH=0 ;;
+            minor) MINOR=$((MINOR + 1)); PATCH=0 ;;
+            patch) PATCH=$((PATCH + 1)) ;;
+          esac
+
+          echo "next_version=$MAJOR.$MINOR.$PATCH" >> "$GITHUB_OUTPUT"
+
+  release:
+    name: Create Release
+    needs: check
+    if: needs.check.outputs.should_release == 'true'
+    runs-on: ${{ vars.RUST_TEMPLATE_RUNNER_UBUNTU || 'ubuntu-latest' }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          fetch-depth: 0
+          token: ${{ secrets.GITHUB_TOKEN }}
+          ref: ${{ needs.check.outputs.target_sha }}
+
+      - name: Configure Git
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@e97e2d8cc328f1b50210efc529dca0028893a2d9 # v1
+        with:
+          toolchain: ${{ env.RUST_VERSION }}
+
+      - name: Update version
+        run: |
+          VERSION="${{ needs.check.outputs.next_version }}"
+          python3 scripts/release_version.py set "$VERSION"
+          cargo check --workspace --all-features 2>/dev/null || true
+        env:
+          VERSION: ${{ needs.check.outputs.next_version }}
+
+      - name: Generate changelog
+        run: |
+          VERSION="${{ needs.check.outputs.next_version }}"
+          LAST_TAG=$(git describe --tags --abbrev=0 2>/dev/null || echo "")
+          echo "## Release v$VERSION" > release_notes.md
+          echo "" >> release_notes.md
+          if [ -n "$LAST_TAG" ]; then
+            FEATURES=$(git log $LAST_TAG..HEAD --grep="^feat" --pretty=format:"- %s (%h)" --no-merges)
+            if [ -n "$FEATURES" ]; then
+              echo "### Features" >> release_notes.md
+              echo "$FEATURES" >> release_notes.md
+              echo "" >> release_notes.md
+            fi
+            FIXES=$(git log $LAST_TAG..HEAD --grep="^fix" --pretty=format:"- %s (%h)" --no-merges)
+            if [ -n "$FIXES" ]; then
+              echo "### Bug Fixes" >> release_notes.md
+              echo "$FIXES" >> release_notes.md
+              echo "" >> release_notes.md
+            fi
+          fi
+
+      - name: Commit and tag
+        id: publish_release_commit
+        run: |
+          set -euo pipefail
+          VERSION="${{ needs.check.outputs.next_version }}"
+          TARGET_SHA="${{ needs.check.outputs.target_sha }}"
+
+          git fetch origin main --no-tags
+          CURRENT_MAIN_SHA="$(git rev-parse origin/main)"
+          if [[ "${CURRENT_MAIN_SHA}" != "${TARGET_SHA}" ]]; then
+            echo "main advanced to ${CURRENT_MAIN_SHA}; skipping stale auto-release run for ${TARGET_SHA}"
+            echo "released=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          find . -name Cargo.toml -not -path './target/*' -not -path './.git/*' -print0 | xargs -0 git add
+          if [[ -f Cargo.lock ]]; then
+            git add Cargo.lock
+          fi
+          git commit -m "chore: release v$VERSION"
+          git tag -a "v$VERSION" -m "Release v$VERSION"
+          git push origin HEAD:main
+          git push origin "v$VERSION"
+          echo "released=true" >> "$GITHUB_OUTPUT"
+
+      - name: Create or update GitHub Release
+        if: steps.publish_release_commit.outputs.released == 'true'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          VERSION="${{ needs.check.outputs.next_version }}"
+          TAG="v${VERSION}"
+          if gh release view "$TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            gh release edit "$TAG" --repo "$GITHUB_REPOSITORY" --title "Release v${VERSION}" --notes-file release_notes.md
+          else
+            gh release create "$TAG" --repo "$GITHUB_REPOSITORY" --title "Release v${VERSION}" --notes-file release_notes.md
+          fi

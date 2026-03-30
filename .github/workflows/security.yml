@@ -1,0 +1,170 @@
+name: Security
+
+on:
+  push:
+    branches: [main, dev]
+  pull_request:
+    branches: [main, dev]
+  schedule:
+    - cron: "0 3 * * 1"
+  workflow_dispatch:
+
+env:
+  CARGO_TERM_COLOR: always
+  RUST_VERSION: 1.94.0
+  BINARY_NAME: ${{ vars.RUST_TEMPLATE_BINARY_NAME || 'github-actions-maintainer' }}
+  SBOM_MANIFEST_PATH: ${{ vars.RUST_TEMPLATE_SBOM_MANIFEST_PATH || 'Cargo.toml' }}
+
+jobs:
+  audit:
+    name: Security Audit
+    runs-on: ${{ vars.RUST_TEMPLATE_RUNNER_UBUNTU || 'ubuntu-latest' }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@e97e2d8cc328f1b50210efc529dca0028893a2d9 # v1
+        with:
+          toolchain: ${{ env.RUST_VERSION }}
+
+      - name: Install cargo-audit
+        uses: taiki-e/install-action@7bc99eee1f1b8902a125006cf790a1f4c8461e63 # v2.69.8
+        with:
+          tool: cargo-audit
+
+      - name: Run security audit
+        run: cargo audit
+
+      - name: Generate audit report
+        run: cargo audit --json > audit-report.json
+        continue-on-error: true
+
+      - name: Upload audit report
+        uses: actions/upload-artifact@bbbca2ddaa5d8feaa63e36b76fdaad77386f024f # v7.0.0
+        with:
+          name: audit-report
+          path: audit-report.json
+          retention-days: 30
+
+  deny:
+    name: Dependency Check
+    runs-on: ${{ vars.RUST_TEMPLATE_RUNNER_UBUNTU || 'ubuntu-latest' }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@e97e2d8cc328f1b50210efc529dca0028893a2d9 # v1
+        with:
+          toolchain: ${{ env.RUST_VERSION }}
+
+      - name: Install cargo-deny
+        uses: taiki-e/install-action@7bc99eee1f1b8902a125006cf790a1f4c8461e63 # v2.69.8
+        with:
+          tool: cargo-deny
+
+      - name: Check licenses
+        run: cargo deny check licenses
+
+      - name: Check advisories
+        run: cargo deny check advisories
+
+      - name: Check bans
+        run: cargo deny check bans
+        continue-on-error: true
+
+  supply-chain:
+    name: Supply Chain
+    runs-on: ${{ vars.RUST_TEMPLATE_RUNNER_UBUNTU || 'ubuntu-latest' }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@e97e2d8cc328f1b50210efc529dca0028893a2d9 # v1
+        with:
+          toolchain: ${{ env.RUST_VERSION }}
+
+      - name: Install cargo-cyclonedx
+        uses: taiki-e/install-action@7bc99eee1f1b8902a125006cf790a1f4c8461e63 # v2.69.8
+        with:
+          tool: cargo-cyclonedx@0.5.8
+
+      - name: Generate SBOM
+        run: make sbom BINARY_NAME="${BINARY_NAME}" SBOM_MANIFEST_PATH="${SBOM_MANIFEST_PATH}"
+
+      - name: Upload SBOM
+        uses: actions/upload-artifact@bbbca2ddaa5d8feaa63e36b76fdaad77386f024f # v7.0.0
+        with:
+          name: sbom
+          path: sbom/*.json
+          retention-days: 30
+
+  secrets:
+    name: Secret Scanning
+    runs-on: ${{ vars.RUST_TEMPLATE_RUNNER_UBUNTU || 'ubuntu-latest' }}
+    permissions:
+      contents: read
+      security-events: write
+    steps:
+      - name: Checkout
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          fetch-depth: 0
+
+      - name: TruffleHog Scan
+        uses: trufflesecurity/trufflehog@6c64db94d5b2e09d7e0948fb6bd3166cc6fffbc7 # v3.94.0
+        with:
+          extra_args: --only-verified
+        continue-on-error: true
+
+      - name: Install Gitleaks
+        env:
+          GITLEAKS_VERSION: "8.30.0"
+        run: |
+          set -euo pipefail
+          archive="gitleaks_${GITLEAKS_VERSION}_linux_x64.tar.gz"
+          curl -fsSLo "${archive}" "https://github.com/gitleaks/gitleaks/releases/download/v${GITLEAKS_VERSION}/${archive}"
+          curl -fsSLo gitleaks_checksums.txt "https://github.com/gitleaks/gitleaks/releases/download/v${GITLEAKS_VERSION}/gitleaks_${GITLEAKS_VERSION}_checksums.txt"
+          grep " ${archive}$" gitleaks_checksums.txt | sha256sum --check --
+          tar -xzf "${archive}" gitleaks
+          sudo install gitleaks /usr/local/bin/gitleaks
+
+      - name: Gitleaks Scan
+        run: |
+          gitleaks git . \
+            --no-banner \
+            --redact \
+            --exit-code 1 \
+            --report-format sarif \
+            --report-path gitleaks.sarif
+
+      - name: Upload Gitleaks results
+        uses: github/codeql-action/upload-sarif@3d8036cf7fe7433e4a725cf513a6ea56c7fd0f14 # codeql-bundle-v2.25.0
+        with:
+          sarif_file: gitleaks.sarif
+        if: always() && hashFiles('gitleaks.sarif') != ''
+
+  scorecard:
+    name: OSSF Scorecard
+    runs-on: ${{ vars.RUST_TEMPLATE_RUNNER_UBUNTU || 'ubuntu-latest' }}
+    if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
+    permissions:
+      security-events: write
+      id-token: write
+      contents: read
+      actions: read
+    steps:
+      - name: Checkout
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          persist-credentials: false
+
+      - name: Run Scorecard
+        uses: ossf/scorecard-action@4eaacf0543bb3f2c246792bd56e8cdeffafb205a # v2.4.3
+        with:
+          results_file: scorecard.sarif
+          results_format: sarif
+          publish_results: true
+        continue-on-error: true

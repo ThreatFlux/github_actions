@@ -1,0 +1,34 @@
+/target/
+
+# Note: Cargo.lock IS committed for applications (reproducible builds)
+# Uncomment below for library-only crates:
+# Cargo.lock
+
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+
+lcov.info
+*.profraw
+*.profdata
+sbom/
+dist/
+
+*.o
+*.so
+*.dylib
+*.dll
+*.tar.gz
+*.tar.gz.sha256
+*.zip
+*.sarif
+
+.DS_Store
+Thumbs.db
+
+.env
+.env.local
+
+__pycache__/
