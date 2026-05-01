@@ -14,6 +14,7 @@ ARG OCI_IMAGE_DESCRIPTION=Rust Application
 ARG OCI_IMAGE_VENDOR=
 ARG OCI_IMAGE_SOURCE=https://github.com
 
+USER root
 RUN apt-get update && apt-get install -y \
     ca-certificates \
     pkg-config \
@@ -51,6 +52,7 @@ ARG OCI_IMAGE_DESCRIPTION=Rust Application
 ARG OCI_IMAGE_VENDOR=
 ARG OCI_IMAGE_SOURCE=https://github.com
 
+USER root
 LABEL org.opencontainers.image.title="${OCI_IMAGE_TITLE}" \
       org.opencontainers.image.description="${OCI_IMAGE_DESCRIPTION}" \
       org.opencontainers.image.version="${VERSION}" \
