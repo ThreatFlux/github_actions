@@ -1,7 +1,7 @@
 # ThreatFlux Rust Dockerfile
 # Multi-stage build for single-crate or workspace-based applications.
 
-FROM rust:1.95-bookworm AS builder
+FROM docker.io/threatflux/rust-cicd-template:base-rust-latest AS builder
 
 ARG VERSION=0.0.0
 ARG BUILD_DATE=unknown
@@ -14,13 +14,14 @@ ARG OCI_IMAGE_DESCRIPTION=Rust Application
 ARG OCI_IMAGE_VENDOR=
 ARG OCI_IMAGE_SOURCE=https://github.com
 
+USER root
 RUN apt-get update && apt-get install -y \
     ca-certificates \
     pkg-config \
     libssl-dev \
     && rm -rf /var/lib/apt/lists/*
 
-RUN useradd -m -u 1000 builder
+RUN id -u builder >/dev/null 2>&1 || useradd -m -u 1000 builder
 USER builder
 WORKDIR /build
 
@@ -51,6 +52,7 @@ ARG OCI_IMAGE_DESCRIPTION=Rust Application
 ARG OCI_IMAGE_VENDOR=
 ARG OCI_IMAGE_SOURCE=https://github.com
 
+USER root
 LABEL org.opencontainers.image.title="${OCI_IMAGE_TITLE}" \
       org.opencontainers.image.description="${OCI_IMAGE_DESCRIPTION}" \
       org.opencontainers.image.version="${VERSION}" \
