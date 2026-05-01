@@ -3,7 +3,7 @@
 [![CI](https://github.com/ThreatFlux/github-actions-maintainer/actions/workflows/ci.yml/badge.svg)](https://github.com/ThreatFlux/github-actions-maintainer/actions/workflows/ci.yml)
 [![Security](https://github.com/ThreatFlux/github-actions-maintainer/actions/workflows/security.yml/badge.svg)](https://github.com/ThreatFlux/github-actions-maintainer/actions/workflows/security.yml)
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
-[![Rust](https://img.shields.io/badge/rust-1.94.0-orange.svg)](https://www.rust-lang.org)
+[![Rust](https://img.shields.io/badge/rust-1.95.0-orange.svg)](https://www.rust-lang.org)
 
 General-purpose dependency maintenance in Rust, built from the ThreatFlux Rust CI/CD template. The shipped capabilities cover secure GitHub Action pinning plus latest-version reporting and updates for both GitHub Actions and cargo packages.
 
