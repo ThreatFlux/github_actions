@@ -1,7 +1,7 @@
 # ThreatFlux Rust Dockerfile
 # Multi-stage build for single-crate or workspace-based applications.
 
-FROM docker.io/threatflux/rust-cicd-template:base-rust-latest AS builder
+FROM rust:1.95-slim AS builder
 
 ARG VERSION=0.0.0
 ARG BUILD_DATE=unknown
