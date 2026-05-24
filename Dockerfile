@@ -21,7 +21,9 @@ RUN apt-get update && apt-get install -y \
     libssl-dev \
     && rm -rf /var/lib/apt/lists/*
 
-RUN id -u builder >/dev/null 2>&1 || useradd -m -u 1000 builder
+RUN if ! id -u builder >/dev/null 2>&1; then \
+      groupadd -f builder && useradd -m -o -u 1000 -g builder builder; \
+    fi
 USER builder
 WORKDIR /build
 

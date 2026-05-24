@@ -58,7 +58,7 @@ impl Default for GitHubClientOptions {
             timeout: Duration::from_secs(30),
             max_retries: 3,
             retry_delay: Duration::from_secs(1),
-            max_retry_delay: Duration::from_secs(60),
+            max_retry_delay: Duration::from_mins(1),
         }
     }
 }
