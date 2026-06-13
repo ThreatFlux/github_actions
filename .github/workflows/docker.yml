@@ -23,6 +23,7 @@ env:
   REGISTRY: ghcr.io
   DOCKERHUB_REGISTRY: docker.io
   DOCKERHUB_NAMESPACE: ${{ vars.RUST_TEMPLATE_DOCKERHUB_NAMESPACE || 'threatflux' }}
+  PUBLISH_DOCKERHUB: ${{ vars.RUST_TEMPLATE_PUBLISH_DOCKERHUB || 'false' }}
   DOCKER_BUILDKIT: 1
   BINARY_NAME: ${{ vars.RUST_TEMPLATE_BINARY_NAME || 'github-actions-maintainer' }}
   BINARY_PACKAGE: ${{ vars.RUST_TEMPLATE_BINARY_PACKAGE || '' }}
@@ -56,8 +57,26 @@ jobs:
       - name: Detect Rust toolchain version
         id: rust_toolchain
         run: |
-          TOOLCHAIN_VERSION="$(sed -n 's/^channel[[:space:]]*=[[:space:]]*\"\\(.*\\)\"/\\1/p' rust-toolchain.toml | sed -n '1p')"
+          TOOLCHAIN_VERSION="$(awk -F '"' '/^channel[[:space:]]*=/ { print $2; exit }' rust-toolchain.toml)"
+          if [[ -z "${TOOLCHAIN_VERSION}" ]]; then
+            echo "Unable to detect Rust toolchain version from rust-toolchain.toml" >&2
+            exit 1
+          fi
           echo "version=${TOOLCHAIN_VERSION}" >> "$GITHUB_OUTPUT"
+
+      - name: Compose image list
+        id: images
+        run: |
+          GHCR_IMAGE="${REGISTRY}/${{ steps.lowercase.outputs.image_name }}"
+          DOCKERHUB_IMAGE="${DOCKERHUB_REGISTRY}/${DOCKERHUB_NAMESPACE}/${{ steps.dockerhub_repo.outputs.name }}"
+          {
+            echo "images<<EOF"
+            echo "${GHCR_IMAGE}"
+            if [[ "${PUBLISH_DOCKERHUB}" == "true" ]]; then
+              echo "${DOCKERHUB_IMAGE}"
+            fi
+            echo "EOF"
+          } >> "$GITHUB_OUTPUT"
 
       - name: Select build platforms
         id: platforms
@@ -81,7 +100,7 @@ jobs:
           password: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Log in to Docker Hub
-        if: github.event_name != 'pull_request'
+        if: github.event_name != 'pull_request' && env.PUBLISH_DOCKERHUB == 'true'
         uses: docker/login-action@650006c6eb7dba73a995cc03b0b2d7f5ca915bee # v4.2.0
         with:
           registry: ${{ env.DOCKERHUB_REGISTRY }}
@@ -92,9 +111,7 @@ jobs:
         id: meta
         uses: docker/metadata-action@80c7e94dd9b9319bd5eb7a0e0fe9291e23a2a2e9 # v6.1.0
         with:
-          images: |
-            ${{ env.REGISTRY }}/${{ steps.lowercase.outputs.image_name }}
-            ${{ env.DOCKERHUB_REGISTRY }}/${{ env.DOCKERHUB_NAMESPACE }}/${{ steps.dockerhub_repo.outputs.name }}
+          images: ${{ steps.images.outputs.images }}
           tags: |
             type=ref,event=branch
             type=ref,event=pr
@@ -108,9 +125,7 @@ jobs:
         id: base_meta
         uses: docker/metadata-action@80c7e94dd9b9319bd5eb7a0e0fe9291e23a2a2e9 # v6.1.0
         with:
-          images: |
-            ${{ env.REGISTRY }}/${{ steps.lowercase.outputs.image_name }}
-            ${{ env.DOCKERHUB_REGISTRY }}/${{ env.DOCKERHUB_NAMESPACE }}/${{ steps.dockerhub_repo.outputs.name }}
+          images: ${{ steps.images.outputs.images }}
           tags: |
             type=raw,value=base-rust-${{ steps.rust_toolchain.outputs.version }}
             type=raw,value=base-rust-latest,enable={{is_default_branch}}
