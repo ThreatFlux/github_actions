@@ -21,6 +21,8 @@ on:
 
 env:
   REGISTRY: ghcr.io
+  DOCKERHUB_REGISTRY: docker.io
+  DOCKERHUB_NAMESPACE: ${{ vars.RUST_TEMPLATE_DOCKERHUB_NAMESPACE || 'threatflux' }}
   DOCKER_BUILDKIT: 1
   BINARY_NAME: ${{ vars.RUST_TEMPLATE_BINARY_NAME || 'github-actions-maintainer' }}
   BINARY_PACKAGE: ${{ vars.RUST_TEMPLATE_BINARY_PACKAGE || '' }}
@@ -39,22 +41,29 @@ jobs:
       image_name: ${{ steps.lowercase.outputs.image_name }}
     steps:
       - name: Checkout
-        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
 
       - name: Lowercase image name
         id: lowercase
         run: echo "image_name=${GITHUB_REPOSITORY,,}" >> "$GITHUB_OUTPUT"
 
+      - name: Lowercase repo name
+        id: dockerhub_repo
+        run: |
+          REPO_NAME="${GITHUB_REPOSITORY#*/}"
+          echo "name=${REPO_NAME,,}" >> "$GITHUB_OUTPUT"
+
+      - name: Detect Rust toolchain version
+        id: rust_toolchain
+        run: |
+          TOOLCHAIN_VERSION="$(sed -n 's/^channel[[:space:]]*=[[:space:]]*\"\\(.*\\)\"/\\1/p' rust-toolchain.toml | sed -n '1p')"
+          echo "version=${TOOLCHAIN_VERSION}" >> "$GITHUB_OUTPUT"
+
       - name: Select build platforms
         id: platforms
         run: |
-          if [[ "${GITHUB_REF}" == refs/tags/v* ]]; then
-            echo "value=linux/amd64,linux/arm64" >> "$GITHUB_OUTPUT"
-            echo "needs_qemu=true" >> "$GITHUB_OUTPUT"
-          else
-            echo "value=linux/amd64" >> "$GITHUB_OUTPUT"
-            echo "needs_qemu=false" >> "$GITHUB_OUTPUT"
-          fi
+          echo "value=linux/amd64,linux/arm64" >> "$GITHUB_OUTPUT"
+          echo "needs_qemu=true" >> "$GITHUB_OUTPUT"
 
       - name: Set up QEMU
         if: steps.platforms.outputs.needs_qemu == 'true'
@@ -71,11 +80,21 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Extract metadata
+      - name: Log in to Docker Hub
+        if: github.event_name != 'pull_request'
+        uses: docker/login-action@650006c6eb7dba73a995cc03b0b2d7f5ca915bee # v4.2.0
+        with:
+          registry: ${{ env.DOCKERHUB_REGISTRY }}
+          username: ${{ secrets.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+
+      - name: Extract runtime metadata
         id: meta
         uses: docker/metadata-action@80c7e94dd9b9319bd5eb7a0e0fe9291e23a2a2e9 # v6.1.0
         with:
-          images: ${{ env.REGISTRY }}/${{ steps.lowercase.outputs.image_name }}
+          images: |
+            ${{ env.REGISTRY }}/${{ steps.lowercase.outputs.image_name }}
+            ${{ env.DOCKERHUB_REGISTRY }}/${{ env.DOCKERHUB_NAMESPACE }}/${{ steps.dockerhub_repo.outputs.name }}
           tags: |
             type=ref,event=branch
             type=ref,event=pr
@@ -84,6 +103,37 @@ jobs:
             type=semver,pattern={{major}}
             type=sha,prefix=
             type=raw,value=latest,enable={{is_default_branch}}
+
+      - name: Extract base image metadata
+        id: base_meta
+        uses: docker/metadata-action@80c7e94dd9b9319bd5eb7a0e0fe9291e23a2a2e9 # v6.1.0
+        with:
+          images: |
+            ${{ env.REGISTRY }}/${{ steps.lowercase.outputs.image_name }}
+            ${{ env.DOCKERHUB_REGISTRY }}/${{ env.DOCKERHUB_NAMESPACE }}/${{ steps.dockerhub_repo.outputs.name }}
+          tags: |
+            type=raw,value=base-rust-${{ steps.rust_toolchain.outputs.version }}
+            type=raw,value=base-rust-latest,enable={{is_default_branch}}
+
+      - name: Build base image
+        if: github.event_name != 'pull_request'
+        uses: docker/build-push-action@f9f3042f7e2789586610d6e8b85c8f03e5195baf # v7.2.0
+        with:
+          context: .
+          target: rust-base
+          platforms: ${{ steps.platforms.outputs.value }}
+          push: true
+          tags: ${{ steps.base_meta.outputs.tags }}
+          labels: ${{ steps.base_meta.outputs.labels }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+          build-args: |
+            VERSION=${{ github.ref_name }}
+            BUILD_DATE=${{ github.event.repository.updated_at }}
+            VCS_REF=${{ github.sha }}
+            BINARY_NAME=${{ env.BINARY_NAME }}
+            BINARY_PACKAGE=${{ env.BINARY_PACKAGE }}
+            SBOM_MANIFEST_PATH=${{ env.SBOM_MANIFEST_PATH }}
 
       - name: Build and export (PRs)
         if: github.event_name == 'pull_request'
@@ -104,7 +154,7 @@ jobs:
             BINARY_PACKAGE=${{ env.BINARY_PACKAGE }}
             SBOM_MANIFEST_PATH=${{ env.SBOM_MANIFEST_PATH }}
 
-      - name: Build and push (non-PR)
+      - name: Build and push runtime image (non-PR)
         if: github.event_name != 'pull_request'
         id: build
         uses: docker/build-push-action@f9f3042f7e2789586610d6e8b85c8f03e5195baf # v7.2.0
@@ -138,7 +188,6 @@ jobs:
     runs-on: ${{ vars.RUST_TEMPLATE_RUNNER_UBUNTU || 'ubuntu-latest' }}
     permissions:
       contents: read
-      packages: read
       security-events: write
     steps:
       - name: Download image (PRs)
