@@ -80,5 +80,5 @@ RUN chown -R app:app /usr/local/bin/app /usr/share/doc/app
 USER app
 WORKDIR /home/app
 
-ENTRYPOINT ["/usr/bin/tini", "--"]
-CMD ["/usr/local/bin/app"]
+ENTRYPOINT ["/usr/bin/tini", "--", "/usr/local/bin/app"]
+CMD []
