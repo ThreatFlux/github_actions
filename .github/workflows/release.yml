@@ -1,7 +1,7 @@
 name: Release
 
 permissions:
-  contents: write
+  contents: read
 
 on:
   push:
@@ -36,17 +36,26 @@ jobs:
   prepare:
     name: Prepare Release
     runs-on: ${{ vars.RUST_TEMPLATE_RUNNER_UBUNTU || 'ubuntu-latest' }}
+    permissions:
+      contents: write
     outputs:
       version: ${{ steps.version.outputs.version }}
       source_ref: ${{ steps.release_ref.outputs.source_ref }}
     steps:
       - name: Determine source ref
         id: source_ref
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          REQUESTED_SOURCE_REF: ${{ github.event.inputs.source_ref }}
         run: |
-          if [[ "${{ github.event_name }}" == "workflow_dispatch" && -n "${{ github.event.inputs.source_ref }}" ]]; then
-            SOURCE_REF="${{ github.event.inputs.source_ref }}"
+          if [[ "${EVENT_NAME}" == "workflow_dispatch" && -n "${REQUESTED_SOURCE_REF}" ]]; then
+            SOURCE_REF="${REQUESTED_SOURCE_REF}"
           else
             SOURCE_REF="${GITHUB_REF}"
+          fi
+          if ! git check-ref-format --branch "${SOURCE_REF}" >/dev/null; then
+            echo "Invalid source ref: ${SOURCE_REF}" >&2
+            exit 1
           fi
           echo "source_ref=${SOURCE_REF}" >> "$GITHUB_OUTPUT"
 
@@ -58,11 +67,18 @@ jobs:
 
       - name: Determine version
         id: version
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          REQUESTED_VERSION: ${{ github.event.inputs.version }}
         run: |
-          if [ "${{ github.event_name }}" == "workflow_dispatch" ]; then
-            VERSION="${{ github.event.inputs.version }}"
+          if [[ "${EVENT_NAME}" == "workflow_dispatch" ]]; then
+            VERSION="${REQUESTED_VERSION}"
           else
             VERSION=${GITHUB_REF#refs/tags/v}
+          fi
+          if ! [[ "${VERSION}" =~ ^[0-9]+\.[0-9]+\.[0-9]+(-[a-zA-Z0-9]+)?$ ]]; then
+            echo "Invalid version format: ${VERSION}" >&2
+            exit 1
           fi
           echo "version=$VERSION" >> "$GITHUB_OUTPUT"
 
@@ -141,6 +157,7 @@ jobs:
         uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
         with:
           ref: ${{ needs.prepare.outputs.source_ref }}
+          persist-credentials: false
 
       - name: Install Rust
         uses: dtolnay/rust-toolchain@e97e2d8cc328f1b50210efc529dca0028893a2d9 # v1
@@ -220,6 +237,7 @@ jobs:
         uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
         with:
           ref: ${{ needs.prepare.outputs.source_ref }}
+          persist-credentials: false
 
       - name: Install Rust
         uses: dtolnay/rust-toolchain@e97e2d8cc328f1b50210efc529dca0028893a2d9 # v1
@@ -248,11 +266,14 @@ jobs:
     name: Upload Release Assets
     needs: [prepare, build, sbom]
     runs-on: ${{ vars.RUST_TEMPLATE_RUNNER_UBUNTU || 'ubuntu-latest' }}
+    permissions:
+      contents: write
     steps:
       - name: Checkout
         uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
         with:
           ref: ${{ needs.prepare.outputs.source_ref }}
+          persist-credentials: false
 
       - name: Generate release notes
         run: |
@@ -314,6 +335,7 @@ jobs:
         uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
         with:
           ref: ${{ needs.prepare.outputs.source_ref }}
+          persist-credentials: false
 
       - name: Install Rust
         uses: dtolnay/rust-toolchain@e97e2d8cc328f1b50210efc529dca0028893a2d9 # v1
