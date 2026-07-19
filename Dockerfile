@@ -1,7 +1,7 @@
 # ThreatFlux Rust Dockerfile
 # Multi-stage build for single-crate or workspace-based applications.
 
-FROM rust:1.95-slim AS builder
+FROM rust:1.96.0-bookworm AS rust-base
 
 ARG VERSION=0.0.0
 ARG BUILD_DATE=unknown
@@ -14,16 +14,15 @@ ARG OCI_IMAGE_DESCRIPTION=Rust Application
 ARG OCI_IMAGE_VENDOR=
 ARG OCI_IMAGE_SOURCE=https://github.com
 
-USER root
 RUN apt-get update && apt-get install -y \
     ca-certificates \
     pkg-config \
     libssl-dev \
     && rm -rf /var/lib/apt/lists/*
 
-RUN if ! id -u builder >/dev/null 2>&1; then \
-      groupadd -f builder && useradd -m -o -u 1000 -g builder builder; \
-    fi
+FROM rust-base AS builder
+
+RUN useradd -m -u 1000 builder
 USER builder
 WORKDIR /build
 
@@ -78,4 +77,5 @@ RUN chown -R app:app /usr/local/bin/app /usr/share/doc/app
 USER app
 WORKDIR /home/app
 
-ENTRYPOINT ["/usr/bin/tini", "--", "/usr/local/bin/app"]
+ENTRYPOINT ["/usr/bin/tini", "--"]
+CMD ["/usr/local/bin/app"]

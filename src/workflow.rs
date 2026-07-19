@@ -1,4 +1,5 @@
 use std::{
+    cmp::Reverse,
     fs,
     path::{Path, PathBuf},
     sync::LazyLock,
@@ -115,7 +116,7 @@ pub fn apply_changes_to_content(content: &str, changes: &[&PinChange]) -> Result
     let mut lines = content.lines().map(str::to_owned).collect::<Vec<_>>();
     let mut sorted_changes = changes.to_vec();
 
-    sorted_changes.sort_by(|left, right| right.line_number.cmp(&left.line_number));
+    sorted_changes.sort_by_key(|change| Reverse(change.line_number));
 
     for change in sorted_changes {
         let line_index = change.line_number - 1;
