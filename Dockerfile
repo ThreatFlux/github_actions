@@ -14,7 +14,6 @@ ARG OCI_IMAGE_DESCRIPTION=Rust Application
 ARG OCI_IMAGE_VENDOR=
 ARG OCI_IMAGE_SOURCE=https://github.com
 
-USER root
 RUN apt-get update && apt-get install -y \
     ca-certificates \
     pkg-config \
