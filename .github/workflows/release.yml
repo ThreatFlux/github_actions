@@ -31,6 +31,7 @@ env:
   BINARY_PACKAGE: ${{ vars.RUST_TEMPLATE_BINARY_PACKAGE || '' }}
   SBOM_MANIFEST_PATH: ${{ vars.RUST_TEMPLATE_SBOM_MANIFEST_PATH || 'Cargo.toml' }}
   PUBLISH_PACKAGES: ${{ vars.RUST_TEMPLATE_PUBLISH_PACKAGES || '' }}
+  SEMVER_PATTERN: '^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)(-((0|[1-9][0-9]*)|[0-9A-Za-z-]*[A-Za-z-][0-9A-Za-z-]*)(\.((0|[1-9][0-9]*)|[0-9A-Za-z-]*[A-Za-z-][0-9A-Za-z-]*))*)?$'
 
 jobs:
   prepare:
@@ -76,7 +77,7 @@ jobs:
           else
             VERSION=${GITHUB_REF#refs/tags/v}
           fi
-          if ! [[ "${VERSION}" =~ ^[0-9]+\.[0-9]+\.[0-9]+(-[a-zA-Z0-9-]+(\.[a-zA-Z0-9-]+)*)?$ ]]; then
+          if ! [[ "${VERSION}" =~ ${SEMVER_PATTERN} ]]; then
             echo "Invalid version format: ${VERSION}" >&2
             exit 1
           fi
@@ -85,7 +86,7 @@ jobs:
       - name: Validate version format
         run: |
           VERSION="${{ steps.version.outputs.version }}"
-          if ! [[ "$VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+(-[a-zA-Z0-9-]+(\.[a-zA-Z0-9-]+)*)?$ ]]; then
+          if ! [[ "$VERSION" =~ ${SEMVER_PATTERN} ]]; then
             echo "Invalid version format: $VERSION"
             exit 1
           fi
