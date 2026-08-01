@@ -224,7 +224,7 @@ impl GitHubClient {
         }
 
         let tags = self.send_with_retry(
-            || self.get(&format!("/repos/{owner}/{repository}/tags")).query(&[("per_page", "1")]),
+            || self.get(&format!("/repos/{owner}/{repository}/tags?per_page=1")),
             || format!("fetch tags for {owner}/{repository}"),
         )?;
         let mut tags = tags
