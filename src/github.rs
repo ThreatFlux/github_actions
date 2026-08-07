@@ -586,6 +586,27 @@ impl GitHubClient {
         Ok(tags)
     }
 
+    /// Latest tag whose name is `prefix` followed by a semver version,
+    /// scanning up to 1000 tags.
+    pub fn latest_semver_tag(
+        &self,
+        owner: &str,
+        repository: &str,
+        prefix: &str,
+    ) -> Result<Option<TagInfo>> {
+        const MAX_TAG_PAGES: u32 = 10;
+        let tags = self.list_tags(owner, repository, MAX_TAG_PAGES)?;
+        Ok(tags
+            .into_iter()
+            .filter_map(|tag| {
+                let version = tag.name.strip_prefix(prefix)?;
+                let parsed = semver::Version::parse(version).ok()?;
+                Some((parsed, tag))
+            })
+            .max_by(|(left, _), (right, _)| left.cmp(right))
+            .map(|(_, tag)| tag))
+    }
+
     pub fn compare_commits(
         &self,
         owner: &str,

@@ -104,11 +104,49 @@ pub fn bump_version(current: &Version, level: BumpLevel) -> Version {
     next
 }
 
+/// Render markdown release notes grouped by commit kind, listing breaking
+/// changes first and omitting empty sections.
+#[must_use]
+pub fn release_notes(tag: &str, commits: &[ConventionalCommit], truncated: bool) -> String {
+    use std::fmt::Write as _;
+
+    let mut notes = format!("## Release {tag}\n");
+    let sections = [
+        (CommitKind::Breaking, "Breaking Changes"),
+        (CommitKind::Feature, "Features"),
+        (CommitKind::Fix, "Bug Fixes"),
+    ];
+
+    for (kind, title) in sections {
+        let mut header_written = false;
+        for commit in commits.iter().filter(|commit| commit.kind == kind) {
+            if !header_written {
+                notes.push('\n');
+                writeln!(notes, "### {title}").expect("writing to a String cannot fail");
+                header_written = true;
+            }
+            let short_sha = commit.sha.get(..7).unwrap_or(&commit.sha);
+            writeln!(notes, "- {} ({short_sha})", commit.subject)
+                .expect("writing to a String cannot fail");
+        }
+    }
+
+    if truncated {
+        notes.push('\n');
+        writeln!(notes, "_Note: the commit list was truncated; some changes may be missing._")
+            .expect("writing to a String cannot fail");
+    }
+
+    notes
+}
+
 #[cfg(test)]
 mod tests {
     use semver::Version;
 
-    use super::{BumpLevel, CommitKind, bump_version, classify_commits, required_bump};
+    use super::{
+        BumpLevel, CommitKind, bump_version, classify_commits, release_notes, required_bump,
+    };
     use crate::github::CommitInfo;
 
     fn commit(message: &str) -> CommitInfo {
@@ -238,5 +276,29 @@ mod tests {
             bump_version(&current, BumpLevel::Patch),
             Version::parse("1.2.4").expect("version")
         );
+    }
+
+    #[test]
+    fn release_notes_group_sections_and_short_shas() {
+        let commits = classify_commits(&[
+            commit("feat!: drop old flags"),
+            commit("feat: add release command"),
+            commit("fix: handle empty tags"),
+            commit("chore: noise"),
+        ]);
+
+        let notes = release_notes("v1.0.0", &commits, false);
+
+        assert_eq!(
+            notes,
+            "## Release v1.0.0\n\n### Breaking Changes\n- feat!: drop old flags (0123456)\n\n### Features\n- feat: add release command (0123456)\n\n### Bug Fixes\n- fix: handle empty tags (0123456)\n"
+        );
+    }
+
+    #[test]
+    fn release_notes_flag_truncated_commit_ranges() {
+        let notes = release_notes("v1.0.0", &[], true);
+
+        assert!(notes.contains("truncated"), "{notes}");
     }
 }

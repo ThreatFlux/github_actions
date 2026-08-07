@@ -49,21 +49,7 @@ pub fn plan_version_rewrite(repo_root: &Path, new_version: &str) -> Result<Versi
 
     let manifests = member_manifests(&repo_root, &root_document);
     let internal_packages = internal_package_names(&manifests)?;
-    let mut file_updates = Vec::new();
-
-    for manifest in &manifests {
-        let original = fs::read_to_string(manifest)
-            .with_context(|| format!("failed to read Cargo manifest '{}'", manifest.display()))?;
-        let mut document = original
-            .parse::<DocumentMut>()
-            .with_context(|| format!("failed to parse Cargo manifest '{}'", manifest.display()))?;
-        if rewrite_document(&mut document, &internal_packages, new_version) {
-            let updated_content = document.to_string();
-            if updated_content != original {
-                file_updates.push(FileUpdate { file: manifest.clone(), updated_content });
-            }
-        }
-    }
+    let mut file_updates = plan_manifest_updates(&manifests, &internal_packages, new_version)?;
 
     if let Some(lockfile_update) =
         plan_lockfile_update(&repo_root, &internal_packages, new_version)?
@@ -80,6 +66,28 @@ pub fn plan_version_rewrite(repo_root: &Path, new_version: &str) -> Result<Versi
         internal_packages: internal_packages.into_iter().collect(),
         file_updates,
     })
+}
+
+fn plan_manifest_updates(
+    manifests: &[PathBuf],
+    internal_packages: &BTreeSet<String>,
+    new_version: &str,
+) -> Result<Vec<FileUpdate>> {
+    let mut file_updates = Vec::new();
+    for manifest in manifests {
+        let original = fs::read_to_string(manifest)
+            .with_context(|| format!("failed to read Cargo manifest '{}'", manifest.display()))?;
+        let mut document = original
+            .parse::<DocumentMut>()
+            .with_context(|| format!("failed to parse Cargo manifest '{}'", manifest.display()))?;
+        if rewrite_document(&mut document, internal_packages, new_version) {
+            let updated_content = document.to_string();
+            if updated_content != original {
+                file_updates.push(FileUpdate { file: manifest.clone(), updated_content });
+            }
+        }
+    }
+    Ok(file_updates)
 }
 
 fn parse_manifest(manifest: &Path) -> Result<DocumentMut> {
@@ -315,7 +323,7 @@ fn match_chars(pattern: &[char], text: &[char]) -> bool {
 mod tests {
     use std::fs;
 
-    use tempfile::tempdir;
+    use tempfile::{TempDir, tempdir};
 
     use super::{current_version, matches_member_pattern, plan_version_rewrite};
 
@@ -377,8 +385,7 @@ mod tests {
         assert!(updated.contains("anyhow = \"1.0.95\""), "{updated}");
     }
 
-    #[test]
-    fn plan_rewrites_workspace_members_and_internal_dependencies() {
+    fn write_workspace_fixture() -> TempDir {
         let temp_dir = tempdir().expect("tempdir");
         fs::write(
             temp_dir.path().join("Cargo.toml"),
@@ -409,6 +416,12 @@ mod tests {
             "[package]\nname = \"demo-extra\"\nversion = \"0.2.3\"\n",
         )
         .expect("write non-member Cargo.toml");
+        temp_dir
+    }
+
+    #[test]
+    fn plan_selects_workspace_members_and_rewrites_root_versions() {
+        let temp_dir = write_workspace_fixture();
 
         let plan = plan_version_rewrite(temp_dir.path(), "0.3.0").expect("rewrite plan");
 
@@ -439,6 +452,13 @@ mod tests {
             "{}",
             root.updated_content
         );
+    }
+
+    #[test]
+    fn plan_rewrites_member_dependency_shapes() {
+        let temp_dir = write_workspace_fixture();
+
+        let plan = plan_version_rewrite(temp_dir.path(), "0.3.0").expect("rewrite plan");
 
         let cli = plan
             .file_updates
