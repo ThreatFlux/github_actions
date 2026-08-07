@@ -1,0 +1,92 @@
+name: ThreatFlux Auto Release
+author: ThreatFlux
+description: Bump the Cargo version from conventional commits, then commit, tag, and publish a GitHub Release entirely through the GitHub API.
+branding:
+  icon: tag
+  color: blue
+
+inputs:
+  token:
+    description: GitHub token with contents write permission on the target repository.
+    required: false
+    default: ${{ github.token }}
+  owner:
+    description: Repository owner; defaults to the owner from GITHUB_REPOSITORY.
+    required: false
+    default: ""
+  repo-name:
+    description: Repository name; defaults to the name from GITHUB_REPOSITORY.
+    required: false
+    default: ""
+  repo:
+    description: Path to the checked-out repository.
+    required: false
+    default: "."
+  base-branch:
+    description: Branch to release from; defaults to the repository default branch.
+    required: false
+    default: ""
+  bump:
+    description: Version bump strategy. Use auto, major, minor, or patch.
+    required: false
+    default: "auto"
+  tag-prefix:
+    description: Prefix for release tags.
+    required: false
+    default: "v"
+  update-major-alias:
+    description: Also move the moving major alias tag (for example v1) to the new release.
+    required: false
+    default: "false"
+  notes-file:
+    description: Path where generated release notes are written, including on dry runs.
+    required: false
+    default: "release_notes.md"
+  commit-message:
+    description: Release commit message template; "{version}" is replaced with the new version.
+    required: false
+    default: "chore: release v{version}"
+  dry-run:
+    description: Analyze and report without creating any commit, tag, or release.
+    required: false
+    default: "false"
+
+outputs:
+  released:
+    description: Whether a release was created (true or false).
+  version:
+    description: The released version without the tag prefix, empty when skipped without a computed version.
+  tag:
+    description: The created release tag, empty when skipped without a computed version.
+  release-url:
+    description: URL of the created GitHub Release, empty unless released.
+  notes-file:
+    description: Path to the generated release notes file, empty when no notes were generated.
+
+runs:
+  using: docker
+  image: Dockerfile
+  args:
+    - release
+    - --repo
+    - ${{ inputs.repo }}
+    - --token
+    - ${{ inputs.token }}
+    - --owner
+    - ${{ inputs.owner }}
+    - --repo-name
+    - ${{ inputs.repo-name }}
+    - --base-branch
+    - ${{ inputs.base-branch }}
+    - --bump
+    - ${{ inputs.bump }}
+    - --tag-prefix
+    - ${{ inputs.tag-prefix }}
+    - --notes-file
+    - ${{ inputs.notes-file }}
+    - --commit-message
+    - ${{ inputs.commit-message }}
+    - --update-major-alias
+    - ${{ inputs.update-major-alias }}
+    - --dry-run
+    - ${{ inputs.dry-run }}

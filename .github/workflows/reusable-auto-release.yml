@@ -1,0 +1,82 @@
+name: Reusable Auto Release
+
+# Callable wrapper around the release action so consuming Cargo repositories
+# need only a few lines of workflow. Callers own the trigger, gating, and
+# concurrency group; see release/README.md for the consumer snippets.
+
+on:
+  workflow_call:
+    inputs:
+      bump:
+        description: Version bump strategy (auto, major, minor, patch).
+        required: false
+        default: auto
+        type: string
+      tag-prefix:
+        description: Prefix for release tags.
+        required: false
+        default: v
+        type: string
+      update-major-alias:
+        description: Also move the moving major alias tag to the new release.
+        required: false
+        default: false
+        type: boolean
+      notes-file:
+        description: Path where generated release notes are written.
+        required: false
+        default: release_notes.md
+        type: string
+      dry-run:
+        description: Analyze and report without creating any commit, tag, or release.
+        required: false
+        default: false
+        type: boolean
+    secrets:
+      release-token:
+        description: Optional GitHub App or PAT token; falls back to GITHUB_TOKEN. Required if the created tag must trigger tag pipelines natively.
+        required: false
+    outputs:
+      released:
+        description: Whether a release was created (true or false).
+        value: ${{ jobs.release.outputs.released }}
+      version:
+        description: The released version without the tag prefix.
+        value: ${{ jobs.release.outputs.version }}
+      tag:
+        description: The created release tag.
+        value: ${{ jobs.release.outputs.tag }}
+      release-url:
+        description: URL of the created GitHub Release.
+        value: ${{ jobs.release.outputs.release-url }}
+
+permissions:
+  contents: read
+
+jobs:
+  release:
+    name: Auto Release
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    outputs:
+      released: ${{ steps.release.outputs.released }}
+      version: ${{ steps.release.outputs.version }}
+      tag: ${{ steps.release.outputs.tag }}
+      release-url: ${{ steps.release.outputs.release-url }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Release
+        id: release
+        uses: ThreatFlux/github_actions/release@main # replaced by the release automation with a SHA-pinned ref
+        with:
+          token: ${{ secrets.release-token || github.token }}
+          bump: ${{ inputs.bump }}
+          tag-prefix: ${{ inputs.tag-prefix }}
+          update-major-alias: ${{ inputs.update-major-alias }}
+          notes-file: ${{ inputs.notes-file }}
+          dry-run: ${{ inputs.dry-run }}
