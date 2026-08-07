@@ -3,7 +3,7 @@ use std::{fs, path::Path};
 use mockito::{Matcher, Mock, Server, ServerGuard};
 use tempfile::{TempDir, tempdir};
 
-use super::{ReleaseOptions, ReleaseOutcome, ReleasePublisher};
+use super::{ReleaseOptions, ReleaseOutcome, ReleasePublisher, TagStyle};
 use crate::{GitHubClient, conventional::BumpLevel};
 
 const FEAT_AND_FIX: &str = r#"{"total_commits":2,"commits":[{"sha":"feataaaaaaa","commit":{"message":"feat: add thing"},"parents":[{}]},{"sha":"fixbbbbbbbb","commit":{"message":"fix: repair thing"},"parents":[{}]}]}"#;
@@ -28,10 +28,19 @@ fn options(repo_root: &Path) -> ReleaseOptions {
         base_branch: Some(String::from("main")),
         bump: None,
         tag_prefix: String::from("v"),
+        tag_style: TagStyle::Annotated,
         update_major_alias: false,
         commit_message: String::from("chore: release v{version}"),
         dry_run: false,
     }
+}
+
+fn mock_tag_object(server: &mut ServerGuard) -> Mock {
+    server
+        .mock("POST", "/repos/acme/demo/git/tags")
+        .with_status(201)
+        .with_body(r#"{"sha":"tagobjectsha"}"#)
+        .create()
 }
 
 fn publisher(server: &ServerGuard) -> ReleasePublisher {
@@ -116,6 +125,7 @@ fn mock_finalize_chain(server: &mut ServerGuard, tag: &str) -> Vec<Mock> {
             .with_status(200)
             .with_body(r#"{"ref":"refs/heads/main"}"#)
             .create(),
+        mock_tag_object(server),
         server
             .mock("POST", "/repos/acme/demo/git/refs")
             .with_status(201)
@@ -173,9 +183,29 @@ fn mock_strict_pipeline(server: &mut ServerGuard) -> Vec<Mock> {
             .with_status(200)
             .with_body(r#"{"ref":"refs/heads/main"}"#)
             .create(),
+    ]
+}
+
+/// Strict finalize mocks: annotated tag object, tag ref at the object SHA,
+/// and the release payload.
+fn mock_strict_finalize(server: &mut ServerGuard) -> Vec<Mock> {
+    vec![
+        server
+            .mock("POST", "/repos/acme/demo/git/tags")
+            .match_body(Matcher::AllOf(vec![
+                Matcher::Regex(r#""tag":"v0\.3\.0""#.into()),
+                Matcher::Regex(r#""object":"newcommitsha""#.into()),
+                Matcher::Regex(r#""type":"commit""#.into()),
+            ]))
+            .with_status(201)
+            .with_body(r#"{"sha":"tagobjectsha"}"#)
+            .create(),
         server
             .mock("POST", "/repos/acme/demo/git/refs")
-            .match_body(Matcher::Regex(r#""ref":"refs/tags/v0\.3\.0""#.into()))
+            .match_body(Matcher::AllOf(vec![
+                Matcher::Regex(r#""ref":"refs/tags/v0\.3\.0""#.into()),
+                Matcher::Regex(r#""sha":"tagobjectsha""#.into()),
+            ]))
             .with_status(201)
             .with_body(r#"{"ref":"refs/tags/v0.3.0"}"#)
             .create(),
@@ -198,6 +228,7 @@ fn release_creates_commit_tag_and_release() {
     let mut server = Server::new();
     let _analysis = mock_analysis(&mut server, 2, FEAT_AND_FIX);
     let _pipeline = mock_strict_pipeline(&mut server);
+    let _finalize = mock_strict_finalize(&mut server);
 
     let report = publisher(&server).release(&options(temp_dir.path())).expect("release report");
 
@@ -232,6 +263,40 @@ fn release_dry_run_performs_no_mutations_and_renders_outputs() {
         report.github_outputs(Path::new("release_notes.md")),
         "released=false\nversion=0.3.0\ntag=v0.3.0\nrelease-url=\nnotes-file=release_notes.md\n"
     );
+}
+
+#[test]
+fn release_lightweight_tags_point_directly_at_the_commit() {
+    let temp_dir = write_fixture_repo();
+    let mut server = Server::new();
+    let _analysis = mock_analysis(&mut server, 2, FEAT_AND_FIX);
+    let _build = mock_build_chain(&mut server);
+    let _advance = server
+        .mock("PATCH", "/repos/acme/demo/git/refs/heads/main")
+        .with_status(200)
+        .with_body(r#"{"ref":"refs/heads/main"}"#)
+        .create();
+    let _no_tag_object = server.mock("POST", "/repos/acme/demo/git/tags").expect(0).create();
+    let _tag_ref = server
+        .mock("POST", "/repos/acme/demo/git/refs")
+        .match_body(Matcher::AllOf(vec![
+            Matcher::Regex(r#""ref":"refs/tags/v0\.3\.0""#.into()),
+            Matcher::Regex(r#""sha":"newcommitsha""#.into()),
+        ]))
+        .with_status(201)
+        .with_body(r#"{"ref":"refs/tags/v0.3.0"}"#)
+        .create();
+    let _release = server
+        .mock("POST", "/repos/acme/demo/releases")
+        .with_status(201)
+        .with_body(r#"{"html_url":"https://github.com/acme/demo/releases/tag/v0.3.0"}"#)
+        .create();
+
+    let mut release_options = options(temp_dir.path());
+    release_options.tag_style = TagStyle::Lightweight;
+    let report = publisher(&server).release(&release_options).expect("release report");
+
+    assert_eq!(report.outcome, ReleaseOutcome::Released);
 }
 
 #[test]

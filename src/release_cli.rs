@@ -11,6 +11,7 @@ use anyhow::{Context, Result};
 use clap::{Args, ValueEnum};
 use github_actions_maintainer::{
     BumpLevel, GitHubClient, ReleaseOptions, ReleaseOutcome, ReleasePublisher, ReleaseReport,
+    TagStyle,
 };
 
 use crate::resolve_repository;
@@ -44,6 +45,11 @@ pub struct ReleaseArgs {
     /// Prefix for release tags.
     #[arg(long, default_value = "v")]
     tag_prefix: String,
+
+    /// How the release tag is created. Annotated tags carry a tagger identity
+    /// and satisfy provenance checks; the major alias stays lightweight.
+    #[arg(long, value_enum, default_value_t = TagStyleArg::Annotated)]
+    tag_style: TagStyleArg,
 
     /// Also move the moving major alias tag (e.g. v1) to the new release.
     #[arg(long, default_value_t = false, num_args = 0..=1, default_missing_value = "true")]
@@ -85,6 +91,23 @@ impl BumpArg {
     }
 }
 
+#[derive(Debug, Clone, Copy, ValueEnum)]
+enum TagStyleArg {
+    /// Annotated tag object with a tagger identity (secure default).
+    Annotated,
+    /// Bare ref pointing directly at the release commit.
+    Lightweight,
+}
+
+impl TagStyleArg {
+    const fn style(self) -> TagStyle {
+        match self {
+            Self::Annotated => TagStyle::Annotated,
+            Self::Lightweight => TagStyle::Lightweight,
+        }
+    }
+}
+
 pub fn run_release(args: ReleaseArgs, github_api_base_url: Option<String>) -> Result<()> {
     let github = GitHubClient::new(
         github_api_base_url.unwrap_or_else(|| String::from("https://api.github.com")),
@@ -99,6 +122,7 @@ pub fn run_release(args: ReleaseArgs, github_api_base_url: Option<String>) -> Re
         base_branch: args.base_branch,
         bump: args.bump.level(),
         tag_prefix: args.tag_prefix,
+        tag_style: args.tag_style.style(),
         update_major_alias: args.update_major_alias,
         commit_message: args.commit_message,
         dry_run: args.dry_run,

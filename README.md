@@ -117,7 +117,7 @@ cargo run -- release \
 1. Reads the current version from `Cargo.toml` (`[package].version`, falling back to `[workspace.package].version`).
 2. Finds the latest `--tag-prefix` semver tag and classifies the conventional commits since it (`feat:` → minor, `fix:` → patch, `!`/`BREAKING CHANGE` → major). Merge commits are skipped. When no commit warrants a release it exits successfully with `released=false`; `--bump major|minor|patch` forces a release.
 3. Rewrites the version across workspace member manifests, internal dependency pins, and `Cargo.lock`.
-4. Creates the release commit directly on the base branch (fast-forward only — if the branch advanced past the analyzed head, the run skips cleanly), the `vX.Y.Z` tag, an optional moving major alias tag (`--update-major-alias`), and the GitHub Release with grouped release notes.
+4. Creates the release commit directly on the base branch (fast-forward only — if the branch advanced past the analyzed head, the run skips cleanly), the `vX.Y.Z` tag (annotated by default so provenance checks like `git cat-file -t` pass; `--tag-style lightweight` opts out), an optional moving major alias tag (`--update-major-alias`), and the GitHub Release with grouped release notes.
 5. Writes release notes to `--notes-file` and `released`/`version`/`tag`/`release-url`/`notes-file` outputs to `$GITHUB_OUTPUT` when set.
 
 Release mode requires a token with `contents: write` on the target repository. The `workflow` scope is not required because release commits only touch Cargo manifests.
@@ -197,6 +197,8 @@ jobs:
 ```
 
 Two actions live in this repository: `ThreatFlux/github_actions@<ref>` (dependency maintainer, root `action.yml`) and `ThreatFlux/github_actions/release@<ref>` (auto release). See [release/README.md](release/README.md) for inputs, outputs, token guidance, and branch-protection notes.
+
+Roadmap: the release engine is manifest-driven (`src/versioning.rs`), with Cargo supported today; npm (`package.json`) and Python (`pyproject.toml`) manifest adapters are planned next so the same action covers the whole ThreatFlux org.
 
 ## Development
 

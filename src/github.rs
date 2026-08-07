@@ -238,6 +238,20 @@ struct CreateReleaseRequest<'a> {
     body: &'a str,
 }
 
+#[derive(Debug, Serialize)]
+struct CreateTagObjectRequest<'a> {
+    tag: &'a str,
+    message: &'a str,
+    object: &'a str,
+    #[serde(rename = "type")]
+    object_type: &'a str,
+}
+
+#[derive(Debug, Deserialize)]
+struct CreatedTagObjectResponse {
+    sha: String,
+}
+
 impl GitHubClient {
     pub fn new(base_url: impl Into<String>, token: Option<String>) -> Result<Self> {
         Self::with_options(GitHubClientOptions {
@@ -429,6 +443,29 @@ impl GitHubClient {
             format!("create ref {ref_path} for {owner}/{repository}")
         })?;
         Ok(())
+    }
+
+    /// Create an annotated tag object pointing at `commit_sha` and return the
+    /// tag object's SHA. The tagger identity derives from the token. A ref
+    /// must still be created separately to make the tag reachable.
+    pub fn create_annotated_tag(
+        &self,
+        owner: &str,
+        repository: &str,
+        tag: &str,
+        message: &str,
+        commit_sha: &str,
+    ) -> Result<String> {
+        let payload =
+            CreateTagObjectRequest { tag, message, object: commit_sha, object_type: "commit" };
+        let response =
+            self.post_json(&format!("/repos/{owner}/{repository}/git/tags"), &payload, || {
+                format!("create annotated tag {tag} for {owner}/{repository}")
+            })?;
+        let created = response.json::<CreatedTagObjectResponse>().with_context(|| {
+            format!("failed to decode tag object response for {owner}/{repository}")
+        })?;
+        Ok(created.sha)
     }
 
     pub fn reference_sha(

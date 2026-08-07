@@ -22,6 +22,16 @@ use crate::{
 const MAX_COMPARE_PAGES: u32 = 10;
 const MAX_FIRST_RELEASE_PAGES: u32 = 3;
 
+/// How the release tag is created. Annotated tags are the default: they
+/// carry a tagger identity and satisfy `git cat-file -t == "tag"` provenance
+/// checks. The moving major alias tag is always lightweight.
+#[derive(Debug, Clone, Copy, Eq, PartialEq, Default)]
+pub enum TagStyle {
+    #[default]
+    Annotated,
+    Lightweight,
+}
+
 #[derive(Debug, Clone, Eq, PartialEq)]
 pub struct ReleaseOptions {
     pub repo_root: PathBuf,
@@ -31,6 +41,7 @@ pub struct ReleaseOptions {
     /// Forced bump level; `None` derives it from conventional commits.
     pub bump: Option<BumpLevel>,
     pub tag_prefix: String,
+    pub tag_style: TagStyle,
     pub update_major_alias: bool,
     /// Commit message template; `{version}` is replaced with the new version.
     pub commit_message: String,
@@ -245,7 +256,17 @@ impl ReleasePublisher {
     ) -> Result<()> {
         let owner = &options.owner;
         let repo = &options.repo;
-        self.github.create_ref(owner, repo, &format!("tags/{}", prepared.tag), commit_sha)?;
+        let tag_target = match options.tag_style {
+            TagStyle::Annotated => self.github.create_annotated_tag(
+                owner,
+                repo,
+                &prepared.tag,
+                &format!("Release {}", prepared.tag),
+                commit_sha,
+            )?,
+            TagStyle::Lightweight => commit_sha.to_owned(),
+        };
+        self.github.create_ref(owner, repo, &format!("tags/{}", prepared.tag), &tag_target)?;
 
         if options.update_major_alias {
             let alias = format!("{}{}", options.tag_prefix, prepared.next_version.major);
