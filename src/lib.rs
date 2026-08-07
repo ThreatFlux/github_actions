@@ -5,6 +5,7 @@
 //! an inline comment.
 
 pub mod cargo;
+pub mod conventional;
 pub mod crates_io;
 pub mod github;
 pub mod model;
@@ -14,6 +15,7 @@ pub mod update;
 pub mod workflow;
 
 pub use cargo::{CargoDependencyEntry, CargoUpdateOptions, CargoUpdateReport, CargoUpdater};
+pub use conventional::{BumpLevel, CommitKind, ConventionalCommit};
 pub use crates_io::CratesIoClient;
 pub use github::{CommitInfo, CommitRange, GitHubClient, ReleaseInfo, TagInfo};
 pub use model::{FileUpdate, PinChange, PinReport, UpdateChange, UpdateChangeKind, WorkflowAction};
