@@ -52,7 +52,7 @@ struct RepoArgs {
     workflows_path: PathBuf,
 
     /// GitHub token used to raise API rate limits.
-    #[arg(long, env = "GITHUB_TOKEN")]
+    #[arg(long, env = "GITHUB_TOKEN", hide_env_values = true)]
     token: Option<String>,
 
     /// Repository owner used for remote PR creation.

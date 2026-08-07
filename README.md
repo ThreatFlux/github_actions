@@ -100,7 +100,11 @@ Remote update mode will:
 Release mode:
 
 ```bash
-cargo run -- release --dry-run --token "$GITHUB_TOKEN"
+# Outside GitHub Actions, pass --owner/--repo-name (or set GITHUB_REPOSITORY).
+cargo run -- release --dry-run \
+  --owner ThreatFlux \
+  --repo-name github_actions \
+  --token "$GITHUB_TOKEN"
 cargo run -- release \
   --owner ThreatFlux \
   --repo-name github_actions \

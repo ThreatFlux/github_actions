@@ -547,7 +547,7 @@ impl GitHubClient {
         sha: &str,
     ) -> Result<bool> {
         let payload = UpdateReferenceRequest { sha, force: false };
-        let response = self.send_with_retry_allowing_unprocessable(
+        let response = self.send_with_retry_allowing_non_fast_forward(
             || {
                 self.client
                     .patch(format!(
@@ -632,6 +632,11 @@ impl GitHubClient {
                 format!("failed to decode compare response for {owner}/{repository}")
             })?;
             total_commits = usize::try_from(compare.total_commits).unwrap_or(usize::MAX);
+            // The compare endpoint caps the commit list; once pages come back
+            // empty, further requests cannot make progress.
+            if compare.commits.is_empty() {
+                break;
+            }
             commits.extend(compare.commits.into_iter().map(commit_info_from_response));
             if commits.len() >= total_commits {
                 break;
@@ -768,7 +773,9 @@ impl GitHubClient {
         )
     }
 
-    fn send_with_retry<F, D>(&self, mut build_request: F, describe: D) -> Result<Response>
+    /// Send with retry/backoff and return the first non-retryable response,
+    /// whatever its status. Status-specific handling lives in the wrappers.
+    fn send_raw_with_retry<F, D>(&self, mut build_request: F, describe: &D) -> Result<Response>
     where
         F: FnMut() -> RequestBuilder,
         D: Fn() -> String,
@@ -777,14 +784,13 @@ impl GitHubClient {
 
         loop {
             match build_request().send() {
-                Ok(response) if response.status().is_success() => return Ok(response),
                 Ok(response) => {
                     if Self::should_retry_response(&response) && attempt < self.max_retries {
                         self.sleep_for_retry(response.headers(), attempt);
                         attempt += 1;
                         continue;
                     }
-                    return self.error_from_response(response, &describe());
+                    return Ok(response);
                 }
                 Err(error) => {
                     if (error.is_timeout() || error.is_connect()) && attempt < self.max_retries {
@@ -796,76 +802,62 @@ impl GitHubClient {
                 }
             }
         }
+    }
+
+    fn send_with_retry<F, D>(&self, build_request: F, describe: D) -> Result<Response>
+    where
+        F: FnMut() -> RequestBuilder,
+        D: Fn() -> String,
+    {
+        let response = self.send_raw_with_retry(build_request, &describe)?;
+        if response.status().is_success() {
+            return Ok(response);
+        }
+        self.error_from_response(response, &describe())
     }
 
     fn send_with_retry_allowing_not_found<D>(
         &self,
-        mut build_request: impl FnMut() -> RequestBuilder,
+        build_request: impl FnMut() -> RequestBuilder,
         describe: D,
     ) -> Result<Option<Response>>
     where
         D: Fn() -> String,
     {
-        let mut attempt = 0u32;
-
-        loop {
-            match build_request().send() {
-                Ok(response) if response.status() == StatusCode::NOT_FOUND => return Ok(None),
-                Ok(response) if response.status().is_success() => return Ok(Some(response)),
-                Ok(response) => {
-                    if Self::should_retry_response(&response) && attempt < self.max_retries {
-                        self.sleep_for_retry(response.headers(), attempt);
-                        attempt += 1;
-                        continue;
-                    }
-                    return self.error_from_response(response, &describe()).map(Some);
-                }
-                Err(error) => {
-                    if (error.is_timeout() || error.is_connect()) && attempt < self.max_retries {
-                        thread::sleep(self.calculate_backoff(attempt));
-                        attempt += 1;
-                        continue;
-                    }
-                    return Err(error).with_context(describe);
-                }
-            }
+        let response = self.send_raw_with_retry(build_request, &describe)?;
+        if response.status() == StatusCode::NOT_FOUND {
+            return Ok(None);
         }
+        if response.status().is_success() {
+            return Ok(Some(response));
+        }
+        self.error_from_response(response, &describe()).map(Some)
     }
 
-    fn send_with_retry_allowing_unprocessable<D>(
+    /// Like `send_with_retry`, but a 422 whose body reports a non-fast-forward
+    /// ref update returns `Ok(None)`. Any other 422 is still an error so
+    /// validation failures (bad SHA, invalid ref name) surface loudly.
+    fn send_with_retry_allowing_non_fast_forward<D>(
         &self,
-        mut build_request: impl FnMut() -> RequestBuilder,
+        build_request: impl FnMut() -> RequestBuilder,
         describe: D,
     ) -> Result<Option<Response>>
     where
         D: Fn() -> String,
     {
-        let mut attempt = 0u32;
-
-        loop {
-            match build_request().send() {
-                Ok(response) if response.status() == StatusCode::UNPROCESSABLE_ENTITY => {
-                    return Ok(None);
-                }
-                Ok(response) if response.status().is_success() => return Ok(Some(response)),
-                Ok(response) => {
-                    if Self::should_retry_response(&response) && attempt < self.max_retries {
-                        self.sleep_for_retry(response.headers(), attempt);
-                        attempt += 1;
-                        continue;
-                    }
-                    return self.error_from_response(response, &describe()).map(Some);
-                }
-                Err(error) => {
-                    if (error.is_timeout() || error.is_connect()) && attempt < self.max_retries {
-                        thread::sleep(self.calculate_backoff(attempt));
-                        attempt += 1;
-                        continue;
-                    }
-                    return Err(error).with_context(describe);
-                }
+        let response = self.send_raw_with_retry(build_request, &describe)?;
+        if response.status() == StatusCode::UNPROCESSABLE_ENTITY {
+            let body =
+                response.text().unwrap_or_else(|_| String::from("<response body unavailable>"));
+            if body.to_ascii_lowercase().contains("fast forward") {
+                return Ok(None);
             }
+            bail!("{}: GitHub API returned 422 Unprocessable Entity ({body})", describe());
         }
+        if response.status().is_success() {
+            return Ok(Some(response));
+        }
+        self.error_from_response(response, &describe()).map(Some)
     }
 
     fn should_retry_response(response: &Response) -> bool {
@@ -1166,6 +1158,24 @@ mod tests {
     }
 
     #[test]
+    fn update_ref_fast_forward_errors_on_unrelated_validation_failures() {
+        let mut server = Server::new();
+        let _mock = server
+            .mock("PATCH", "/repos/acme/demo/git/refs/heads/main")
+            .with_status(422)
+            .with_body(r#"{"message":"Object does not exist"}"#)
+            .create();
+
+        let client = GitHubClient::new(server.url(), Some(String::from("ghp_testtoken")))
+            .expect("github client");
+        let error = client
+            .update_ref_fast_forward("acme", "demo", "heads/main", "commitsha")
+            .expect_err("validation failure");
+
+        assert!(error.to_string().contains("Object does not exist"), "{error}");
+    }
+
+    #[test]
     fn update_ref_fast_forward_succeeds_when_ref_is_current() {
         let mut server = Server::new();
         let _mock = server
@@ -1269,6 +1279,42 @@ mod tests {
         let range = client
             .compare_commits("acme", "demo", "v0.1.0", "headsha", 1)
             .expect("compare commits");
+
+        assert_eq!(range.commits.len(), 100);
+        assert!(range.truncated);
+    }
+
+    #[test]
+    fn compare_commits_stops_when_pages_run_dry() {
+        let mut server = Server::new();
+        let first_page: Vec<String> = (0..100)
+            .map(|index| {
+                format!(
+                    r#"{{"sha":"{index:040}","commit":{{"message":"fix: {index}"}},"parents":[{{}}]}}"#
+                )
+            })
+            .collect();
+        let _first = server
+            .mock("GET", "/repos/acme/demo/compare/v0.1.0...headsha?per_page=100&page=1")
+            .expect(1)
+            .with_status(200)
+            .with_body(format!(r#"{{"total_commits":300,"commits":[{}]}}"#, first_page.join(",")))
+            .create();
+        let _second = server
+            .mock("GET", "/repos/acme/demo/compare/v0.1.0...headsha?per_page=100&page=2")
+            .expect(1)
+            .with_status(200)
+            .with_body(r#"{"total_commits":300,"commits":[]}"#)
+            .create();
+        let _third = server
+            .mock("GET", "/repos/acme/demo/compare/v0.1.0...headsha?per_page=100&page=3")
+            .expect(0)
+            .create();
+
+        let client = GitHubClient::new(server.url(), Some(String::from("ghp_testtoken")))
+            .expect("github client");
+        let range =
+            client.compare_commits("acme", "demo", "v0.1.0", "headsha", 10).expect("compare");
 
         assert_eq!(range.commits.len(), 100);
         assert!(range.truncated);

@@ -22,7 +22,7 @@ pub struct ReleaseArgs {
     repo: PathBuf,
 
     /// GitHub token used to create the release commit, tag, and release.
-    #[arg(long, env = "GITHUB_TOKEN")]
+    #[arg(long, env = "GITHUB_TOKEN", hide_env_values = true)]
     token: Option<String>,
 
     /// Repository owner; falls back to `GITHUB_REPOSITORY`.
