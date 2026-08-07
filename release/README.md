@@ -156,3 +156,7 @@ uses: ThreatFlux/github_actions/release@<40-char-sha> # vX.Y.Z
 
 The moving `v0` (later `v1`) alias tag is maintained by this repository's own
 release automation and is the convenience alternative.
+
+The reusable workflow needs no separate action pin: it checks out and runs the
+release action at its own commit (`job.workflow_sha`), so the action version
+always matches whatever workflow ref you pinned.

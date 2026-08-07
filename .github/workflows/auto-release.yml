@@ -84,12 +84,12 @@ jobs:
       - name: Decide whether to attempt a release
         id: decide
         env:
-          EVENT_NAME: ${{ github.event_name }}
           ALL_PASSED: ${{ steps.ci_status.outputs.all_passed }}
         run: |
           # The release CLI itself no-ops when no conventional commit warrants
-          # a release, so this gate only enforces green CI and Security runs.
-          if [[ "${EVENT_NAME}" == "workflow_dispatch" ]] || [[ "${ALL_PASSED}" == "true" ]]; then
+          # a release, so this gate only enforces green CI and Security runs —
+          # including for manual dispatches.
+          if [[ "${ALL_PASSED}" == "true" ]]; then
             echo "should_release=true" >> "$GITHUB_OUTPUT"
           else
             echo "should_release=false" >> "$GITHUB_OUTPUT"

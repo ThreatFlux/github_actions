@@ -70,9 +70,21 @@ jobs:
         with:
           persist-credentials: false
 
+      # Fetch the release action at the exact commit of this reusable
+      # workflow (job.workflow_sha), so the action version always matches the
+      # workflow ref the caller pinned — no mutable cross-repo action
+      # reference.
+      - name: Checkout the release action at the workflow ref
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: ${{ job.workflow_repository || 'ThreatFlux/github_actions' }}
+          ref: ${{ job.workflow_sha }}
+          path: .release-action
+          persist-credentials: false
+
       - name: Release
         id: release
-        uses: ThreatFlux/github_actions/release@main # replaced by the release automation with a SHA-pinned ref
+        uses: ./.release-action/release
         with:
           token: ${{ secrets.release-token || github.token }}
           bump: ${{ inputs.bump }}

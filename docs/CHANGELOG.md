@@ -90,5 +90,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Bootstrap checklist and README standards documentation
 - Rust 2024 edition default with 1.96.0 MSRV baseline
 
-[0.2.3]: https://github.com/ThreatFlux/github_actions/compare/v0.2.2...HEAD
+[Unreleased]: https://github.com/ThreatFlux/github_actions/compare/v0.3.0...HEAD
+[0.3.0]: https://github.com/ThreatFlux/github_actions/compare/v0.2.2...v0.3.0
+[0.2.3]: https://github.com/ThreatFlux/github_actions/compare/v0.2.2...v0.3.0
 [0.5.0]: https://github.com/ThreatFlux/rust-cicd-template/releases/tag/v0.5.0
