@@ -21,14 +21,14 @@
 
 ## Automated Release (default)
 
-Releases are driven by [Conventional Commits](https://www.conventionalcommits.org/). When CI and security checks pass on `main`, the `auto-release.yml` workflow:
+Releases are driven by [Conventional Commits](https://www.conventionalcommits.org/). When CI and security checks pass on `main`, the `auto-release.yml` workflow runs this repository's own [release action](../release/) (`uses: ./release`), which:
 
-1. Analyzes commits since the last tag.
-2. Determines the version bump (patch / minor / major) from commit prefixes.
-3. Creates a new Git tag (`v*`).
-4. The tag triggers `release.yml`, which builds, packages, publishes, and creates the GitHub Release.
+1. Analyzes commits since the last `v*` tag through the GitHub API.
+2. Determines the version bump (patch / minor / major) from commit prefixes; chore/docs-only merges produce no release.
+3. Rewrites `Cargo.toml` and `Cargo.lock`, commits directly to `main` (fast-forward only), creates the `v*` tag, moves the `v0` major alias tag, and creates the GitHub Release with generated notes.
+4. `auto-release.yml` then dispatches `release.yml` (build/package/publish) and `docker.yml` (GHCR images) on the new tag. This dispatch is explicit because tags created with `GITHUB_TOKEN` do not trigger `on: push: tags:` workflows on their own.
 
-**No manual steps are required for routine releases.**
+**No manual steps are required for routine releases.** A `workflow_dispatch` of `auto-release.yml` with a `version_bump` choice forces a release when no commit qualifies.
 
 ## Manual Release
 

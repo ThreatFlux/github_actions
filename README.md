@@ -176,6 +176,28 @@ jobs:
 
 The repository also ships an [`action.yml`](action.yml) wrapper so the binary can run as a container action.
 
+## Auto Release Action
+
+The [`release/`](release/) sub-action gives any Cargo-based repository automatic releases on merge to main: it bumps the version from conventional commits, rewrites `Cargo.toml`/`Cargo.lock`, and creates the release commit, tag, and GitHub Release with generated notes — entirely through the GitHub API, from a prebuilt image that starts in seconds.
+
+```yaml
+name: Auto Release
+on:
+  push:
+    branches: [main]
+concurrency:
+  group: auto-release-${{ github.ref }}
+permissions:
+  contents: write
+jobs:
+  release:
+    uses: ThreatFlux/github_actions/.github/workflows/reusable-auto-release.yml@v0 # pin to a SHA in production
+    with:
+      bump: auto
+```
+
+Two actions live in this repository: `ThreatFlux/github_actions@<ref>` (dependency maintainer, root `action.yml`) and `ThreatFlux/github_actions/release@<ref>` (auto release). See [release/README.md](release/README.md) for inputs, outputs, token guidance, and branch-protection notes.
+
 ## Development
 
 ```bash

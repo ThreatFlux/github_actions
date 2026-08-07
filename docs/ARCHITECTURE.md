@@ -15,11 +15,16 @@ That keeps the original intent visible while making the executed dependency immu
 
 ## Module Layout
 
-- `src/github.rs`: blocking GitHub API client used to resolve refs, discover latest releases, retry through rate limits, and perform remote repository mutations
+- `src/github.rs`: blocking GitHub API client used to resolve refs, discover latest releases, retry through rate limits, and perform remote repository mutations (branches, tags, commits, releases)
 - `src/workflow.rs`: workflow discovery, `uses:` scanning, and line-oriented rewrites
 - `src/model.rs`: shared domain types for scanned actions and rewrite reports
 - `src/pinning.rs`: orchestration layer for conservative pinning of the existing ref
 - `src/update.rs`: version-aware update and status orchestration
+- `src/cargo.rs`: Cargo manifest scanning and registry-backed dependency updates
+- `src/crates_io.rs`: blocking crates.io API client with retry handling
+- `src/conventional.rs`: conventional-commit classification and semver bump computation
+- `src/versioning.rs`: release version rewriting across workspace manifests and `Cargo.lock`
+- `src/release.rs`: release orchestration — commit range analysis, race-guarded commit/tag/release publishing, and notes generation
 - `src/remote.rs`: remote branch, commit, and pull request publishing for update mode
 - `src/main.rs`: Clap-based CLI entrypoint
 

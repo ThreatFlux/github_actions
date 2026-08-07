@@ -26,6 +26,29 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Added
+
+- `release/` sub-action (`ThreatFlux/github_actions/release@<ref>`) packaging the release command as a prebuilt-image Docker action for any Cargo repository
+- `reusable-auto-release.yml` callable workflow wrapping checkout plus the release action
+- Moving `v0` major alias tag maintained by the release automation
+
+### Changed
+
+- `auto-release.yml` now dogfoods the release action instead of the bash/python release steps
+
+### Fixed
+
+- Tag pipelines (`release.yml`, `docker.yml`) never ran for pushed tags because tags created with `GITHUB_TOKEN` do not trigger workflows; `auto-release.yml` now dispatches them explicitly on the new tag
+- Container signing now also runs for `v*` tag builds instead of only `main`
+
+## [0.3.0] - 2026-08-07
+
+### Added
+
+- `release` CLI command: conventional-commit-driven version bumps, Cargo manifest/lockfile rewriting, and API-driven release commit, tag, and GitHub Release creation
+
 ## [0.2.3] - 2026-08-01
 
 ### Added
@@ -67,5 +90,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Bootstrap checklist and README standards documentation
 - Rust 2024 edition default with 1.96.0 MSRV baseline
 
-[0.2.3]: https://github.com/ThreatFlux/github_actions/compare/v0.2.2...HEAD
+[Unreleased]: https://github.com/ThreatFlux/github_actions/compare/v0.3.0...HEAD
+[0.3.0]: https://github.com/ThreatFlux/github_actions/compare/v0.2.2...v0.3.0
+[0.2.3]: https://github.com/ThreatFlux/github_actions/compare/v0.2.2...v0.3.0
 [0.5.0]: https://github.com/ThreatFlux/rust-cicd-template/releases/tag/v0.5.0
