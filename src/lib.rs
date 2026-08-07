@@ -22,7 +22,7 @@ pub use crates_io::CratesIoClient;
 pub use github::{CommitInfo, CommitRange, GitHubClient, ReleaseInfo, TagInfo};
 pub use model::{FileUpdate, PinChange, PinReport, UpdateChange, UpdateChangeKind, WorkflowAction};
 pub use pinning::{PinMode, PinOptions, WorkflowPinner};
-pub use release::{ReleaseOptions, ReleaseOutcome, ReleasePublisher, ReleaseReport};
+pub use release::{ReleaseOptions, ReleaseOutcome, ReleasePublisher, ReleaseReport, TagStyle};
 pub use remote::{PullRequestOptions, PullRequestResult, RemoteUpdatePublisher};
 pub use update::{UpdateMode, UpdateOptions, UpdateReport, VersionEntry, WorkflowUpdater};
 pub use versioning::{VersionRewritePlan, current_version, plan_version_rewrite};

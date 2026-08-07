@@ -30,6 +30,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- `--tag-style` option for the `release` command; annotated tag objects are now the default so downstream provenance checks (`git cat-file -t`) pass, with `lightweight` as the opt-out
+
+## [0.4.2] - 2026-08-07
+
+### Fixed
+
+- `release.yml` crates.io publish script died on an indented heredoc terminator before ever publishing; Windows release archives now ship a `.zip.sha256` checksum
+
+## [0.4.1] - 2026-08-07
+
+### Fixed
+
+- `release.yml` native builds run under bash on Windows runners; the release sub-action image is pinned to a semver digest
+
+## [0.4.0] - 2026-08-07
+
+### Added
+
 - `release/` sub-action (`ThreatFlux/github_actions/release@<ref>`) packaging the release command as a prebuilt-image Docker action for any Cargo repository
 - `reusable-auto-release.yml` callable workflow wrapping checkout plus the release action
 - Moving `v0` major alias tag maintained by the release automation
@@ -90,7 +108,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Bootstrap checklist and README standards documentation
 - Rust 2024 edition default with 1.96.0 MSRV baseline
 
-[Unreleased]: https://github.com/ThreatFlux/github_actions/compare/v0.3.0...HEAD
+[Unreleased]: https://github.com/ThreatFlux/github_actions/compare/v0.4.2...HEAD
+[0.4.2]: https://github.com/ThreatFlux/github_actions/compare/v0.4.1...v0.4.2
+[0.4.1]: https://github.com/ThreatFlux/github_actions/compare/v0.4.0...v0.4.1
+[0.4.0]: https://github.com/ThreatFlux/github_actions/compare/v0.3.0...v0.4.0
 [0.3.0]: https://github.com/ThreatFlux/github_actions/compare/v0.2.2...v0.3.0
 [0.2.3]: https://github.com/ThreatFlux/github_actions/compare/v0.2.2...v0.3.0
 [0.5.0]: https://github.com/ThreatFlux/rust-cicd-template/releases/tag/v0.5.0
