@@ -139,11 +139,11 @@ struct ReleaseArgs {
     #[arg(long, env = "GITHUB_TOKEN")]
     token: Option<String>,
 
-    /// Repository owner; falls back to GITHUB_REPOSITORY.
+    /// Repository owner; falls back to `GITHUB_REPOSITORY`.
     #[arg(long, env = "OWNER")]
     owner: Option<String>,
 
-    /// Repository name; falls back to GITHUB_REPOSITORY.
+    /// Repository name; falls back to `GITHUB_REPOSITORY`.
     #[arg(long = "repo-name", env = "REPO_NAME")]
     repo_name: Option<String>,
 

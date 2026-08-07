@@ -437,7 +437,7 @@ mod tests {
             .match_body(Matcher::AllOf(vec![
                 Matcher::Regex(r#""tag_name":"v0\.3\.0""#.into()),
                 Matcher::Regex(r#""target_commitish":"newcommitsha""#.into()),
-                Matcher::Regex(r#"### Features"#.into()),
+                Matcher::Regex("### Features".into()),
             ]))
             .with_status(201)
             .with_body(r#"{"html_url":"https://github.com/acme/demo/releases/tag/v0.3.0"}"#)
