@@ -212,8 +212,10 @@ jobs:
         run: |
           mkdir dist
           Copy-Item "target/${{ matrix.target }}/release/${env:BINARY_NAME}.exe" dist/
-          Compress-Archive -Path dist/* -DestinationPath "${env:BINARY_NAME}-${{ matrix.artifact }}.zip"
-          Get-FileHash "${env:BINARY_NAME}-${{ matrix.artifact }}.zip" -Algorithm SHA256 | Format-List
+          $archive = "${env:BINARY_NAME}-${{ matrix.artifact }}.zip"
+          Compress-Archive -Path dist/* -DestinationPath $archive
+          $hash = (Get-FileHash $archive -Algorithm SHA256).Hash.ToLower()
+          "$hash  $archive" | Out-File -Encoding ascii "$archive.sha256"
 
       - name: Upload artifacts (Unix)
         if: runner.os != 'Windows'
@@ -228,7 +230,7 @@ jobs:
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: release-${{ matrix.artifact }}
-          path: "*.zip"
+          path: "*.zip*"
           retention-days: 5
 
   sbom:
@@ -363,18 +365,17 @@ jobs:
         run: |
           set -euo pipefail
           VERSION="${{ needs.prepare.outputs.version }}"
+          # Wait until crates.io serves the published version so dependent
+          # packages in PUBLISH_PACKAGES can resolve it.
+          version_visible() {
+            curl -fsSL "https://crates.io/api/v1/crates/$1" \
+              | python3 -c 'import json, sys; payload = json.load(sys.stdin); raise SystemExit(0 if any(v["num"] == sys.argv[1] for v in payload.get("versions", [])) else 1)' "$VERSION"
+          }
           if [[ -n "${PUBLISH_PACKAGES}" ]]; then
             for package in ${PUBLISH_PACKAGES}; do
               cargo publish -p "${package}" --locked
               for _ in $(seq 1 20); do
-                if curl -fsSL "https://crates.io/api/v1/crates/${package}" | python3 - "$VERSION" <<'PY'
-                  import json
-                  import sys
-                  payload = json.load(sys.stdin)
-                  version = sys.argv[1]
-                  raise SystemExit(0 if any(v["num"] == version for v in payload.get("versions", [])) else 1)
-                  PY
-                then
+                if version_visible "${package}"; then
                   break
                 fi
                 sleep 15
