@@ -75,6 +75,30 @@ pub struct PullRequestInfo {
     pub url: String,
 }
 
+#[derive(Debug, Clone, Eq, PartialEq)]
+pub struct TagInfo {
+    pub name: String,
+    pub sha: Option<String>,
+}
+
+#[derive(Debug, Clone, Eq, PartialEq)]
+pub struct CommitInfo {
+    pub sha: String,
+    pub message: String,
+    pub is_merge: bool,
+}
+
+#[derive(Debug, Clone, Eq, PartialEq)]
+pub struct CommitRange {
+    pub commits: Vec<CommitInfo>,
+    pub truncated: bool,
+}
+
+#[derive(Debug, Clone, Eq, PartialEq)]
+pub struct ReleaseInfo {
+    pub url: String,
+}
+
 #[derive(Debug, Deserialize)]
 struct RepositoryResponse {
     default_branch: String,
@@ -124,6 +148,32 @@ struct PullRequestResponse {
 #[derive(Debug, Deserialize)]
 struct UserResponse {
     login: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+struct CompareResponse {
+    total_commits: u64,
+    commits: Vec<RepoCommitResponse>,
+}
+
+#[derive(Debug, Deserialize)]
+struct RepoCommitResponse {
+    sha: String,
+    commit: RepoCommitDetail,
+    parents: Vec<CommitParent>,
+}
+
+#[derive(Debug, Deserialize)]
+struct RepoCommitDetail {
+    message: String,
+}
+
+#[derive(Debug, Deserialize)]
+struct CommitParent {}
+
+#[derive(Debug, Deserialize)]
+struct CreatedReleaseResponse {
+    html_url: String,
 }
 
 #[derive(Debug, Serialize)]
@@ -178,6 +228,14 @@ struct CreatePullRequestRequest<'a> {
 #[derive(Debug, Serialize)]
 struct AddLabelsRequest<'a> {
     labels: &'a [String],
+}
+
+#[derive(Debug, Serialize)]
+struct CreateReleaseRequest<'a> {
+    tag_name: &'a str,
+    target_commitish: &'a str,
+    name: &'a str,
+    body: &'a str,
 }
 
 impl GitHubClient {
@@ -355,12 +413,41 @@ impl GitHubClient {
         branch: &str,
         base_sha: &str,
     ) -> Result<()> {
-        let reference = format!("refs/heads/{branch}");
-        let payload = CreateReferenceRequest { reference: &reference, sha: base_sha };
+        self.create_ref(owner, repository, &format!("heads/{branch}"), base_sha)
+    }
+
+    pub fn create_ref(
+        &self,
+        owner: &str,
+        repository: &str,
+        ref_path: &str,
+        sha: &str,
+    ) -> Result<()> {
+        let reference = format!("refs/{ref_path}");
+        let payload = CreateReferenceRequest { reference: &reference, sha };
         self.post_json(&format!("/repos/{owner}/{repository}/git/refs"), &payload, || {
-            format!("create branch {branch} for {owner}/{repository}")
+            format!("create ref {ref_path} for {owner}/{repository}")
         })?;
         Ok(())
+    }
+
+    pub fn reference_sha(
+        &self,
+        owner: &str,
+        repository: &str,
+        ref_path: &str,
+    ) -> Result<Option<String>> {
+        let response = self.send_with_retry_allowing_not_found(
+            || self.get(&format!("/repos/{owner}/{repository}/git/ref/{ref_path}")),
+            || format!("fetch ref {ref_path} for {owner}/{repository}"),
+        )?;
+        let Some(response) = response else {
+            return Ok(None);
+        };
+        let reference = response
+            .json::<ReferenceResponse>()
+            .with_context(|| format!("failed to decode ref {ref_path} for {owner}/{repository}"))?;
+        Ok(Some(reference.object.sha))
     }
 
     pub fn create_blob(&self, owner: &str, repository: &str, content: &str) -> Result<String> {
@@ -430,12 +517,164 @@ impl GitHubClient {
         branch: &str,
         commit_sha: &str,
     ) -> Result<()> {
-        let payload = UpdateReferenceRequest { sha: commit_sha, force: false };
+        self.update_ref(owner, repository, &format!("heads/{branch}"), commit_sha, false)
+    }
+
+    pub fn update_ref(
+        &self,
+        owner: &str,
+        repository: &str,
+        ref_path: &str,
+        sha: &str,
+        force: bool,
+    ) -> Result<()> {
+        let payload = UpdateReferenceRequest { sha, force };
         self.patch_json(
-            &format!("/repos/{owner}/{repository}/git/refs/heads/{branch}"),
+            &format!("/repos/{owner}/{repository}/git/refs/{ref_path}"),
             &payload,
-            || format!("update branch {branch} for {owner}/{repository}"),
+            || format!("update ref {ref_path} for {owner}/{repository}"),
         )?;
+        Ok(())
+    }
+
+    /// Fast-forward `ref_path` to `sha`; returns `Ok(false)` when GitHub rejects
+    /// the update because it is not a fast forward (HTTP 422).
+    pub fn update_ref_fast_forward(
+        &self,
+        owner: &str,
+        repository: &str,
+        ref_path: &str,
+        sha: &str,
+    ) -> Result<bool> {
+        let payload = UpdateReferenceRequest { sha, force: false };
+        let response = self.send_with_retry_allowing_unprocessable(
+            || {
+                self.client
+                    .patch(format!(
+                        "{}/repos/{owner}/{repository}/git/refs/{ref_path}",
+                        self.base_url
+                    ))
+                    .with_auth(self)
+                    .json(&payload)
+            },
+            || format!("fast-forward ref {ref_path} for {owner}/{repository}"),
+        )?;
+        Ok(response.is_some())
+    }
+
+    pub fn list_tags(&self, owner: &str, repository: &str, max_pages: u32) -> Result<Vec<TagInfo>> {
+        let mut tags = Vec::new();
+        for page in 1..=max_pages {
+            let response = self.send_with_retry(
+                || self.get(&format!("/repos/{owner}/{repository}/tags?per_page=100&page={page}")),
+                || format!("list tags for {owner}/{repository}"),
+            )?;
+            let page_tags = response.json::<Vec<TagResponse>>().with_context(|| {
+                format!("failed to decode tags response for {owner}/{repository}")
+            })?;
+            let page_len = page_tags.len();
+            tags.extend(
+                page_tags.into_iter().map(|tag| TagInfo {
+                    name: tag.name,
+                    sha: tag.commit.map(|commit| commit.sha),
+                }),
+            );
+            if page_len < 100 {
+                break;
+            }
+        }
+        Ok(tags)
+    }
+
+    pub fn compare_commits(
+        &self,
+        owner: &str,
+        repository: &str,
+        base: &str,
+        head: &str,
+        max_pages: u32,
+    ) -> Result<CommitRange> {
+        let encoded_base = urlencoding::encode(base);
+        let encoded_head = urlencoding::encode(head);
+        let mut commits = Vec::new();
+        let mut total_commits = 0usize;
+        for page in 1..=max_pages {
+            let response = self.send_with_retry(
+                || {
+                    self.get(&format!(
+                        "/repos/{owner}/{repository}/compare/{encoded_base}...{encoded_head}?per_page=100&page={page}"
+                    ))
+                },
+                || format!("compare {base}...{head} for {owner}/{repository}"),
+            )?;
+            let compare = response.json::<CompareResponse>().with_context(|| {
+                format!("failed to decode compare response for {owner}/{repository}")
+            })?;
+            total_commits = usize::try_from(compare.total_commits).unwrap_or(usize::MAX);
+            commits.extend(compare.commits.into_iter().map(commit_info_from_response));
+            if commits.len() >= total_commits {
+                break;
+            }
+        }
+        let truncated = commits.len() < total_commits;
+        Ok(CommitRange { commits, truncated })
+    }
+
+    pub fn list_commits(
+        &self,
+        owner: &str,
+        repository: &str,
+        head_sha: &str,
+        max_pages: u32,
+    ) -> Result<CommitRange> {
+        let encoded_head = urlencoding::encode(head_sha);
+        let mut commits = Vec::new();
+        let mut last_page_full = false;
+        for page in 1..=max_pages {
+            let response = self.send_with_retry(
+                || {
+                    self.get(&format!(
+                        "/repos/{owner}/{repository}/commits?sha={encoded_head}&per_page=100&page={page}"
+                    ))
+                },
+                || format!("list commits for {owner}/{repository}"),
+            )?;
+            let page_commits = response.json::<Vec<RepoCommitResponse>>().with_context(|| {
+                format!("failed to decode commits response for {owner}/{repository}")
+            })?;
+            last_page_full = page_commits.len() == 100;
+            commits.extend(page_commits.into_iter().map(commit_info_from_response));
+            if !last_page_full {
+                break;
+            }
+        }
+        Ok(CommitRange { commits, truncated: last_page_full })
+    }
+
+    pub fn create_release(
+        &self,
+        owner: &str,
+        repository: &str,
+        tag_name: &str,
+        name: &str,
+        body: &str,
+        target_commitish: &str,
+    ) -> Result<ReleaseInfo> {
+        let payload = CreateReleaseRequest { tag_name, target_commitish, name, body };
+        let response =
+            self.post_json(&format!("/repos/{owner}/{repository}/releases"), &payload, || {
+                format!("create release {tag_name} for {owner}/{repository}")
+            })?;
+        let release = response.json::<CreatedReleaseResponse>().with_context(|| {
+            format!("failed to decode release response for {owner}/{repository}")
+        })?;
+        Ok(ReleaseInfo { url: release.html_url })
+    }
+
+    pub fn ensure_token(&self) -> Result<()> {
+        if self.token.is_none() {
+            bail!("a GitHub token is required to create releases; provide --token or GITHUB_TOKEN");
+        }
         Ok(())
     }
 
@@ -572,6 +811,42 @@ impl GitHubClient {
         }
     }
 
+    fn send_with_retry_allowing_unprocessable<D>(
+        &self,
+        mut build_request: impl FnMut() -> RequestBuilder,
+        describe: D,
+    ) -> Result<Option<Response>>
+    where
+        D: Fn() -> String,
+    {
+        let mut attempt = 0u32;
+
+        loop {
+            match build_request().send() {
+                Ok(response) if response.status() == StatusCode::UNPROCESSABLE_ENTITY => {
+                    return Ok(None);
+                }
+                Ok(response) if response.status().is_success() => return Ok(Some(response)),
+                Ok(response) => {
+                    if Self::should_retry_response(&response) && attempt < self.max_retries {
+                        self.sleep_for_retry(response.headers(), attempt);
+                        attempt += 1;
+                        continue;
+                    }
+                    return self.error_from_response(response, &describe()).map(Some);
+                }
+                Err(error) => {
+                    if (error.is_timeout() || error.is_connect()) && attempt < self.max_retries {
+                        thread::sleep(self.calculate_backoff(attempt));
+                        attempt += 1;
+                        continue;
+                    }
+                    return Err(error).with_context(describe);
+                }
+            }
+        }
+    }
+
     fn should_retry_response(response: &Response) -> bool {
         if response.status() == StatusCode::TOO_MANY_REQUESTS || response.status().is_server_error()
         {
@@ -617,6 +892,14 @@ impl GitHubClient {
         }
 
         bail!("{context}: GitHub API returned {status} ({body})")
+    }
+}
+
+fn commit_info_from_response(commit: RepoCommitResponse) -> CommitInfo {
+    CommitInfo {
+        sha: commit.sha,
+        message: commit.commit.message,
+        is_merge: commit.parents.len() > 1,
     }
 }
 
@@ -778,6 +1061,246 @@ mod tests {
         let sha = client.resolve_reference("actions", "cache", "v4").expect("resolve reference");
 
         assert_eq!(sha, "668228422ae6a00e4ad889ee87cd7109ec5666a7");
+    }
+
+    #[test]
+    fn reference_sha_returns_none_when_ref_is_missing() {
+        let mut server = Server::new();
+        let _mock = server
+            .mock("GET", "/repos/acme/demo/git/ref/tags/v1.2.3")
+            .with_status(404)
+            .with_body(r#"{"message":"Not Found"}"#)
+            .create();
+
+        let client = GitHubClient::new(server.url(), Some(String::from("ghp_testtoken")))
+            .expect("github client");
+        let sha = client.reference_sha("acme", "demo", "tags/v1.2.3").expect("reference sha");
+
+        assert_eq!(sha, None);
+    }
+
+    #[test]
+    fn reference_sha_returns_object_sha() {
+        let mut server = Server::new();
+        let _mock = server
+            .mock("GET", "/repos/acme/demo/git/ref/tags/v1.2.3")
+            .with_status(200)
+            .with_body(r#"{"ref":"refs/tags/v1.2.3","object":{"sha":"tagsha"}}"#)
+            .create();
+
+        let client = GitHubClient::new(server.url(), Some(String::from("ghp_testtoken")))
+            .expect("github client");
+        let sha = client.reference_sha("acme", "demo", "tags/v1.2.3").expect("reference sha");
+
+        assert_eq!(sha.as_deref(), Some("tagsha"));
+    }
+
+    #[test]
+    fn create_ref_posts_fully_qualified_tag_reference() {
+        let mut server = Server::new();
+        let _mock = server
+            .mock("POST", "/repos/acme/demo/git/refs")
+            .match_body(Matcher::Regex(r#""ref":"refs/tags/v1\.2\.3""#.into()))
+            .with_status(201)
+            .with_body(r#"{"ref":"refs/tags/v1.2.3"}"#)
+            .create();
+
+        let client = GitHubClient::new(server.url(), Some(String::from("ghp_testtoken")))
+            .expect("github client");
+        client.create_ref("acme", "demo", "tags/v1.2.3", "commitsha").expect("create ref");
+    }
+
+    #[test]
+    fn update_ref_serializes_force_flag() {
+        let mut server = Server::new();
+        let _mock = server
+            .mock("PATCH", "/repos/acme/demo/git/refs/tags/v1")
+            .match_body(Matcher::Regex(r#""force":true"#.into()))
+            .with_status(200)
+            .with_body(r#"{"ref":"refs/tags/v1"}"#)
+            .create();
+
+        let client = GitHubClient::new(server.url(), Some(String::from("ghp_testtoken")))
+            .expect("github client");
+        client.update_ref("acme", "demo", "tags/v1", "commitsha", true).expect("update ref");
+    }
+
+    #[test]
+    fn update_ref_fast_forward_reports_non_fast_forward_updates() {
+        let mut server = Server::new();
+        let _mock = server
+            .mock("PATCH", "/repos/acme/demo/git/refs/heads/main")
+            .match_body(Matcher::Regex(r#""force":false"#.into()))
+            .with_status(422)
+            .with_body(r#"{"message":"Update is not a fast forward"}"#)
+            .create();
+
+        let client = GitHubClient::new(server.url(), Some(String::from("ghp_testtoken")))
+            .expect("github client");
+        let advanced = client
+            .update_ref_fast_forward("acme", "demo", "heads/main", "commitsha")
+            .expect("fast-forward ref");
+
+        assert!(!advanced);
+    }
+
+    #[test]
+    fn update_ref_fast_forward_succeeds_when_ref_is_current() {
+        let mut server = Server::new();
+        let _mock = server
+            .mock("PATCH", "/repos/acme/demo/git/refs/heads/main")
+            .with_status(200)
+            .with_body(r#"{"ref":"refs/heads/main"}"#)
+            .create();
+
+        let client = GitHubClient::new(server.url(), Some(String::from("ghp_testtoken")))
+            .expect("github client");
+        let advanced = client
+            .update_ref_fast_forward("acme", "demo", "heads/main", "commitsha")
+            .expect("fast-forward ref");
+
+        assert!(advanced);
+    }
+
+    #[test]
+    fn list_tags_paginates_until_a_short_page() {
+        let mut server = Server::new();
+        let full_page: Vec<String> = (0..100)
+            .map(|index| format!(r#"{{"name":"v0.0.{index}","commit":{{"sha":"{index:040}"}}}}"#))
+            .collect();
+        let _first = server
+            .mock("GET", "/repos/acme/demo/tags?per_page=100&page=1")
+            .expect(1)
+            .with_status(200)
+            .with_body(format!("[{}]", full_page.join(",")))
+            .create();
+        let _second = server
+            .mock("GET", "/repos/acme/demo/tags?per_page=100&page=2")
+            .expect(1)
+            .with_status(200)
+            .with_body(r#"[{"name":"v1.0.0","commit":{"sha":"lasttagsha"}}]"#)
+            .create();
+
+        let client = GitHubClient::new(server.url(), Some(String::from("ghp_testtoken")))
+            .expect("github client");
+        let tags = client.list_tags("acme", "demo", 5).expect("list tags");
+
+        assert_eq!(tags.len(), 101);
+        assert_eq!(tags[100].name, "v1.0.0");
+        assert_eq!(tags[100].sha.as_deref(), Some("lasttagsha"));
+    }
+
+    #[test]
+    fn compare_commits_paginates_and_flags_merge_commits() {
+        let mut server = Server::new();
+        let first_page: Vec<String> = (0..100)
+            .map(|index| {
+                format!(
+                    r#"{{"sha":"{index:040}","commit":{{"message":"feat: change {index}"}},"parents":[{{}}]}}"#
+                )
+            })
+            .collect();
+        let _first = server
+            .mock("GET", "/repos/acme/demo/compare/v0.1.0...headsha?per_page=100&page=1")
+            .expect(1)
+            .with_status(200)
+            .with_body(format!(r#"{{"total_commits":101,"commits":[{}]}}"#, first_page.join(",")))
+            .create();
+        let _second = server
+            .mock("GET", "/repos/acme/demo/compare/v0.1.0...headsha?per_page=100&page=2")
+            .expect(1)
+            .with_status(200)
+            .with_body(
+                r#"{"total_commits":101,"commits":[{"sha":"mergesha","commit":{"message":"Merge pull request #1"},"parents":[{},{}]}]}"#,
+            )
+            .create();
+
+        let client = GitHubClient::new(server.url(), Some(String::from("ghp_testtoken")))
+            .expect("github client");
+        let range = client
+            .compare_commits("acme", "demo", "v0.1.0", "headsha", 5)
+            .expect("compare commits");
+
+        assert_eq!(range.commits.len(), 101);
+        assert!(!range.truncated);
+        assert!(!range.commits[0].is_merge);
+        assert!(range.commits[100].is_merge);
+        assert_eq!(range.commits[100].sha, "mergesha");
+    }
+
+    #[test]
+    fn compare_commits_marks_truncation_at_the_page_cap() {
+        let mut server = Server::new();
+        let first_page: Vec<String> = (0..100)
+            .map(|index| {
+                format!(r#"{{"sha":"{index:040}","commit":{{"message":"fix: {index}"}},"parents":[{{}}]}}"#)
+            })
+            .collect();
+        let _first = server
+            .mock("GET", "/repos/acme/demo/compare/v0.1.0...headsha?per_page=100&page=1")
+            .expect(1)
+            .with_status(200)
+            .with_body(format!(r#"{{"total_commits":150,"commits":[{}]}}"#, first_page.join(",")))
+            .create();
+
+        let client = GitHubClient::new(server.url(), Some(String::from("ghp_testtoken")))
+            .expect("github client");
+        let range = client
+            .compare_commits("acme", "demo", "v0.1.0", "headsha", 1)
+            .expect("compare commits");
+
+        assert_eq!(range.commits.len(), 100);
+        assert!(range.truncated);
+    }
+
+    #[test]
+    fn list_commits_stops_on_a_short_page() {
+        let mut server = Server::new();
+        let _first = server
+            .mock("GET", "/repos/acme/demo/commits?sha=headsha&per_page=100&page=1")
+            .expect(1)
+            .with_status(200)
+            .with_body(r#"[{"sha":"onlysha","commit":{"message":"feat: initial"},"parents":[]}]"#)
+            .create();
+
+        let client = GitHubClient::new(server.url(), Some(String::from("ghp_testtoken")))
+            .expect("github client");
+        let range = client.list_commits("acme", "demo", "headsha", 3).expect("list commits");
+
+        assert_eq!(range.commits.len(), 1);
+        assert!(!range.truncated);
+        assert_eq!(range.commits[0].message, "feat: initial");
+    }
+
+    #[test]
+    fn create_release_posts_tag_and_returns_url() {
+        let mut server = Server::new();
+        let _mock = server
+            .mock("POST", "/repos/acme/demo/releases")
+            .match_body(Matcher::AllOf(vec![
+                Matcher::Regex(r#""tag_name":"v1\.2\.3""#.into()),
+                Matcher::Regex(r#""target_commitish":"commitsha""#.into()),
+                Matcher::Regex(r#""name":"Release v1\.2\.3""#.into()),
+            ]))
+            .with_status(201)
+            .with_body(r#"{"html_url":"https://github.com/acme/demo/releases/tag/v1.2.3"}"#)
+            .create();
+
+        let client = GitHubClient::new(server.url(), Some(String::from("ghp_testtoken")))
+            .expect("github client");
+        let release = client
+            .create_release("acme", "demo", "v1.2.3", "Release v1.2.3", "notes", "commitsha")
+            .expect("create release");
+
+        assert_eq!(release.url, "https://github.com/acme/demo/releases/tag/v1.2.3");
+    }
+
+    #[test]
+    fn ensure_token_requires_a_token() {
+        let client = GitHubClient::new("https://api.github.com", None).expect("github client");
+        let error = client.ensure_token().expect_err("missing token");
+
+        assert!(error.to_string().contains("GitHub token"));
     }
 
     #[test]

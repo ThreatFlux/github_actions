@@ -15,7 +15,7 @@ pub mod workflow;
 
 pub use cargo::{CargoDependencyEntry, CargoUpdateOptions, CargoUpdateReport, CargoUpdater};
 pub use crates_io::CratesIoClient;
-pub use github::GitHubClient;
+pub use github::{CommitInfo, CommitRange, GitHubClient, ReleaseInfo, TagInfo};
 pub use model::{FileUpdate, PinChange, PinReport, UpdateChange, UpdateChangeKind, WorkflowAction};
 pub use pinning::{PinMode, PinOptions, WorkflowPinner};
 pub use remote::{PullRequestOptions, PullRequestResult, RemoteUpdatePublisher};
