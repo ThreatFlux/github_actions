@@ -12,6 +12,7 @@ pub mod model;
 pub mod pinning;
 pub mod remote;
 pub mod update;
+pub mod versioning;
 pub mod workflow;
 
 pub use cargo::{CargoDependencyEntry, CargoUpdateOptions, CargoUpdateReport, CargoUpdater};
@@ -22,3 +23,4 @@ pub use model::{FileUpdate, PinChange, PinReport, UpdateChange, UpdateChangeKind
 pub use pinning::{PinMode, PinOptions, WorkflowPinner};
 pub use remote::{PullRequestOptions, PullRequestResult, RemoteUpdatePublisher};
 pub use update::{UpdateMode, UpdateOptions, UpdateReport, VersionEntry, WorkflowUpdater};
+pub use versioning::{VersionRewritePlan, current_version, plan_version_rewrite};
