@@ -210,7 +210,7 @@ impl CargoUpdater {
     }
 }
 
-fn discover_manifest_files(repo_root: &Path) -> Vec<PathBuf> {
+pub(crate) fn discover_manifest_files(repo_root: &Path) -> Vec<PathBuf> {
     let mut files = WalkDir::new(repo_root)
         .into_iter()
         .filter_entry(should_scan_entry)
@@ -511,7 +511,7 @@ fn update_dependency_requirement(
     bail!("unsupported dependency item for '{}'", item_path.join("."))
 }
 
-fn get_item_mut<'a>(item: &'a mut Item, path: &[String]) -> Option<&'a mut Item> {
+pub(crate) fn get_item_mut<'a>(item: &'a mut Item, path: &[String]) -> Option<&'a mut Item> {
     if path.is_empty() {
         return Some(item);
     }

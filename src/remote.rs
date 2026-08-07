@@ -140,7 +140,7 @@ fn default_branch_name() -> String {
     format!("dependency-updates-{timestamp}")
 }
 
-fn relative_repository_path(repo_root: &Path, file: &Path) -> Result<String> {
+pub(crate) fn relative_repository_path(repo_root: &Path, file: &Path) -> Result<String> {
     let relative = file
         .strip_prefix(repo_root)
         .map_err(|error| anyhow!("failed to derive repository-relative path: {error}"))?;

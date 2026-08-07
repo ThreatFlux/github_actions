@@ -1,3 +1,5 @@
+mod release_cli;
+
 use std::path::PathBuf;
 
 use anyhow::Result;
@@ -7,6 +9,7 @@ use github_actions_maintainer::{
     PinOptions, PullRequestOptions, RemoteUpdatePublisher, UpdateChange, UpdateMode, UpdateOptions,
     WorkflowPinner, WorkflowUpdater,
 };
+use release_cli::{ReleaseArgs, run_release};
 
 #[derive(Debug, Parser)]
 #[command(
@@ -33,6 +36,9 @@ enum Commands {
     Update(UpdateArgs),
     /// Report current and latest versions for GitHub Actions in workflows.
     Status(StatusArgs),
+    /// Bump the Cargo version from conventional commits, then commit, tag, and
+    /// publish a GitHub Release.
+    Release(ReleaseArgs),
 }
 
 #[derive(Debug, Args)]
@@ -46,7 +52,7 @@ struct RepoArgs {
     workflows_path: PathBuf,
 
     /// GitHub token used to raise API rate limits.
-    #[arg(long, env = "GITHUB_TOKEN")]
+    #[arg(long, env = "GITHUB_TOKEN", hide_env_values = true)]
     token: Option<String>,
 
     /// Repository owner used for remote PR creation.
@@ -174,6 +180,7 @@ fn run() -> Result<()> {
         Commands::Status(args) => {
             run_status(args, cli.github_api_base_url, cli.crates_api_base_url)
         }
+        Commands::Release(args) => run_release(args, cli.github_api_base_url),
     }
 }
 
@@ -342,7 +349,11 @@ fn parse_labels(raw: &str) -> Vec<String> {
 }
 
 fn resolve_remote_repository(args: &RepoArgs) -> Result<(String, String)> {
-    match (args.owner.as_deref().map(str::trim), args.repo_name.as_deref().map(str::trim)) {
+    resolve_repository(args.owner.as_deref(), args.repo_name.as_deref())
+}
+
+fn resolve_repository(owner: Option<&str>, repo_name: Option<&str>) -> Result<(String, String)> {
+    match (owner.map(str::trim), repo_name.map(str::trim)) {
         (Some(owner), Some(repo_name)) if !owner.is_empty() && !repo_name.is_empty() => {
             return Ok((owner.to_owned(), repo_name.to_owned()));
         }
@@ -355,7 +366,9 @@ fn resolve_remote_repository(args: &RepoArgs) -> Result<(String, String)> {
         return Ok((owner.to_owned(), repo_name.to_owned()));
     }
 
-    anyhow::bail!("--owner and --repo-name are required when --create-pr is enabled")
+    anyhow::bail!(
+        "--owner and --repo-name (or the GITHUB_REPOSITORY environment variable) are required"
+    )
 }
 
 fn run_status(

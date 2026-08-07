@@ -69,6 +69,7 @@ Command behavior:
 - `update`: move selected dependencies to the latest upstream version. By default it targets GitHub Actions; add `--cargo` or `--all` for cargo support
 - `status`: report current tracked versions, latest upstream versions, and whether a change is needed for the selected target set
 - `update` without `--create-pr`: apply changes locally in the checked-out repository, which is the equivalent of the original tool's stage mode
+- `release`: bump the Cargo version from conventional commits, then create the release commit, tag, and GitHub Release through the API (see below)
 
 Cargo update support currently manages registry-backed dependencies that declare a direct version requirement such as:
 
@@ -95,6 +96,31 @@ Remote update mode will:
 - resolve the default branch when `--base-branch` is not provided
 - create a tree/commit/branch through the GitHub API
 - open a pull request and attach any requested labels
+
+Release mode:
+
+```bash
+# Outside GitHub Actions, pass --owner/--repo-name (or set GITHUB_REPOSITORY).
+cargo run -- release --dry-run \
+  --owner ThreatFlux \
+  --repo-name github_actions \
+  --token "$GITHUB_TOKEN"
+cargo run -- release \
+  --owner ThreatFlux \
+  --repo-name github_actions \
+  --update-major-alias \
+  --token "$GITHUB_TOKEN"
+```
+
+`release` runs entirely through the GitHub REST API — no `git`, `gh`, or `cargo` binaries are needed at runtime — so it works inside minimal containers:
+
+1. Reads the current version from `Cargo.toml` (`[package].version`, falling back to `[workspace.package].version`).
+2. Finds the latest `--tag-prefix` semver tag and classifies the conventional commits since it (`feat:` → minor, `fix:` → patch, `!`/`BREAKING CHANGE` → major). Merge commits are skipped. When no commit warrants a release it exits successfully with `released=false`; `--bump major|minor|patch` forces a release.
+3. Rewrites the version across workspace member manifests, internal dependency pins, and `Cargo.lock`.
+4. Creates the release commit directly on the base branch (fast-forward only — if the branch advanced past the analyzed head, the run skips cleanly), the `vX.Y.Z` tag, an optional moving major alias tag (`--update-major-alias`), and the GitHub Release with grouped release notes.
+5. Writes release notes to `--notes-file` and `released`/`version`/`tag`/`release-url`/`notes-file` outputs to `$GITHUB_OUTPUT` when set.
+
+Release mode requires a token with `contents: write` on the target repository. The `workflow` scope is not required because release commits only touch Cargo manifests.
 
 ## Token Permissions
 
