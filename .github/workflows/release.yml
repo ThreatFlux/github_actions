@@ -187,6 +187,8 @@ jobs:
 
       - name: Build (native)
         if: "!matrix.use_cross"
+        # Windows runners default to PowerShell; this step is bash syntax.
+        shell: bash
         run: |
           if [[ -n "${BINARY_PACKAGE}" ]]; then
             cargo build --release --target ${{ matrix.target }} -p "${BINARY_PACKAGE}" --bin "${BINARY_NAME}" --all-features
