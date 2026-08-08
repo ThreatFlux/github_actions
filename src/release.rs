@@ -282,25 +282,22 @@ impl ReleasePublisher {
             &options.release_branch,
             &prepared.branch,
         )?;
-        let pull_request = match pull_request {
-            Some(existing) => {
-                let updated =
-                    self.github.update_pull_request(owner, repo, existing.number, &title, &body)?;
-                report.outcome = ReleaseOutcome::PullRequestUpdated;
-                updated
-            }
-            None => {
-                let created = self.github.create_pull_request(
-                    owner,
-                    repo,
-                    &title,
-                    &body,
-                    &options.release_branch,
-                    &prepared.branch,
-                )?;
-                report.outcome = ReleaseOutcome::PullRequestCreated;
-                created
-            }
+        let pull_request = if let Some(existing) = pull_request {
+            let updated =
+                self.github.update_pull_request(owner, repo, existing.number, &title, &body)?;
+            report.outcome = ReleaseOutcome::PullRequestUpdated;
+            updated
+        } else {
+            let created = self.github.create_pull_request(
+                owner,
+                repo,
+                &title,
+                &body,
+                &options.release_branch,
+                &prepared.branch,
+            )?;
+            report.outcome = ReleaseOutcome::PullRequestCreated;
+            created
         };
         report.pull_request_number = Some(pull_request.number);
         report.pull_request_url = Some(pull_request.url);
