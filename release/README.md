@@ -14,18 +14,25 @@ Reusable workflow (recommended):
 ```yaml
 name: Auto Release
 on:
-  push:
+  workflow_run:
+    workflows: [CI, Security]
+    types: [completed]
     branches: [main]
+  workflow_dispatch:
 concurrency:
   group: auto-release-${{ github.ref }}
 permissions:
   contents: write
+  actions: write # required when dispatch-workflows is used
   pull-requests: write # required when create-pr is true
 jobs:
   release:
     uses: ThreatFlux/github_actions/.github/workflows/reusable-auto-release.yml@v0 # pin to a SHA in production
     with:
       bump: auto
+      required-workflows: CI,Security
+      dispatch-workflows: release.yml,docker.yml
+      dispatch-version-workflow: release.yml
     # secrets:
     #   release-token: ${{ secrets.RELEASE_TOKEN }}   # optional PAT/App token, see Tokens below
 ```
@@ -82,6 +89,16 @@ then opens or updates the matching open PR. It does not move tags or publish a
 GitHub Release; those happen in the follow-on release workflow after merge.
 The action exposes `release-pr-number`, `release-pr-url`, and `release-branch`
 outputs, while `released` remains `false`.
+
+## Reusable workflow inputs
+
+The reusable workflow keeps consumer files small while retaining the common
+release safeguards. `required-workflows` is a comma-separated list of workflow
+names that must pass for the target commit. `dispatch-workflows` is a
+comma-separated list of workflow files to run after a release; set
+`dispatch-version-workflow` when one of them accepts a `version` input. These
+features replace the duplicated `gh run list` and `gh workflow run` shell
+scripts that would otherwise live in every repository.
 
 ## How Versions Are Computed
 

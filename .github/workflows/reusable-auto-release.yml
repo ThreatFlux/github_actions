@@ -1,8 +1,8 @@
 name: Reusable Auto Release
 
-# Callable wrapper around the release action so consuming Cargo repositories
-# need only a few lines of workflow. Callers own the trigger, gating, and
-# concurrency group; see release/README.md for the consumer snippets.
+# Callable release workflow. It owns the common CI gate and optional
+# workflow-dispatch chaining so consuming repositories only declare their
+# triggers and repository-specific pipeline names.
 
 on:
   workflow_call:
@@ -42,6 +42,21 @@ on:
         required: false
         default: automation/release
         type: string
+      required-workflows:
+        description: Comma-separated workflow names that must pass for the target commit.
+        required: false
+        default: ""
+        type: string
+      dispatch-workflows:
+        description: Comma-separated workflow files to dispatch after a release.
+        required: false
+        default: ""
+        type: string
+      dispatch-version-workflow:
+        description: Optional workflow file that receives the released version as a version input.
+        required: false
+        default: ""
+        type: string
     secrets:
       release-token:
         description: Optional GitHub App or PAT token; falls back to GITHUB_TOKEN. Required if the created tag must trigger tag pipelines natively.
@@ -74,8 +89,69 @@ permissions:
   pull-requests: write
 
 jobs:
+  check:
+    name: Check release prerequisites
+    runs-on: ubuntu-latest
+    permissions:
+      actions: read
+      contents: read
+    outputs:
+      should-release: ${{ steps.gate.outputs.should-release }}
+      target-sha: ${{ steps.target.outputs.sha }}
+    steps:
+      - name: Checkout target commit
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          ref: ${{ github.event_name == 'workflow_run' && github.event.workflow_run.head_sha || github.sha }}
+      - name: Resolve target commit
+        id: target
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          WORKFLOW_RUN_HEAD_SHA: ${{ github.event.workflow_run.head_sha }}
+        run: |
+          set -euo pipefail
+          if [[ "$EVENT_NAME" == workflow_run ]]; then
+            [[ "$WORKFLOW_RUN_HEAD_SHA" =~ ^[0-9a-f]{40}$ ]] || { echo "Invalid workflow-run head SHA" >&2; exit 1; }
+            echo "sha=$WORKFLOW_RUN_HEAD_SHA" >> "$GITHUB_OUTPUT"
+          else
+            echo "sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
+          fi
+      - name: Verify required workflows
+        id: gate
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TARGET_SHA: ${{ steps.target.outputs.sha }}
+          REQUIRED_WORKFLOWS: ${{ inputs.required-workflows }}
+          EVENT_NAME: ${{ github.event_name }}
+          TRIGGER_CONCLUSION: ${{ github.event.workflow_run.conclusion }}
+          TRIGGER_REPOSITORY: ${{ github.event.workflow_run.head_repository.full_name }}
+        run: |
+          set -euo pipefail
+          if [[ "$EVENT_NAME" == workflow_run && ( "$TRIGGER_CONCLUSION" != success || "$TRIGGER_REPOSITORY" != "$GITHUB_REPOSITORY" ) ]]; then
+            echo "should-release=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          if [[ -z "$REQUIRED_WORKFLOWS" ]]; then
+            echo "should-release=true" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          IFS=',' read -ra workflows <<< "$REQUIRED_WORKFLOWS"
+          for workflow in "${workflows[@]}"; do
+            workflow="$(xargs <<< "$workflow")"
+            [[ -n "$workflow" ]] || continue
+            conclusion="$(gh run list --workflow="$workflow" --commit="$TARGET_SHA" --event=push --limit=1 --json conclusion --jq '.[0].conclusion // ""')"
+            if [[ "$conclusion" != success ]]; then
+              echo "Required workflow '$workflow' is '$conclusion' for $TARGET_SHA"
+              echo "should-release=false" >> "$GITHUB_OUTPUT"
+              exit 0
+            fi
+          done
+          echo "should-release=true" >> "$GITHUB_OUTPUT"
   release:
     name: Auto Release
+    needs: check
+    if: needs.check.outputs.should-release == 'true'
     runs-on: ubuntu-latest
     permissions:
       contents: write
@@ -93,6 +169,7 @@ jobs:
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
+          ref: ${{ needs.check.outputs.target-sha }}
 
       # Fetch the release action at the exact commit of this reusable
       # workflow (job.workflow_sha), so the action version always matches the
@@ -118,3 +195,23 @@ jobs:
           dry-run: ${{ inputs.dry-run }}
           create-pr: ${{ inputs.create-pr }}
           release-branch: ${{ inputs.release-branch }}
+      - name: Dispatch downstream release workflows
+        if: steps.release.outputs.released == 'true' && inputs.dispatch-workflows != ''
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ steps.release.outputs.tag }}
+          VERSION: ${{ steps.release.outputs.version }}
+          DISPATCH_WORKFLOWS: ${{ inputs.dispatch-workflows }}
+          VERSION_WORKFLOW: ${{ inputs.dispatch-version-workflow }}
+        run: |
+          set -euo pipefail
+          IFS=',' read -ra workflows <<< "$DISPATCH_WORKFLOWS"
+          for workflow in "${workflows[@]}"; do
+            workflow="$(xargs <<< "$workflow")"
+            [[ -n "$workflow" ]] || continue
+            if [[ "$workflow" == "$VERSION_WORKFLOW" ]]; then
+              gh workflow run "$workflow" --repo "$GITHUB_REPOSITORY" --ref "$TAG" -f version="$VERSION"
+            else
+              gh workflow run "$workflow" --repo "$GITHUB_REPOSITORY" --ref "$TAG"
+            fi
+          done
