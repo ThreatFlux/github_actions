@@ -31,6 +31,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Added
 
 - `--tag-style` option for the `release` command; annotated tag objects are now the default so downstream provenance checks (`git cat-file -t`) pass, with `lightweight` as the opt-out
+- `command` input on the root action, which now exposes `pin`, `update`, `status`, and `release` from a single action
+- CLI options resolve from the `INPUT_<NAME>` environment variables GitHub sets for container actions when no explicit flag is given
+
+### Changed
+
+- `auto-release.yml` and `reusable-auto-release.yml` call the root action with `command: release` instead of the `release/` sub-action
+
+### Deprecated
+
+- `release/` sub-action (`ThreatFlux/github_actions/release@<ref>`); use `ThreatFlux/github_actions@<ref>` with `command: release`. It stays functional for the `v0` line and will be removed in the next major version
 
 ## [0.4.2] - 2026-08-07
 
