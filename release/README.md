@@ -113,7 +113,9 @@ The release action and downstream workflow dispatches then authenticate as the
 App. The App installation must have repository `contents: write`,
 `pull_requests: write`, and `actions: write` permissions. If these values are
 not configured, the workflow falls back to `release-token` and finally the
-default `GITHUB_TOKEN`.
+default `GITHUB_TOKEN`. This authenticates and attributes API commits and PRs
+to the App; cryptographic commit signing still requires a separate signing-key
+policy on the repository.
 ## How Versions Are Computed
 
 Commits since the latest `<tag-prefix>X.Y.Z` tag are classified by their
