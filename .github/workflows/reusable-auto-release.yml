@@ -140,7 +140,7 @@ jobs:
           for workflow in "${workflows[@]}"; do
             workflow="$(xargs <<< "$workflow")"
             [[ -n "$workflow" ]] || continue
-            conclusion="$(gh run list --workflow="$workflow" --commit="$TARGET_SHA" --event=push --limit=1 --json conclusion --jq '.[0].conclusion // ""')"
+            conclusion="$(gh run list --workflow="$workflow" --commit="$TARGET_SHA" --limit=1 --json conclusion --jq '.[0].conclusion // ""')"
             if [[ "$conclusion" != success ]]; then
               echo "Required workflow '$workflow' is '$conclusion' for $TARGET_SHA"
               echo "should-release=false" >> "$GITHUB_OUTPUT"
@@ -154,6 +154,7 @@ jobs:
     if: needs.check.outputs.should-release == 'true'
     runs-on: ubuntu-latest
     permissions:
+      actions: write
       contents: write
       pull-requests: write
     outputs:

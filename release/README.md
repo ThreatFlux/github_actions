@@ -94,7 +94,8 @@ outputs, while `released` remains `false`.
 
 The reusable workflow keeps consumer files small while retaining the common
 release safeguards. `required-workflows` is a comma-separated list of workflow
-names that must pass for the target commit. `dispatch-workflows` is a
+names that must have a successful run for the target commit, regardless of the
+event that triggered that run. `dispatch-workflows` is a
 comma-separated list of workflow files to run after a release; set
 `dispatch-version-workflow` when one of them accepts a `version` input. These
 features replace the duplicated `gh run list` and `gh workflow run` shell
