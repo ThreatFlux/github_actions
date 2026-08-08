@@ -1,108 +1,144 @@
 name: GitHub Actions Maintainer
 author: ThreatFlux
-description: Pin, update, and report GitHub Actions and cargo dependency versions with optional remote pull request creation.
+description: Pin, update, and report GitHub Actions and cargo dependency versions, and cut conventional-commit releases, entirely through the GitHub API.
 branding:
   icon: shield
   color: blue
 
 inputs:
   command:
-    description: Command to run. Use pin, update, or status.
+    description: Command to run. Use pin, update, status, or release.
     required: false
     default: "pin"
+
+  # Shared inputs (all commands).
   token:
-    description: Optional for read-only commands; required for remote pull request creation and recommended to raise API rate limits.
+    description: GitHub token. Optional for read-only commands; required for remote pull request creation and for release, and recommended everywhere to raise API rate limits.
     required: false
-    default: ""
+    default: ${{ github.token }}
   owner:
-    description: Repository owner for remote PR creation.
+    description: Repository owner; defaults to the owner from GITHUB_REPOSITORY. (all commands)
     required: false
     default: ""
   repo-name:
-    description: Repository name for remote PR creation.
+    description: Repository name; defaults to the name from GITHUB_REPOSITORY. (all commands)
     required: false
     default: ""
   repo:
-    description: Path to the checked-out repository.
+    description: Path to the checked-out repository. (all commands)
     required: false
     default: "."
-  workflows-path:
-    description: Relative path to the workflow directory.
+  base-branch:
+    description: Base branch. For update it is the base of the dependency pull request; for release it is the branch to release from. Defaults to the repository default branch. (update and release)
     required: false
-    default: ".github/workflows"
+    default: ""
   dry-run:
-    description: Show changes without rewriting files.
-    required: false
-    default: "false"
-  github-actions:
-    description: Include GitHub Actions workflow updates for update and status commands.
-    required: false
-    default: "false"
-  cargo:
-    description: Include cargo package updates for update and status commands.
-    required: false
-    default: "false"
-  all:
-    description: Include both GitHub Actions and cargo package updates for update and status commands.
+    description: Analyze and report without writing files, commits, tags, releases, or pull requests. (all commands)
     required: false
     default: "false"
   create-pr:
-    description: Create a branch and pull request remotely for update mode.
+    description: For update, open a dependency-update pull request instead of rewriting files locally. For release, stage the release on an automation-owned release pull request instead of publishing directly to the base branch. (update and release)
     required: false
     default: "false"
-  base-branch:
-    description: Base branch for remote PR creation.
+  commit-message:
+    description: 'Commit message. Leave empty to use the per-command default ("Update dependencies" for update; "chore: release v{version}" for release, where "{version}" is replaced with the new version). (update and release)'
     required: false
     default: ""
+
+  # Maintainer inputs (pin, update, status).
+  workflows-path:
+    description: Relative path to the workflow directory beneath the repository root. (pin, update, and status only)
+    required: false
+    default: ".github/workflows"
+  github-actions:
+    description: Include GitHub Actions workflow updates. (update and status only)
+    required: false
+    default: "false"
+  cargo:
+    description: Include cargo package dependency updates. (update and status only)
+    required: false
+    default: "false"
+  all:
+    description: Include both GitHub Actions and cargo package updates. (update and status only)
+    required: false
+    default: "false"
   branch-name:
-    description: Override branch name for remote PR creation.
+    description: Override the branch name used for the dependency-update pull request. Leave empty to let the tool generate one. (update only)
     required: false
     default: ""
   labels:
-    description: Labels to add to a created pull request.
+    description: Comma-separated labels to add to the dependency-update pull request. Leave empty to use the default ("dependencies"). (update only)
     required: false
-    default: "dependencies"
+    default: ""
   title:
-    description: Pull request title for remote update mode.
+    description: Title for the dependency-update pull request. Leave empty to use the default ("Update dependencies"). (update only)
     required: false
-    default: "Update dependencies"
-  commit-message:
-    description: Commit message for remote update mode.
+    default: ""
+
+  # Release inputs (release only).
+  bump:
+    description: Version bump strategy. Use auto, major, minor, or patch. Leave empty to use the default (auto, derived from conventional commits). (release only)
     required: false
-    default: "Update dependencies"
+    default: ""
+  tag-prefix:
+    description: Prefix for release tags. Leave empty to use the default ("v"). (release only)
+    required: false
+    default: ""
+  tag-style:
+    description: How the release tag is created; annotated or lightweight. Leave empty to use the default (annotated). (release only)
+    required: false
+    default: ""
+  update-major-alias:
+    description: Also move the moving major alias tag (for example v1) to the new release. (release only)
+    required: false
+    default: "false"
+  notes-file:
+    description: Path where generated release notes are written, including on dry runs. Leave empty to use the default ("release_notes.md"). (release only)
+    required: false
+    default: ""
+  release-branch:
+    description: Automation-owned release branch used with create-pr. Must be automation/release or use the automation/release/ prefix. Leave empty to use the default ("automation/release"). (release only)
+    required: false
+    default: ""
+
+outputs:
+  released:
+    description: Whether a release was created (true or false). Release-command output; empty for other commands.
+  version:
+    description: The released version without the tag prefix, empty when skipped without a computed version. Release-command output; empty for other commands.
+  tag:
+    description: The created release tag, empty when skipped without a computed version. Release-command output; empty for other commands.
+  release-url:
+    description: URL of the created GitHub Release, empty unless released. Release-command output; empty for other commands.
+  notes-file:
+    description: Path to the generated release notes file, empty when no notes were generated. Release-command output; empty for other commands.
+  release-pr-number:
+    description: Number of the created or updated automated release pull request. Release-command output; empty for other commands.
+  release-pr-url:
+    description: URL of the created or updated automated release pull request. Release-command output; empty for other commands.
+  release-branch:
+    description: Branch used for the automated release pull request. Release-command output; empty for other commands.
 
 runs:
   using: docker
-  image: Dockerfile
+  image: runtime/Dockerfile
+  # Only the flags every published binary accepts are passed positionally, so
+  # this action keeps working while the pinned runtime image still holds an
+  # older binary (--create-pr is rejected by pre-0.6.0 release subcommands, so
+  # it is deliberately absent here). Every other input travels through the
+  # INPUT_<NAME> environment variables GitHub sets automatically for Docker
+  # container actions.
   args:
     - ${{ inputs.command }}
     - --repo
     - ${{ inputs.repo }}
-    - --workflows-path
-    - ${{ inputs.workflows-path }}
     - --token
     - ${{ inputs.token }}
     - --owner
     - ${{ inputs.owner }}
     - --repo-name
     - ${{ inputs.repo-name }}
-    - --create-pr
-    - ${{ inputs.create-pr }}
     - --base-branch
     - ${{ inputs.base-branch }}
-    - --branch-name
-    - ${{ inputs.branch-name }}
-    - --labels
-    - ${{ inputs.labels }}
-    - --title
-    - ${{ inputs.title }}
-    - --commit-message
-    - ${{ inputs.commit-message }}
     - --dry-run
     - ${{ inputs.dry-run }}
-    - --github-actions
-    - ${{ inputs.github-actions }}
-    - --cargo
-    - ${{ inputs.cargo }}
-    - --all
-    - ${{ inputs.all }}

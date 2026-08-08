@@ -301,10 +301,10 @@ impl GitHubClient {
             return Ok(LatestReference { version, sha });
         }
 
-        let tags = self.send_with_retry(
-            || self.get(&format!("/repos/{owner}/{repository}/tags?per_page=1")),
-            || format!("fetch tags for {owner}/{repository}"),
-        )?;
+        let tags = self
+            .get_with_retry(&format!("/repos/{owner}/{repository}/tags?per_page=1"), || {
+                format!("fetch tags for {owner}/{repository}")
+            })?;
         let mut tags = tags
             .json::<Vec<TagResponse>>()
             .with_context(|| format!("failed to decode tags response for {owner}/{repository}"))?;
@@ -328,8 +328,8 @@ impl GitHubClient {
         reference: &str,
     ) -> Result<String> {
         let encoded_reference = urlencoding::encode(reference);
-        let response = self.send_with_retry(
-            || self.get(&format!("/repos/{owner}/{repository}/commits/{encoded_reference}")),
+        let response = self.get_with_retry(
+            &format!("/repos/{owner}/{repository}/commits/{encoded_reference}"),
             || format!("resolve {owner}/{repository}@{reference}"),
         )?;
         let commit = response.json::<CommitResponse>().with_context(|| {
@@ -340,8 +340,8 @@ impl GitHubClient {
     }
 
     fn latest_release_tag(&self, owner: &str, repository: &str) -> Result<Option<String>> {
-        let response = self.send_with_retry_allowing_not_found(
-            || self.get(&format!("/repos/{owner}/{repository}/releases/latest")),
+        let response = self.get_with_retry_allowing_not_found(
+            &format!("/repos/{owner}/{repository}/releases/latest"),
             || format!("fetch latest release for {owner}/{repository}"),
         )?;
         let Some(response) = response else {
@@ -389,10 +389,9 @@ impl GitHubClient {
     }
 
     pub fn default_branch(&self, owner: &str, repository: &str) -> Result<String> {
-        let response = self.send_with_retry(
-            || self.get(&format!("/repos/{owner}/{repository}")),
-            || format!("fetch repository metadata for {owner}/{repository}"),
-        )?;
+        let response = self.get_with_retry(&format!("/repos/{owner}/{repository}"), || {
+            format!("fetch repository metadata for {owner}/{repository}")
+        })?;
         let repository = response.json::<RepositoryResponse>().with_context(|| {
             format!("failed to decode repository response for {owner}/{repository}")
         })?;
@@ -400,8 +399,8 @@ impl GitHubClient {
     }
 
     pub fn branch_head_sha(&self, owner: &str, repository: &str, branch: &str) -> Result<String> {
-        let response = self.send_with_retry(
-            || self.get(&format!("/repos/{owner}/{repository}/git/ref/heads/{branch}")),
+        let response = self.get_with_retry(
+            &format!("/repos/{owner}/{repository}/git/ref/heads/{branch}"),
             || format!("fetch branch ref for {owner}/{repository}:{branch}"),
         )?;
         let reference = response.json::<ReferenceResponse>().with_context(|| {
@@ -416,8 +415,8 @@ impl GitHubClient {
         repository: &str,
         commit_sha: &str,
     ) -> Result<String> {
-        let response = self.send_with_retry(
-            || self.get(&format!("/repos/{owner}/{repository}/git/commits/{commit_sha}")),
+        let response = self.get_with_retry(
+            &format!("/repos/{owner}/{repository}/git/commits/{commit_sha}"),
             || format!("fetch commit tree for {owner}/{repository}@{commit_sha}"),
         )?;
         let commit = response.json::<CommitTreeResponse>().with_context(|| {
@@ -480,8 +479,8 @@ impl GitHubClient {
         repository: &str,
         ref_path: &str,
     ) -> Result<Option<String>> {
-        let response = self.send_with_retry_allowing_not_found(
-            || self.get(&format!("/repos/{owner}/{repository}/git/ref/{ref_path}")),
+        let response = self.get_with_retry_allowing_not_found(
+            &format!("/repos/{owner}/{repository}/git/ref/{ref_path}"),
             || format!("fetch ref {ref_path} for {owner}/{repository}"),
         )?;
         let Some(response) = response else {
@@ -608,8 +607,8 @@ impl GitHubClient {
     pub fn list_tags(&self, owner: &str, repository: &str, max_pages: u32) -> Result<Vec<TagInfo>> {
         let mut tags = Vec::new();
         for page in 1..=max_pages {
-            let response = self.send_with_retry(
-                || self.get(&format!("/repos/{owner}/{repository}/tags?per_page=100&page={page}")),
+            let response = self.get_with_retry(
+                &format!("/repos/{owner}/{repository}/tags?per_page=100&page={page}"),
                 || format!("list tags for {owner}/{repository}"),
             )?;
             let page_tags = response.json::<Vec<TagResponse>>().with_context(|| {
@@ -663,12 +662,10 @@ impl GitHubClient {
         let mut commits = Vec::new();
         let mut total_commits = 0usize;
         for page in 1..=max_pages {
-            let response = self.send_with_retry(
-                || {
-                    self.get(&format!(
-                        "/repos/{owner}/{repository}/compare/{encoded_base}...{encoded_head}?per_page=100&page={page}"
-                    ))
-                },
+            let response = self.get_with_retry(
+                &format!(
+                    "/repos/{owner}/{repository}/compare/{encoded_base}...{encoded_head}?per_page=100&page={page}"
+                ),
                 || format!("compare {base}...{head} for {owner}/{repository}"),
             )?;
             let compare = response.json::<CompareResponse>().with_context(|| {
@@ -700,12 +697,10 @@ impl GitHubClient {
         let mut commits = Vec::new();
         let mut last_page_full = false;
         for page in 1..=max_pages {
-            let response = self.send_with_retry(
-                || {
-                    self.get(&format!(
-                        "/repos/{owner}/{repository}/commits?sha={encoded_head}&per_page=100&page={page}"
-                    ))
-                },
+            let response = self.get_with_retry(
+                &format!(
+                    "/repos/{owner}/{repository}/commits?sha={encoded_head}&per_page=100&page={page}"
+                ),
                 || format!("list commits for {owner}/{repository}"),
             )?;
             let page_commits = response.json::<Vec<RepoCommitResponse>>().with_context(|| {
@@ -828,11 +823,11 @@ impl GitHubClient {
     }
 
     fn get(&self, path: &str) -> RequestBuilder {
-        let mut request = self.client.get(format!("{}{}", self.base_url, path));
-        if let Some(token) = self.token.as_deref() {
-            request = request.header(AUTHORIZATION, format!("Bearer {token}"));
-        }
-        request
+        self.get_anonymous(path).with_auth(self)
+    }
+
+    fn get_anonymous(&self, path: &str) -> RequestBuilder {
+        self.client.get(format!("{}{}", self.base_url, path))
     }
 
     fn post_json<T: Serialize, F>(&self, path: &str, payload: &T, describe: F) -> Result<Response>
@@ -903,15 +898,68 @@ impl GitHubClient {
         self.error_from_response(response, &describe())
     }
 
-    fn send_with_retry_allowing_not_found<D>(
+    /// GET public metadata, returning the response whatever its status.
+    ///
+    /// GitHub rejects *authenticated* requests with 403 when the owning
+    /// organization enables an IP allow list that does not cover the caller,
+    /// even though the same data is readable without a token. Retry such a
+    /// request once with no `Authorization` header and use the anonymous
+    /// response when it succeeds; otherwise report the original 403.
+    ///
+    /// Only 403 falls back: 401 means the token itself is bad and must stay
+    /// loud, and 404 is left to the caller. Rate-limit 403s keep the existing
+    /// backoff-then-report path instead of burning an anonymous request that
+    /// would face a lower limit.
+    fn send_read_with_retry<D>(&self, path: &str, describe: &D) -> Result<Response>
+    where
+        D: Fn() -> String,
+    {
+        let response = self.send_raw_with_retry(|| self.get(path), describe)?;
+        if self.token.is_none()
+            || response.status() != StatusCode::FORBIDDEN
+            || Self::should_retry_response(&response)
+        {
+            return Ok(response);
+        }
+
+        let body = response.text().unwrap_or_else(|_| String::from("<response body unavailable>"));
+        if body.to_ascii_lowercase().contains("rate limit") {
+            bail!("{}: GitHub API returned {} ({body})", describe(), StatusCode::FORBIDDEN);
+        }
+
+        let anonymous_outcome =
+            match self.send_raw_with_retry(|| self.get_anonymous(path), describe) {
+                Ok(anonymous) if anonymous.status().is_success() => return Ok(anonymous),
+                Ok(anonymous) => format!("returned {}", anonymous.status()),
+                Err(error) => format!("failed: {error}"),
+            };
+        bail!(
+            "{}: GitHub API returned {} ({body}); the anonymous retry without the token also {anonymous_outcome}",
+            describe(),
+            StatusCode::FORBIDDEN,
+        )
+    }
+
+    fn get_with_retry<D>(&self, path: &str, describe: D) -> Result<Response>
+    where
+        D: Fn() -> String,
+    {
+        let response = self.send_read_with_retry(path, &describe)?;
+        if response.status().is_success() {
+            return Ok(response);
+        }
+        self.error_from_response(response, &describe())
+    }
+
+    fn get_with_retry_allowing_not_found<D>(
         &self,
-        build_request: impl FnMut() -> RequestBuilder,
+        path: &str,
         describe: D,
     ) -> Result<Option<Response>>
     where
         D: Fn() -> String,
     {
-        let response = self.send_raw_with_retry(build_request, &describe)?;
+        let response = self.send_read_with_retry(path, &describe)?;
         if response.status() == StatusCode::NOT_FOUND {
             return Ok(None);
         }
@@ -1161,6 +1209,163 @@ mod tests {
         let sha = client.resolve_reference("actions", "cache", "v4").expect("resolve reference");
 
         assert_eq!(sha, "668228422ae6a00e4ad889ee87cd7109ec5666a7");
+    }
+
+    const IP_ALLOW_LIST_BODY: &str = r#"{"message":"Although you appear to have the correct authorization credentials, the `aquasecurity` organization has an IP allow list enabled, and your IP address is not permitted to access this resource."}"#;
+
+    #[test]
+    fn resolve_reference_falls_back_to_an_anonymous_request_on_403() {
+        let mut server = Server::new();
+        let forbidden = server
+            .mock("GET", "/repos/aquasecurity/trivy-action/commits/0.33.1")
+            .match_header("authorization", Matcher::Regex(r"^Bearer\s+ghp_testtoken$".into()))
+            .expect(1)
+            .with_status(403)
+            .with_body(IP_ALLOW_LIST_BODY)
+            .create();
+        let anonymous = server
+            .mock("GET", "/repos/aquasecurity/trivy-action/commits/0.33.1")
+            .match_header("authorization", Matcher::Missing)
+            .expect(1)
+            .with_status(200)
+            .with_body(r#"{"sha":"6c175e9c4083a92bbca2f9724c8a5e33bc2d97a5"}"#)
+            .create();
+
+        let client = GitHubClient::new(server.url(), Some(String::from("ghp_testtoken")))
+            .expect("github client");
+        let sha = client
+            .resolve_reference("aquasecurity", "trivy-action", "0.33.1")
+            .expect("resolve reference");
+
+        assert_eq!(sha, "6c175e9c4083a92bbca2f9724c8a5e33bc2d97a5");
+        forbidden.assert();
+        anonymous.assert();
+    }
+
+    #[test]
+    fn latest_reference_falls_back_to_an_anonymous_request_on_403() {
+        let mut server = Server::new();
+        let forbidden = server
+            .mock("GET", "/repos/aquasecurity/trivy-action/releases/latest")
+            .match_header("authorization", Matcher::Regex(r"^Bearer\s+ghp_testtoken$".into()))
+            .expect(1)
+            .with_status(403)
+            .with_body(IP_ALLOW_LIST_BODY)
+            .create();
+        let anonymous = server
+            .mock("GET", "/repos/aquasecurity/trivy-action/releases/latest")
+            .match_header("authorization", Matcher::Missing)
+            .expect(1)
+            .with_status(200)
+            .with_body(r#"{"tag_name":"0.33.1"}"#)
+            .create();
+        let _commit = server
+            .mock("GET", "/repos/aquasecurity/trivy-action/commits/0.33.1")
+            .with_status(200)
+            .with_body(r#"{"sha":"6c175e9c4083a92bbca2f9724c8a5e33bc2d97a5"}"#)
+            .create();
+
+        let client = GitHubClient::new(server.url(), Some(String::from("ghp_testtoken")))
+            .expect("github client");
+        let latest =
+            client.latest_reference("aquasecurity", "trivy-action").expect("latest reference");
+
+        assert_eq!(latest.version, "0.33.1");
+        assert_eq!(latest.sha, "6c175e9c4083a92bbca2f9724c8a5e33bc2d97a5");
+        forbidden.assert();
+        anonymous.assert();
+    }
+
+    #[test]
+    fn resolve_reference_reports_the_original_403_when_the_anonymous_retry_fails() {
+        let mut server = Server::new();
+        let _forbidden = server
+            .mock("GET", "/repos/aquasecurity/trivy-action/commits/0.33.1")
+            .match_header("authorization", Matcher::Regex(r"^Bearer\s+ghp_testtoken$".into()))
+            .expect(1)
+            .with_status(403)
+            .with_body(IP_ALLOW_LIST_BODY)
+            .create();
+        let anonymous = server
+            .mock("GET", "/repos/aquasecurity/trivy-action/commits/0.33.1")
+            .match_header("authorization", Matcher::Missing)
+            .expect(1)
+            .with_status(404)
+            .with_body(r#"{"message":"Not Found"}"#)
+            .create();
+
+        let client = GitHubClient::new(server.url(), Some(String::from("ghp_testtoken")))
+            .expect("github client");
+        let error = client
+            .resolve_reference("aquasecurity", "trivy-action", "0.33.1")
+            .expect_err("forbidden");
+        let message = error.to_string();
+
+        assert!(message.contains("403 Forbidden"), "{message}");
+        assert!(message.contains("IP allow list"), "{message}");
+        assert!(message.contains("anonymous retry"), "{message}");
+        assert!(message.contains("404"), "{message}");
+        anonymous.assert();
+    }
+
+    #[test]
+    fn resolve_reference_does_not_fall_back_to_anonymous_on_401() {
+        let mut server = Server::new();
+        let unauthorized = server
+            .mock("GET", "/repos/actions/checkout/commits/v4")
+            .expect(1)
+            .with_status(401)
+            .with_body(r#"{"message":"Bad credentials"}"#)
+            .create();
+
+        let client = GitHubClient::new(server.url(), Some(String::from("ghp_testtoken")))
+            .expect("github client");
+        let error =
+            client.resolve_reference("actions", "checkout", "v4").expect_err("bad credentials");
+        let message = error.to_string();
+
+        assert!(message.contains("401 Unauthorized"), "{message}");
+        assert!(!message.contains("anonymous retry"), "{message}");
+        unauthorized.assert();
+    }
+
+    #[test]
+    fn resolve_reference_without_a_token_sends_a_single_request_on_403() {
+        let mut server = Server::new();
+        let forbidden = server
+            .mock("GET", "/repos/actions/checkout/commits/v4")
+            .match_header("authorization", Matcher::Missing)
+            .expect(1)
+            .with_status(403)
+            .with_body(r#"{"message":"Resource not accessible"}"#)
+            .create();
+
+        let client = GitHubClient::new(server.url(), None).expect("github client");
+        let error = client.resolve_reference("actions", "checkout", "v4").expect_err("forbidden");
+        let message = error.to_string();
+
+        assert!(message.contains("403 Forbidden"), "{message}");
+        assert!(!message.contains("anonymous retry"), "{message}");
+        forbidden.assert();
+    }
+
+    #[test]
+    fn create_ref_does_not_fall_back_to_anonymous_on_403() {
+        let mut server = Server::new();
+        let forbidden = server
+            .mock("POST", "/repos/acme/demo/git/refs")
+            .expect(1)
+            .with_status(403)
+            .with_body(r#"{"message":"Resource not accessible by integration"}"#)
+            .create();
+
+        let client = GitHubClient::new(server.url(), Some(String::from("ghp_testtoken")))
+            .expect("github client");
+        let error =
+            client.create_ref("acme", "demo", "tags/v1.2.3", "commitsha").expect_err("forbidden");
+
+        assert!(error.to_string().contains("403 Forbidden"), "{error}");
+        forbidden.assert();
     }
 
     #[test]

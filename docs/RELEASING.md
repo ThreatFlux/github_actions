@@ -21,7 +21,7 @@
 
 ## Automated Release (default)
 
-Releases are driven by [Conventional Commits](https://www.conventionalcommits.org/). When CI and security checks pass on `main`, the `auto-release.yml` workflow runs this repository's own [release action](../release/) (`uses: ./release`), which:
+Releases are driven by [Conventional Commits](https://www.conventionalcommits.org/). When CI and security checks pass on `main`, the `auto-release.yml` workflow runs this repository's own [action](../action.yml) (`uses: ./` with `command: release`), which:
 
 1. Analyzes commits since the last `v*` tag through the GitHub API.
 2. Determines the version bump (patch / minor / major) from commit prefixes; chore/docs-only merges produce no release.

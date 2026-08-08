@@ -112,8 +112,9 @@ jobs:
 
       - name: Release
         id: release
-        uses: ./release
+        uses: ./
         with:
+          command: release
           token: ${{ secrets.GITHUB_TOKEN }}
           bump: ${{ github.event.inputs.version_bump || 'auto' }}
           update-major-alias: "true"

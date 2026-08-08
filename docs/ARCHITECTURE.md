@@ -9,6 +9,8 @@
 - rewrites the workflow to `owner/repo[/path]@<sha>  # <original-ref>`
 - `update`: resolves the latest release tag, or newest tag as a fallback, then rewrites workflows to that version and SHA
 - `status`: reports current tracked version versus latest upstream version without modifying files
+- `release`: computes the next version from conventional commits, then publishes the release commit, tag, and GitHub Release, or stages them on a release pull request
+- one container action (root `action.yml`) exposes all four commands through its `command` input
 - remote PR mode: stages updated workflow content into GitHub blobs, trees, commits, branch refs, and a pull request without shelling out to `git`
 
 That keeps the original intent visible while making the executed dependency immutable.
@@ -26,6 +28,7 @@ That keeps the original intent visible while making the executed dependency immu
 - `src/versioning.rs`: release version rewriting across workspace manifests and `Cargo.lock`
 - `src/release.rs`: release orchestration — commit range analysis, race-guarded commit/tag/release publishing, and notes generation
 - `src/remote.rs`: remote branch, commit, and pull request publishing for update mode
+- `src/input_env.rs`: normalizes the container action's `INPUT_<NAME>` variables and empty flag values before clap parses the command line
 - `src/main.rs`: Clap-based CLI entrypoint
 
 ## Intentional Boundaries

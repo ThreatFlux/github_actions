@@ -251,3 +251,38 @@ jobs:
 
       - name: Check benchmarks compile
         run: cargo bench --all-features --no-run
+
+  action-smoke:
+    name: Action Smoke (${{ matrix.command }})
+    runs-on: ${{ vars.RUST_TEMPLATE_RUNNER_UBUNTU || 'ubuntu-latest' }}
+    permissions:
+      contents: read
+    strategy:
+      fail-fast: false
+      matrix:
+        command: [pin, update, status, release]
+    # update and status query third-party release metadata, which the binary
+    # in the pinned runtime image (< 0.6.0) hard-fails on when an upstream org
+    # runs a GitHub IP allow list (e.g. aquasecurity). The fixed binary falls
+    # back to anonymous requests; make these two commands blocking again once
+    # runtime/Dockerfile pins 0.6.0 or newer.
+    continue-on-error: ${{ matrix.command == 'update' || matrix.command == 'status' }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      # Exercises the action wiring (inputs, args, INPUT_* environment) against
+      # whatever binary the runtime/Dockerfile pin currently holds. Every
+      # command runs with --dry-run, so read-only contents permission is
+      # enough; the token only raises the API rate limit for the commands that
+      # query GitHub.
+      - name: Run the local action
+        uses: ./
+        with:
+          command: ${{ matrix.command }}
+          dry-run: "true"
+          all: ${{ matrix.command == 'update' && 'true' || 'false' }}
+          token: ${{ secrets.GITHUB_TOKEN }}

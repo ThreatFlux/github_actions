@@ -146,39 +146,244 @@ When GitHub returns reset metadata, the client sleeps until the reset window ins
 
 ## GitHub Action Usage
 
+One action ships every command. Reference it as `ThreatFlux/github_actions@<ref>`
+(the root [`action.yml`](action.yml)) and select the behavior with `command`:
+
+| `command` | What it does |
+|---|---|
+| `pin` | Rewrite floating action refs in workflow files to the commit SHA they resolve to today. |
+| `update` | Move GitHub Actions and/or cargo dependencies to their latest upstream version, locally or on a pull request. |
+| `status` | Report current versus latest versions without writing anything. |
+| `release` | Bump the Cargo version from conventional commits and publish the release commit, tag, and GitHub Release — or stage them on a release pull request. |
+
+The action is a Docker container action built from
+[`runtime/Dockerfile`](runtime/Dockerfile), which pulls a digest-pinned
+prebuilt image, so it starts in seconds instead of compiling from source.
+
+### Inputs
+
+| Input | Commands | Default | Description |
+|---|---|---|---|
+| `command` | all | `pin` | Command to run: `pin`, `update`, `status`, or `release`. |
+| `token` | all | `${{ github.token }}` | GitHub token. Required for remote pull request creation and for `release`; recommended everywhere to raise API rate limits. |
+| `owner` / `repo-name` | all | from `GITHUB_REPOSITORY` | Target repository coordinates. |
+| `repo` | all | `.` | Path to the checked-out repository. |
+| `base-branch` | `update`, `release` | repository default branch | Base of the dependency pull request, or the branch to release from. |
+| `dry-run` | all | `false` | Analyze and report without writing files, commits, tags, releases, or pull requests. |
+| `create-pr` | `update`, `release` | `false` | Open a dependency-update pull request, or stage the release on a release pull request instead of publishing directly. |
+| `commit-message` | `update`, `release` | per command | `Update dependencies` for `update`; `chore: release v{version}` for `release`. |
+| `workflows-path` | `pin`, `update`, `status` | `.github/workflows` | Workflow directory relative to the repository root. |
+| `github-actions` | `update`, `status` | `false` | Include GitHub Actions workflow updates. |
+| `cargo` | `update`, `status` | `false` | Include cargo package dependency updates. |
+| `all` | `update`, `status` | `false` | Include both GitHub Actions and cargo updates. |
+| `branch-name` | `update` | generated | Branch name for the dependency-update pull request. |
+| `labels` | `update` | `dependencies` | Comma-separated labels for the dependency-update pull request. |
+| `title` | `update` | `Update dependencies` | Title for the dependency-update pull request. |
+| `bump` | `release` | `auto` | `auto`, `major`, `minor`, or `patch`. |
+| `tag-prefix` | `release` | `v` | Prefix for release tags. |
+| `tag-style` | `release` | `annotated` | `annotated` or `lightweight`. |
+| `update-major-alias` | `release` | `false` | Also move the moving major alias tag (for example `v0`). |
+| `notes-file` | `release` | `release_notes.md` | Where generated release notes are written, including on dry runs. |
+| `release-branch` | `release` | `automation/release` | Automation-owned branch used with `create-pr`; must use the `automation/release` prefix. |
+
+### Outputs
+
+Every output is set by `release` and is empty for the other commands.
+
+| Output | Description |
+|---|---|
+| `released` | `true` when a release was created, otherwise `false`. |
+| `version` | Released version without the tag prefix (also set on dry runs and tag-exists skips). |
+| `tag` | Created release tag. |
+| `release-url` | URL of the created GitHub Release. |
+| `notes-file` | Path to the generated notes file, empty when no notes were generated. |
+| `release-pr-number` | Number of the created or updated release pull request. |
+| `release-pr-url` | URL of the created or updated release pull request. |
+| `release-branch` | Branch used for the release pull request. |
+
+### `command: pin`
+
 ```yaml
-name: Maintain Dependencies
-
-on:
-  workflow_dispatch:
-  pull_request:
-    paths:
-      - ".github/workflows/**"
-
 jobs:
-  pin-actions:
+  pin:
     runs-on: ubuntu-latest
     permissions:
       contents: read
     steps:
-      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Pin workflow action refs
+        uses: ThreatFlux/github_actions@v0 # pin to a SHA in production
+        with:
+          command: pin
+          token: ${{ secrets.GITHUB_TOKEN }}
+```
+
+`pin` rewrites the checked-out files in place; commit them yourself, or add
+`dry-run: "true"` to report the rewrites without touching the working tree.
+
+### `command: status`
+
+```yaml
+      - name: Report dependency drift
+        uses: ThreatFlux/github_actions@v0 # pin to a SHA in production
+        with:
+          command: status
+          all: "true"
+          token: ${{ secrets.GITHUB_TOKEN }}
+```
+
+`status` never writes; `contents: read` is enough.
+
+### `command: update`
+
+```yaml
+jobs:
+  update:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
       - name: Update workflow and cargo dependencies
-        uses: ThreatFlux/github-actions-maintainer@main
+        uses: ThreatFlux/github_actions@v0 # pin to a SHA in production
         with:
           command: update
           all: "true"
-          token: ${{ secrets.GITHUB_TOKEN }}
+          create-pr: "true"
+          token: ${{ secrets.DEPENDENCY_UPDATE_TOKEN }}
           owner: ${{ github.repository_owner }}
           repo-name: ${{ github.event.repository.name }}
-          create-pr: "true"
-          dry-run: "false"
 ```
 
-The repository also ships an [`action.yml`](action.yml) wrapper so the binary can run as a container action.
+`create-pr: "true"` publishes through the GitHub API rather than editing the
+checkout, so the job itself needs no write permission — but the *token* does.
+Updating files under `.github/workflows/` requires the `workflow` scope, which
+the default `GITHUB_TOKEN` does not have; use a PAT or GitHub App token there.
+Without `create-pr`, `update` edits the checked-out files and you commit them.
+`create-pr` is one of the inputs affected by the
+[version skew note](#version-skew-during-upgrades) below.
 
-## Auto Release Action
+### `command: release`
 
-The [`release/`](release/) sub-action gives any Cargo-based repository automatic releases on merge to main: it bumps the version from conventional commits, rewrites `Cargo.toml`/`Cargo.lock`, and either creates the release commit/tag/GitHub Release directly or stages those updates on an automation-owned release branch with a pull request — entirely through the GitHub API, from a prebuilt image that starts in seconds.
+Direct mode publishes the release commit, tag, and GitHub Release:
+
+```yaml
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - id: release
+        uses: ThreatFlux/github_actions@v0 # pin to a SHA in production
+        with:
+          command: release
+          token: ${{ secrets.GITHUB_TOKEN }}
+          update-major-alias: "true"
+      - if: steps.release.outputs.released == 'true'
+        run: echo "Released ${{ steps.release.outputs.tag }} -> ${{ steps.release.outputs.release-url }}"
+```
+
+Release-pull-request mode stages the version bump on the automation-owned
+branch and opens or refreshes one pull request instead of publishing:
+
+```yaml
+jobs:
+  release-pr:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      pull-requests: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - id: release
+        uses: ThreatFlux/github_actions@v0 # pin to a SHA in production
+        with:
+          command: release
+          token: ${{ secrets.GITHUB_TOKEN }}
+          create-pr: "true"
+          release-branch: automation/release
+      - name: Report the release pull request
+        run: |
+          echo "PR #${{ steps.release.outputs.release-pr-number }} on ${{ steps.release.outputs.release-branch }}"
+          echo "${{ steps.release.outputs.release-pr-url }}"
+```
+
+In pull-request mode no tag moves and no GitHub Release is published, so
+`released` stays `false` and `release-pr-number`/`release-pr-url`/`release-branch`
+carry the result; the tag and Release are cut by the follow-on release run
+after the pull request merges. Merges whose commits are only `chore:`/`docs:`
+produce no release at all — the action exits successfully with
+`released=false`, which is also what keeps release commits from looping.
+
+### Tokens and downstream pipelines
+
+GitHub suppresses workflow triggers for events created with the default
+`GITHUB_TOKEN`: the tag `release` creates will **not** start your tag-triggered
+(`on: push: tags:`) workflows. Pick one of:
+
+1. **Same-workflow chaining (no extra secrets):** gate follow-on jobs on
+   `steps.release.outputs.released == 'true'`, or dispatch the tag pipelines
+   explicitly — `workflow_dispatch` is exempt from the suppression rule. The
+   dispatching job needs `permissions: actions: write`.
+2. **GitHub App or PAT token:** pass it as `token` and the created tag triggers
+   `on: push: tags:` workflows natively.
+3. **No downstream pipelines:** the default `GITHUB_TOKEN` is all you need.
+
+`release` needs a token with `contents: write` (plus `pull-requests: write` for
+`create-pr`). The `workflow` scope is not required, because release commits
+only touch Cargo manifests.
+
+### Branch protection
+
+Direct-mode `release` pushes the release commit to the base branch
+(fast-forward only). On a protected branch, add a bypass for the identity the
+token represents — for rulesets, add the GitHub Actions app or your own GitHub
+App to the bypass list. `create-pr: "true"` is the alternative that respects
+branch protection: it never writes to the protected branch directly.
+
+The action pins its analysis to the branch head it first observes and publishes
+with a fast-forward-only ref update, so a branch that advances mid-run makes the
+run skip cleanly with `released=false` instead of releasing a stale commit. If
+the computed tag already exists, the run skips as well. Run release jobs under a
+`concurrency` group regardless.
+
+### GitHub App authentication
+
+To attribute release commits and pull requests to an App instead of
+`github-actions[bot]`:
+
+1. Create a GitHub App under your organization and generate a private key.
+2. Grant the installation **Contents: Read and write**, **Pull requests: Read
+   and write**, and **Actions: Read and write**, then install it on every
+   repository that releases.
+3. Add the App's numeric ID as the `RELEASE_APP_ID` repository or organization
+   variable.
+4. Add the private-key PEM as the `RELEASE_APP_PRIVATE_KEY` secret. Never commit
+   the PEM or store it in a plain-text variable.
+5. Pass `github-app-id` and the `github-app-private-key` secret to the reusable
+   workflow below, which mints the installation token with
+   `actions/create-github-app-token` and hands it to the action.
+
+App authentication attributes API commits and pull requests to the App;
+cryptographic commit signing still requires a separate signing-key policy.
+Configure both values together — a half-configured App fails the workflow
+instead of silently falling back.
+
+## Reusable Auto Release Workflow
+
+For Cargo repositories that want the whole release gate — required-workflow
+checks, optional GitHub App authentication, and downstream workflow dispatches
+— call the reusable workflow instead of wiring the action yourself:
 
 ```yaml
 name: Auto Release
@@ -202,12 +407,60 @@ jobs:
       bump: auto
 ```
 
-Two actions live in this repository: `ThreatFlux/github_actions@<ref>` (dependency maintainer, root `action.yml`) and `ThreatFlux/github_actions/release@<ref>` (auto release). See [release/README.md](release/README.md) for inputs, outputs, token guidance, and branch-protection notes.
+The reusable workflow needs no separate action pin: it checks out and runs the
+action at its own commit (`job.workflow_sha`), so the action version always
+matches whatever workflow ref you pinned. Its inputs, outputs, and the
+`required-workflows` / `dispatch-workflows` gate are documented in
+[release/README.md](release/README.md#reusable-workflow-inputs).
 
-For GitHub App authentication, follow the setup checklist in
-[`release/README.md`](release/README.md#github-app-authentication). It covers
-App installation permissions, the `RELEASE_APP_ID` variable, and the
-`RELEASE_APP_PRIVATE_KEY` secret.
+## Migrating to the Unified Action
+
+This repository used to ship two actions. It now ships one; `release/` is
+deprecated.
+
+| Before | After |
+|---|---|
+| `uses: ThreatFlux/github_actions/release@v0` | `uses: ThreatFlux/github_actions@v0` plus `command: release` |
+| `uses: ThreatFlux/github_actions@v0` (maintainer) | unchanged, but state `command:` explicitly — it defaults to `pin` |
+
+Every `release/` input keeps its name and default on the unified action, and
+all eight release outputs are unchanged, so migrating is the two-line edit
+above. Root-action users who were already passing inputs such as
+`workflows-path`, `all`, `labels`, or `title` should read the version-skew note
+below: those inputs now travel to the binary as environment variables and need
+runtime image 0.6.1 or newer to take effect.
+
+### Version skew during upgrades
+
+Only the flags every published binary accepts are passed as container
+arguments (`command`, `repo`, `token`, `owner`, `repo-name`, `base-branch`,
+`dry-run`). Every other input reaches the binary through the `INPUT_<NAME>`
+environment variables GitHub sets for container actions. That keeps the action
+working while [`runtime/Dockerfile`](runtime/Dockerfile) still pins a pre-0.6.0
+image — but that older binary ignores `INPUT_*` variables entirely.
+
+Until the first post-merge release (0.6.0) publishes and Dependabot bumps the
+`/runtime` pin (yielding 0.6.1), these inputs silently fall back to their
+built-in defaults:
+
+- `pin`, `update`, `status`: `workflows-path`, `github-actions`, `cargo`,
+  `all`, `branch-name`, `labels`, `title`, `commit-message`, `create-pr`
+- `release`: `bump`, `tag-prefix`, `tag-style`, `update-major-alias`,
+  `notes-file`, `release-branch`, `commit-message`, `create-pr`
+
+Most notably, **`create-pr: "true"` on `release` performs a direct release
+instead of opening a release pull request** during that window, and
+`create-pr: "true"` on `update` rewrites the checkout instead of opening a
+dependency pull request. Pin the action
+to a ref whose `runtime/Dockerfile` holds 0.6.1 or newer before relying on any
+of these inputs. The skew self-heals once that pin lands.
+
+### Deprecation timeline
+
+`ThreatFlux/github_actions/release@<ref>` still works and still takes the same
+inputs, but it is deprecated as of the unified action and will be **removed in
+the next major version**. New workflows should use `command: release` on the
+root action; existing ones have the whole `v0` line to migrate.
 
 Roadmap: the release engine is manifest-driven (`src/versioning.rs`), with Cargo supported today; npm (`package.json`) and Python (`pyproject.toml`) manifest adapters are planned next so the same action covers the whole ThreatFlux org.
 

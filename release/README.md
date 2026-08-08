@@ -1,4 +1,15 @@
-# ThreatFlux Auto Release Action
+# ThreatFlux Auto Release Action (deprecated)
+
+> **Deprecated.** This sub-action has been folded into the root action. Use
+> `ThreatFlux/github_actions@v0` with `command: release` instead — same inputs,
+> same outputs, same behavior. See
+> [Migrating to the Unified Action](../README.md#migrating-to-the-unified-action)
+> in the root README, including the version-skew note that applies while the
+> runtime image pin still holds a pre-0.6.0 binary.
+>
+> `ThreatFlux/github_actions/release@<ref>` keeps working for the whole `v0`
+> line and will be removed in the next major version. The rest of this document
+> is retained for existing users.
 
 Automatic Cargo releases on merge to main: bump the version from
 [Conventional Commits](https://www.conventionalcommits.org/), rewrite
@@ -129,7 +140,7 @@ To configure App authentication for a repository:
 
 The reusable workflow mints an installation token with
 `actions/create-github-app-token`.
-The release action and downstream workflow dispatches then authenticate as the
+The action and the downstream workflow dispatches then authenticate as the
 App. The App installation must have repository `contents: write`,
 `pull_requests: write`, and `actions: write` permissions. If these values are
 not configured, the workflow falls back to `release-token` and finally the
@@ -245,5 +256,5 @@ The moving `v0` (later `v1`) alias tag is maintained by this repository's own
 release automation and is the convenience alternative.
 
 The reusable workflow needs no separate action pin: it checks out and runs the
-release action at its own commit (`job.workflow_sha`), so the action version
-always matches whatever workflow ref you pinned.
+root action (with `command: release`) at its own commit (`job.workflow_sha`),
+so the action version always matches whatever workflow ref you pinned.
