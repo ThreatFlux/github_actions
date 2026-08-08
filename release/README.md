@@ -21,20 +21,29 @@ on:
   workflow_dispatch:
 concurrency:
   group: auto-release-${{ github.ref }}
+  cancel-in-progress: false
+
 permissions:
-  contents: write
-  actions: write # required when dispatch-workflows is used
-  pull-requests: write # required when create-pr is true
+  contents: read
+  actions: read
+  pull-requests: read
 jobs:
   release:
+    permissions:
+      contents: write
+      actions: write # required when dispatch-workflows is used
+      pull-requests: write # required when create-pr is true
     uses: ThreatFlux/github_actions/.github/workflows/reusable-auto-release.yml@v0 # pin to a SHA in production
     with:
       bump: auto
       required-workflows: CI,Security
       dispatch-workflows: release.yml,docker.yml
       dispatch-version-workflow: release.yml
-    # secrets:
-    #   release-token: ${{ secrets.RELEASE_TOKEN }}   # optional PAT/App token, see Tokens below
+      # Optional: authenticate release commits/PRs as an installed GitHub App.
+      github-app-id: ${{ vars.RELEASE_APP_ID }}
+    secrets:
+      github-app-private-key: ${{ secrets.RELEASE_APP_PRIVATE_KEY }}
+      # release-token: ${{ secrets.RELEASE_TOKEN }}   # optional PAT/App token fallback
 ```
 
 Raw action:
@@ -100,6 +109,39 @@ comma-separated list of workflow files to run after a release; set
 `dispatch-version-workflow` when one of them accepts a `version` input. These
 features replace the duplicated `gh run list` and `gh workflow run` shell
 scripts that would otherwise live in every repository.
+
+### GitHub App authentication
+
+To configure App authentication for a repository:
+
+1. Create a GitHub App under your organization (or use an existing App) and
+   generate a private key.
+2. Grant the App installation repository permissions: **Contents: Read and
+   write**, **Pull requests: Read and write**, and **Actions: Read and write**.
+   Install the App on every repository that will call this workflow.
+3. Add the App's numeric ID as the repository or organization variable
+   `RELEASE_APP_ID`.
+4. Add the downloaded private-key PEM as the repository or organization secret
+   `RELEASE_APP_PRIVATE_KEY`. Never commit the PEM or put it in a plain-text
+   variable.
+5. Pass both values to the reusable workflow as shown in Quick Start. Keep the
+   caller's job permissions sufficient for the called workflow.
+
+The reusable workflow mints an installation token with
+`actions/create-github-app-token`.
+The release action and downstream workflow dispatches then authenticate as the
+App. The App installation must have repository `contents: write`,
+`pull_requests: write`, and `actions: write` permissions. If these values are
+not configured, the workflow falls back to `release-token` and finally the
+default `GITHUB_TOKEN`. This authenticates and attributes API commits and PRs
+to the App; cryptographic commit signing still requires a separate signing-key
+policy on the repository.
+
+The App token is scoped to the current repository. Rotate the private key by
+replacing the secret and revoke old keys in the App settings. If App
+configuration is absent or token creation fails, the workflow does not silently
+fall back from a partially configured App; validate the App ID, installation,
+and secret before enabling it in a protected release workflow.
 ## How Versions Are Computed
 
 Commits since the latest `<tag-prefix>X.Y.Z` tag are classified by their
@@ -133,6 +175,7 @@ and `Cargo.lock` entries for workspace packages. Merge commits are ignored.
 | `commit-message` | `chore: release v{version}` | Release commit message template. |
 | `create-pr` | `false` | Create or update an automated release pull request instead of publishing directly. |
 | `release-branch` | `automation/release` | Automation-owned branch; must use the `automation/release` prefix. |
+| `github-app-id` | empty | Optional App ID used with the `github-app-private-key` secret. |
 | `dry-run` | `false` | Analyze and report without creating anything. |
 
 ## Outputs
