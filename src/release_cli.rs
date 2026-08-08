@@ -19,69 +19,70 @@ use crate::resolve_repository;
 #[derive(Debug, Args)]
 pub struct ReleaseArgs {
     /// Repository root containing Cargo.toml.
-    #[arg(long, default_value = ".")]
-    repo: PathBuf,
+    #[arg(long, env = "INPUT_REPO", default_value = ".")]
+    pub repo: PathBuf,
 
-    /// GitHub token used to create the release commit, tag, and release.
-    #[arg(long, env = "GITHUB_TOKEN", hide_env_values = true)]
-    token: Option<String>,
+    /// GitHub token used to create the release commit, tag, and release;
+    /// falls back to `GITHUB_TOKEN`.
+    #[arg(long, env = "INPUT_TOKEN", hide_env_values = true)]
+    pub token: Option<String>,
 
-    /// Repository owner; falls back to `GITHUB_REPOSITORY`.
-    #[arg(long, env = "OWNER")]
-    owner: Option<String>,
+    /// Repository owner; falls back to `OWNER`, then `GITHUB_REPOSITORY`.
+    #[arg(long, env = "INPUT_OWNER")]
+    pub owner: Option<String>,
 
-    /// Repository name; falls back to `GITHUB_REPOSITORY`.
-    #[arg(long = "repo-name", env = "REPO_NAME")]
-    repo_name: Option<String>,
+    /// Repository name; falls back to `REPO_NAME`, then `GITHUB_REPOSITORY`.
+    #[arg(long = "repo-name", env = "INPUT_REPO-NAME")]
+    pub repo_name: Option<String>,
 
     /// Branch to release from; defaults to the repository default branch.
-    #[arg(long)]
-    base_branch: Option<String>,
+    #[arg(long, env = "INPUT_BASE-BRANCH")]
+    pub base_branch: Option<String>,
 
     /// Version bump strategy.
-    #[arg(long, value_enum, default_value_t = BumpArg::Auto)]
-    bump: BumpArg,
+    #[arg(long, env = "INPUT_BUMP", value_enum, default_value_t = BumpArg::Auto)]
+    pub bump: BumpArg,
 
     /// Prefix for release tags.
-    #[arg(long, default_value = "v")]
-    tag_prefix: String,
+    #[arg(long, env = "INPUT_TAG-PREFIX", default_value = "v")]
+    pub tag_prefix: String,
 
     /// How the release tag is created. Annotated tags carry a tagger identity
     /// and satisfy provenance checks; the major alias stays lightweight.
-    #[arg(long, value_enum, default_value_t = TagStyleArg::Annotated)]
-    tag_style: TagStyleArg,
+    #[arg(long, env = "INPUT_TAG-STYLE", value_enum, default_value_t = TagStyleArg::Annotated)]
+    pub tag_style: TagStyleArg,
 
     /// Also move the moving major alias tag (e.g. v1) to the new release.
-    #[arg(long, default_value_t = false, num_args = 0..=1, default_missing_value = "true")]
-    update_major_alias: bool,
+    #[arg(long, env = "INPUT_UPDATE-MAJOR-ALIAS", default_value_t = false, num_args = 0..=1, default_missing_value = "true")]
+    pub update_major_alias: bool,
 
     /// Path where generated release notes are written, including on dry runs.
-    #[arg(long, default_value = "release_notes.md")]
-    notes_file: PathBuf,
+    #[arg(long, env = "INPUT_NOTES-FILE", default_value = "release_notes.md")]
+    pub notes_file: PathBuf,
 
     /// Commit message template; "{version}" is replaced with the new version.
-    #[arg(long, default_value = "chore: release v{version}")]
-    commit_message: String,
+    #[arg(long, env = "INPUT_COMMIT-MESSAGE", default_value = "chore: release v{version}")]
+    pub commit_message: String,
 
     /// Create or update an automated release branch and pull request instead
     /// of publishing directly to the base branch.
-    #[arg(long, default_value_t = false, num_args = 0..=1, default_missing_value = "true")]
-    create_pr: bool,
+    #[arg(long, env = "INPUT_CREATE-PR", default_value_t = false, num_args = 0..=1, default_missing_value = "true")]
+    pub create_pr: bool,
 
     /// Automation-owned branch used for the release pull request.
-    #[arg(long, default_value = "automation/release")]
-    release_branch: String,
+    #[arg(long, env = "INPUT_RELEASE-BRANCH", default_value = "automation/release")]
+    pub release_branch: String,
 
     #[arg(long, env = "GITHUB_OUTPUT", hide = true)]
-    github_output: Option<PathBuf>,
+    pub github_output: Option<PathBuf>,
 
     /// Analyze and report without creating any commit, tag, or release.
-    #[arg(long, default_value_t = false, num_args = 0..=1, default_missing_value = "true")]
-    dry_run: bool,
+    #[arg(long, env = "INPUT_DRY-RUN", default_value_t = false, num_args = 0..=1, default_missing_value = "true")]
+    pub dry_run: bool,
 }
 
-#[derive(Debug, Clone, Copy, ValueEnum)]
-enum BumpArg {
+#[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum)]
+pub enum BumpArg {
     /// Derive the bump from conventional commits since the last release tag.
     Auto,
     Major,
@@ -100,8 +101,8 @@ impl BumpArg {
     }
 }
 
-#[derive(Debug, Clone, Copy, ValueEnum)]
-enum TagStyleArg {
+#[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum)]
+pub enum TagStyleArg {
     /// Annotated tag object with a tagger identity (secure default).
     Annotated,
     /// Bare ref pointing directly at the release commit.

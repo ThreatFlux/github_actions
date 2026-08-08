@@ -1,6 +1,13 @@
+mod input_env;
 mod release_cli;
 
-use std::path::PathBuf;
+// Tests live in a sibling file to keep this module readable; they remain
+// `super::`-scoped unit tests.
+#[cfg(test)]
+#[path = "cli_tests.rs"]
+mod cli_tests;
+
+use std::{ffi::OsString, path::PathBuf};
 
 use anyhow::Result;
 use clap::{Args, Parser, Subcommand};
@@ -44,47 +51,47 @@ enum Commands {
 #[derive(Debug, Args)]
 struct RepoArgs {
     /// Repository root to scan.
-    #[arg(long, default_value = ".")]
+    #[arg(long, env = "INPUT_REPO", default_value = ".")]
     repo: PathBuf,
 
     /// Relative path to workflow files beneath the repository root.
-    #[arg(long, default_value = ".github/workflows")]
+    #[arg(long, env = "INPUT_WORKFLOWS-PATH", default_value = ".github/workflows")]
     workflows_path: PathBuf,
 
-    /// GitHub token used to raise API rate limits.
-    #[arg(long, env = "GITHUB_TOKEN", hide_env_values = true)]
+    /// GitHub token used to raise API rate limits; falls back to `GITHUB_TOKEN`.
+    #[arg(long, env = "INPUT_TOKEN", hide_env_values = true)]
     token: Option<String>,
 
-    /// Repository owner used for remote PR creation.
-    #[arg(long, env = "OWNER")]
+    /// Repository owner used for remote PR creation; falls back to `OWNER`.
+    #[arg(long, env = "INPUT_OWNER")]
     owner: Option<String>,
 
-    /// Repository name used for remote PR creation.
-    #[arg(long = "repo-name", env = "REPO_NAME")]
+    /// Repository name used for remote PR creation; falls back to `REPO_NAME`.
+    #[arg(long = "repo-name", env = "INPUT_REPO-NAME")]
     repo_name: Option<String>,
 
     /// Create a branch and pull request remotely instead of rewriting files locally.
-    #[arg(long, default_value_t = false, num_args = 0..=1, default_missing_value = "true")]
+    #[arg(long, env = "INPUT_CREATE-PR", default_value_t = false, num_args = 0..=1, default_missing_value = "true")]
     create_pr: bool,
 
     /// Override the base branch for remote PR creation.
-    #[arg(long)]
+    #[arg(long, env = "INPUT_BASE-BRANCH")]
     base_branch: Option<String>,
 
     /// Override the update branch name for remote PR creation.
-    #[arg(long)]
+    #[arg(long, env = "INPUT_BRANCH-NAME")]
     branch_name: Option<String>,
 
     /// Labels to add to a created pull request, comma-separated.
-    #[arg(long, default_value = "dependencies")]
+    #[arg(long, env = "INPUT_LABELS", default_value = "dependencies")]
     labels: String,
 
     /// Pull request title for remote update mode.
-    #[arg(long, default_value = "Update dependencies")]
+    #[arg(long, env = "INPUT_TITLE", default_value = "Update dependencies")]
     title: String,
 
     /// Commit message for remote update mode.
-    #[arg(long, default_value = "Update dependencies")]
+    #[arg(long, env = "INPUT_COMMIT-MESSAGE", default_value = "Update dependencies")]
     commit_message: String,
 }
 
@@ -98,7 +105,7 @@ struct PinArgs {
     targets: TargetArgs,
 
     /// Show changes without rewriting files.
-    #[arg(long, default_value_t = false, num_args = 0..=1, default_missing_value = "true")]
+    #[arg(long, env = "INPUT_DRY-RUN", default_value_t = false, num_args = 0..=1, default_missing_value = "true")]
     dry_run: bool,
 }
 
@@ -111,7 +118,7 @@ struct UpdateArgs {
     targets: TargetArgs,
 
     /// Show available updates without rewriting files.
-    #[arg(long, default_value_t = false, num_args = 0..=1, default_missing_value = "true")]
+    #[arg(long, env = "INPUT_DRY-RUN", default_value_t = false, num_args = 0..=1, default_missing_value = "true")]
     dry_run: bool,
 }
 
@@ -123,22 +130,22 @@ struct StatusArgs {
     #[command(flatten)]
     targets: TargetArgs,
 
-    #[arg(long, hide = true, default_value_t = false, num_args = 0..=1, default_missing_value = "true")]
+    #[arg(long, env = "INPUT_DRY-RUN", hide = true, default_value_t = false, num_args = 0..=1, default_missing_value = "true")]
     _dry_run: bool,
 }
 
 #[derive(Debug, Args, Clone, Default)]
 struct TargetArgs {
     /// Include GitHub Actions workflow updates.
-    #[arg(long = "github-actions", default_value_t = false, num_args = 0..=1, default_missing_value = "true")]
+    #[arg(long = "github-actions", env = "INPUT_GITHUB-ACTIONS", default_value_t = false, num_args = 0..=1, default_missing_value = "true")]
     github_actions: bool,
 
     /// Include cargo package dependency updates.
-    #[arg(long, default_value_t = false, num_args = 0..=1, default_missing_value = "true")]
+    #[arg(long, env = "INPUT_CARGO", default_value_t = false, num_args = 0..=1, default_missing_value = "true")]
     cargo: bool,
 
     /// Include both GitHub Actions and cargo package updates.
-    #[arg(long, default_value_t = false, num_args = 0..=1, default_missing_value = "true")]
+    #[arg(long, env = "INPUT_ALL", default_value_t = false, num_args = 0..=1, default_missing_value = "true")]
     all: bool,
 }
 
@@ -163,14 +170,19 @@ impl TargetArgs {
 }
 
 fn main() {
-    if let Err(error) = run() {
+    // SAFETY: `normalize_inputs` mutates the process environment. This is the
+    // first statement in `main`, so no other thread exists yet and nothing else
+    // has read the environment.
+    let args = unsafe { input_env::normalize_inputs(std::env::args_os()) };
+
+    if let Err(error) = run(args) {
         eprintln!("error: {error:#}");
         std::process::exit(1);
     }
 }
 
-fn run() -> Result<()> {
-    let cli = Cli::parse();
+fn run(args: Vec<OsString>) -> Result<()> {
+    let cli = Cli::parse_from(args);
 
     match cli.command {
         Commands::Pin(args) => run_pin(args, cli.github_api_base_url),
