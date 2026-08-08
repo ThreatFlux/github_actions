@@ -198,6 +198,11 @@ jobs:
 
 Two actions live in this repository: `ThreatFlux/github_actions@<ref>` (dependency maintainer, root `action.yml`) and `ThreatFlux/github_actions/release@<ref>` (auto release). See [release/README.md](release/README.md) for inputs, outputs, token guidance, and branch-protection notes.
 
+For GitHub App authentication, follow the setup checklist in
+[`release/README.md`](release/README.md#github-app-authentication). It covers
+App installation permissions, the `RELEASE_APP_ID` variable, and the
+`RELEASE_APP_PRIVATE_KEY` secret.
+
 Roadmap: the release engine is manifest-driven (`src/versioning.rs`), with Cargo supported today; npm (`package.json`) and Python (`pyproject.toml`) manifest adapters are planned next so the same action covers the whole ThreatFlux org.
 
 ## Development

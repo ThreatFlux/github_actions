@@ -21,7 +21,9 @@ on:
   workflow_dispatch:
 concurrency:
   group: auto-release-${{ github.ref }}
-  permissions:
+  cancel-in-progress: false
+
+permissions:
   contents: write
   actions: write # required when dispatch-workflows is used
   pull-requests: write # required when create-pr is true
@@ -37,8 +39,7 @@ jobs:
       github-app-id: ${{ vars.RELEASE_APP_ID }}
     secrets:
       github-app-private-key: ${{ secrets.RELEASE_APP_PRIVATE_KEY }}
-    # secrets:
-    #   release-token: ${{ secrets.RELEASE_TOKEN }}   # optional PAT/App token, see Tokens below
+      # release-token: ${{ secrets.RELEASE_TOKEN }}   # optional PAT/App token fallback
 ```
 
 Raw action:
@@ -107,8 +108,23 @@ scripts that would otherwise live in every repository.
 
 ### GitHub App authentication
 
-Set `github-app-id` and pass `github-app-private-key` to have the reusable
-workflow mint an installation token with `actions/create-github-app-token`.
+To configure App authentication for a repository:
+
+1. Create a GitHub App under your organization (or use an existing App) and
+   generate a private key.
+2. Grant the App installation repository permissions: **Contents: Read and
+   write**, **Pull requests: Read and write**, and **Actions: Read and write**.
+   Install the App on every repository that will call this workflow.
+3. Add the App's numeric ID as the repository or organization variable
+   `RELEASE_APP_ID`.
+4. Add the downloaded private-key PEM as the repository or organization secret
+   `RELEASE_APP_PRIVATE_KEY`. Never commit the PEM or put it in a plain-text
+   variable.
+5. Pass both values to the reusable workflow as shown in Quick Start. Keep the
+   caller's job permissions sufficient for the called workflow.
+
+The reusable workflow mints an installation token with
+`actions/create-github-app-token`.
 The release action and downstream workflow dispatches then authenticate as the
 App. The App installation must have repository `contents: write`,
 `pull_requests: write`, and `actions: write` permissions. If these values are
@@ -116,6 +132,12 @@ not configured, the workflow falls back to `release-token` and finally the
 default `GITHUB_TOKEN`. This authenticates and attributes API commits and PRs
 to the App; cryptographic commit signing still requires a separate signing-key
 policy on the repository.
+
+The App token is scoped to the current repository. Rotate the private key by
+replacing the secret and revoke old keys in the App settings. If App
+configuration is absent or token creation fails, the workflow does not silently
+fall back from a partially configured App; validate the App ID, installation,
+and secret before enabling it in a protected release workflow.
 ## How Versions Are Computed
 
 Commits since the latest `<tag-prefix>X.Y.Z` tag are classified by their

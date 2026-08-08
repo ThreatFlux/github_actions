@@ -202,6 +202,12 @@ jobs:
           owner: ${{ github.repository_owner }}
           repositories: ${{ github.event.repository.name }}
 
+      - name: Validate GitHub App configuration
+        if: (inputs.github-app-id == '') != (secrets.github-app-private-key == '')
+        run: |
+          echo "github-app-id and github-app-private-key must be configured together" >&2
+          exit 1
+
       - name: Release
         id: release
         uses: ./.release-action/release
