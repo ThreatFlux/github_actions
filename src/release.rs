@@ -259,11 +259,7 @@ impl ReleasePublisher {
         let owner = &options.owner;
         let repo = &options.repo;
         let branch_ref = format!("heads/{}", options.release_branch);
-        if self.github.reference_sha(owner, repo, &branch_ref)?.is_some() {
-            self.github.update_ref(owner, repo, &branch_ref, commit_sha, true)?;
-        } else {
-            self.github.create_ref(owner, repo, &branch_ref, commit_sha)?;
-        }
+        self.update_release_branch(owner, repo, &branch_ref, commit_sha)?;
 
         let title = format!("chore(release): {}", prepared.tag);
         let notes = report.notes.clone().unwrap_or_default();
@@ -276,33 +272,56 @@ impl ReleasePublisher {
             notes,
             options.release_branch,
         );
-        let pull_request = self.github.find_open_pull_request(
+        let pull_request = self.upsert_release_pull_request(
             owner,
             repo,
             &options.release_branch,
             &prepared.branch,
+            &title,
+            &body,
+            report,
         )?;
-        let pull_request = if let Some(existing) = pull_request {
-            let updated =
-                self.github.update_pull_request(owner, repo, existing.number, &title, &body)?;
-            report.outcome = ReleaseOutcome::PullRequestUpdated;
-            updated
-        } else {
-            let created = self.github.create_pull_request(
-                owner,
-                repo,
-                &title,
-                &body,
-                &options.release_branch,
-                &prepared.branch,
-            )?;
-            report.outcome = ReleaseOutcome::PullRequestCreated;
-            created
-        };
         report.pull_request_number = Some(pull_request.number);
         report.pull_request_url = Some(pull_request.url);
         report.release_branch = Some(options.release_branch.clone());
         Ok(())
+    }
+
+    fn update_release_branch(
+        &self,
+        owner: &str,
+        repo: &str,
+        branch_ref: &str,
+        commit_sha: &str,
+    ) -> Result<()> {
+        if self.github.reference_sha(owner, repo, branch_ref)?.is_some() {
+            self.github.update_ref(owner, repo, branch_ref, commit_sha, true)
+        } else {
+            self.github.create_ref(owner, repo, branch_ref, commit_sha)
+        }
+    }
+
+    fn upsert_release_pull_request(
+        &self,
+        owner: &str,
+        repo: &str,
+        head: &str,
+        base: &str,
+        title: &str,
+        body: &str,
+        report: &mut ReleaseReport,
+    ) -> Result<crate::github::PullRequestInfo> {
+        let existing = self.github.find_open_pull_request(owner, repo, head, base)?;
+        if let Some(existing) = existing {
+            let updated =
+                self.github.update_pull_request(owner, repo, existing.number, title, body)?;
+            report.outcome = ReleaseOutcome::PullRequestUpdated;
+            Ok(updated)
+        } else {
+            let created = self.github.create_pull_request(owner, repo, title, body, head, base)?;
+            report.outcome = ReleaseOutcome::PullRequestCreated;
+            Ok(created)
+        }
     }
 
     fn build_commit(&self, options: &ReleaseOptions, prepared: &PreparedRelease) -> Result<String> {
