@@ -1,6 +1,6 @@
 name: ThreatFlux Auto Release
 author: ThreatFlux
-description: Bump the Cargo version from conventional commits and publish directly or through an automated release pull request entirely through the GitHub API.
+description: 'DEPRECATED: use ThreatFlux/github_actions@v0 with command: release instead; this action will be removed in the next major version. Bump the Cargo version from conventional commits and publish directly or through an automated release pull request entirely through the GitHub API.'
 branding:
   icon: tag
   color: blue
