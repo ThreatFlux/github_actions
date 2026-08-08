@@ -354,16 +354,48 @@ impl GitHubClient {
         Ok(Some(release.tag_name))
     }
 
+    /// Whether `/user` can report this token's scopes.
+    ///
+    /// Only classic personal access tokens carry the `x-oauth-scopes` header.
+    /// Installation tokens (`ghs_…`, which is what `GITHUB_TOKEN` and
+    /// `create-github-app-token` hand to a workflow) and fine-grained tokens
+    /// (`github_pat_…`) never do, so probing `/user` for them is a wasted
+    /// request. Prefix sniffing is a convention rather than a contract, so it
+    /// is only an optimisation: `validate_token_scopes` also tolerates the
+    /// rejection an unrecognised non-classic token gets from `/user`.
+    fn token_can_report_scopes(token: &str) -> bool {
+        !token.starts_with("ghs_") && !token.starts_with("github_pat_")
+    }
+
     pub fn validate_token_scopes(&self) -> Result<()> {
         let token = self
             .token
             .as_deref()
             .ok_or_else(|| anyhow!("a GitHub token is required for remote PR creation"))?;
 
-        let response = self.send_with_retry(
+        if !Self::token_can_report_scopes(token) {
+            return Ok(());
+        }
+
+        let describe = || String::from("validate GitHub token scopes");
+        let response = self.send_raw_with_retry(
             || self.get("/user").header(AUTHORIZATION, format!("Bearer {token}")),
-            || String::from("validate GitHub token scopes"),
+            &describe,
         )?;
+
+        // `/user` rejects installation tokens with 401 Bad credentials, and
+        // some app tokens with 403, even when the token can happily push
+        // branches and open pull requests. Such a token simply has no
+        // inspectable scopes: treat validation as satisfied and let the write
+        // operations raise their own actionable errors if it truly lacks
+        // permission. Every other failure still stops the run.
+        if matches!(response.status(), StatusCode::UNAUTHORIZED | StatusCode::FORBIDDEN) {
+            return Ok(());
+        }
+        if !response.status().is_success() {
+            return self.error_from_response(response, &describe()).map(|_| ());
+        }
+
         let headers = response.headers().clone();
         let user =
             response.json::<UserResponse>().context("failed to decode GitHub user response")?;
@@ -1678,5 +1710,84 @@ mod tests {
         let error = client.validate_token_scopes().expect_err("missing workflow scope");
 
         assert!(error.to_string().contains("workflow scope"));
+    }
+
+    #[test]
+    fn validate_token_scopes_accepts_unauthorized_user_lookup() {
+        let mut server = Server::new();
+        let user = server
+            .mock("GET", "/user")
+            .with_status(401)
+            .with_body(r#"{"message":"Bad credentials"}"#)
+            .create();
+
+        // A token without a recognisable prefix still reaches `/user`; the 401
+        // it comes back with must not fail remote PR creation.
+        let client = GitHubClient::new(server.url(), Some(String::from("installation-token")))
+            .expect("github client");
+        client.validate_token_scopes().expect("uninspectable token is accepted");
+
+        user.assert();
+    }
+
+    #[test]
+    fn validate_token_scopes_accepts_forbidden_user_lookup() {
+        let mut server = Server::new();
+        let user = server
+            .mock("GET", "/user")
+            .with_status(403)
+            .with_body(r#"{"message":"Resource not accessible by integration"}"#)
+            .create();
+
+        let client = GitHubClient::new(server.url(), Some(String::from("app-token")))
+            .expect("github client");
+        client.validate_token_scopes().expect("uninspectable token is accepted");
+
+        user.assert();
+    }
+
+    #[test]
+    fn validate_token_scopes_skips_user_lookup_for_installation_tokens() {
+        let mut server = Server::new();
+        let user = server.mock("GET", "/user").with_status(401).expect(0).create();
+
+        for token in ["ghs_installationtoken", "github_pat_finegrained"] {
+            let client =
+                GitHubClient::new(server.url(), Some(String::from(token))).expect("github client");
+            client.validate_token_scopes().expect("non-classic token skips scope probing");
+        }
+
+        user.assert();
+    }
+
+    #[test]
+    fn validate_token_scopes_fails_on_unexpected_user_error() {
+        let mut server = Server::new();
+        let _user = server
+            .mock("GET", "/user")
+            .with_status(404)
+            .with_body(r#"{"message":"Not Found"}"#)
+            .create();
+
+        let client = GitHubClient::new(server.url(), Some(String::from("ghp_testtoken")))
+            .expect("github client");
+        let error = client.validate_token_scopes().expect_err("unexpected status fails");
+
+        assert!(error.to_string().contains("validate GitHub token scopes"));
+    }
+
+    #[test]
+    fn validate_token_scopes_accepts_classic_token_with_required_scopes() {
+        let mut server = Server::new();
+        let _user = server
+            .mock("GET", "/user")
+            .with_status(200)
+            .with_header("x-oauth-scopes", "repo, workflow")
+            .with_body(r#"{"login":"octocat"}"#)
+            .create();
+
+        let client = GitHubClient::new(server.url(), Some(String::from("ghp_testtoken")))
+            .expect("github client");
+        client.validate_token_scopes().expect("classic token with scopes");
     }
 }
