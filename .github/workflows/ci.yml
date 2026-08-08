@@ -261,6 +261,12 @@ jobs:
       fail-fast: false
       matrix:
         command: [pin, update, status, release]
+    # update and status query third-party release metadata, which the binary
+    # in the pinned runtime image (< 0.6.0) hard-fails on when an upstream org
+    # runs a GitHub IP allow list (e.g. aquasecurity). The fixed binary falls
+    # back to anonymous requests; make these two commands blocking again once
+    # runtime/Dockerfile pins 0.6.0 or newer.
+    continue-on-error: ${{ matrix.command == 'update' || matrix.command == 'status' }}
 
     steps:
       - name: Checkout
