@@ -1,6 +1,6 @@
 name: ThreatFlux Auto Release
 author: ThreatFlux
-description: Bump the Cargo version from conventional commits, then commit, tag, and publish a GitHub Release entirely through the GitHub API.
+description: Bump the Cargo version from conventional commits and publish directly or through an automated release pull request entirely through the GitHub API.
 branding:
   icon: tag
   color: blue
@@ -46,6 +46,14 @@ inputs:
     description: Release commit message template; "{version}" is replaced with the new version.
     required: false
     default: "chore: release v{version}"
+  create-pr:
+    description: Create or update an automation-owned release branch and pull request instead of publishing directly to the base branch.
+    required: false
+    default: "false"
+  release-branch:
+    description: Automation-owned release branch. Must be automation/release or use the automation/release/ prefix.
+    required: false
+    default: "automation/release"
   dry-run:
     description: Analyze and report without creating any commit, tag, or release.
     required: false
@@ -62,6 +70,12 @@ outputs:
     description: URL of the created GitHub Release, empty unless released.
   notes-file:
     description: Path to the generated release notes file, empty when no notes were generated.
+  release-pr-number:
+    description: Number of the created or updated automated release pull request.
+  release-pr-url:
+    description: URL of the created or updated automated release pull request.
+  release-branch:
+    description: Branch used for the automated release pull request.
 
 runs:
   using: docker
@@ -88,5 +102,9 @@ runs:
     - ${{ inputs.commit-message }}
     - --update-major-alias
     - ${{ inputs.update-major-alias }}
+    - --create-pr
+    - ${{ inputs.create-pr }}
+    - --release-branch
+    - ${{ inputs.release-branch }}
     - --dry-run
     - ${{ inputs.dry-run }}

@@ -226,6 +226,12 @@ struct CreatePullRequestRequest<'a> {
 }
 
 #[derive(Debug, Serialize)]
+struct UpdatePullRequestRequest<'a> {
+    title: &'a str,
+    body: &'a str,
+}
+
+#[derive(Debug, Serialize)]
 struct AddLabelsRequest<'a> {
     labels: &'a [String],
 }
@@ -757,6 +763,50 @@ impl GitHubClient {
             })?;
         let pull_request = response.json::<PullRequestResponse>().with_context(|| {
             format!("failed to decode pull request response for {owner}/{repository}")
+        })?;
+        Ok(PullRequestInfo { number: pull_request.number, url: pull_request.html_url })
+    }
+
+    pub fn find_open_pull_request(
+        &self,
+        owner: &str,
+        repository: &str,
+        head: &str,
+        base: &str,
+    ) -> Result<Option<PullRequestInfo>> {
+        let encoded_head = urlencoding::encode(&format!("{owner}:{head}")).into_owned();
+        let encoded_base = urlencoding::encode(base).into_owned();
+        let response = self.send_with_retry(
+            || self.get(&format!(
+                "/repos/{owner}/{repository}/pulls?state=open&head={encoded_head}&base={encoded_base}&per_page=100"
+            )),
+            || format!("find open release pull request for {owner}/{repository}"),
+        )?;
+        let pull_requests = response.json::<Vec<PullRequestResponse>>().with_context(|| {
+            format!("failed to decode pull request list for {owner}/{repository}")
+        })?;
+        Ok(pull_requests.into_iter().next().map(|pull_request| PullRequestInfo {
+            number: pull_request.number,
+            url: pull_request.html_url,
+        }))
+    }
+
+    pub fn update_pull_request(
+        &self,
+        owner: &str,
+        repository: &str,
+        number: u64,
+        title: &str,
+        body: &str,
+    ) -> Result<PullRequestInfo> {
+        let payload = UpdatePullRequestRequest { title, body };
+        let response = self.patch_json(
+            &format!("/repos/{owner}/{repository}/pulls/{number}"),
+            &payload,
+            || format!("update pull request {number} for {owner}/{repository}"),
+        )?;
+        let pull_request = response.json::<PullRequestResponse>().with_context(|| {
+            format!("failed to decode updated pull request response for {owner}/{repository}")
         })?;
         Ok(PullRequestInfo { number: pull_request.number, url: pull_request.html_url })
     }
