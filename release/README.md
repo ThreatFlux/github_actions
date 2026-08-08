@@ -21,7 +21,7 @@ on:
   workflow_dispatch:
 concurrency:
   group: auto-release-${{ github.ref }}
-permissions:
+  permissions:
   contents: write
   actions: write # required when dispatch-workflows is used
   pull-requests: write # required when create-pr is true
@@ -33,6 +33,10 @@ jobs:
       required-workflows: CI,Security
       dispatch-workflows: release.yml,docker.yml
       dispatch-version-workflow: release.yml
+      # Optional: authenticate release commits/PRs as an installed GitHub App.
+      github-app-id: ${{ vars.RELEASE_APP_ID }}
+    secrets:
+      github-app-private-key: ${{ secrets.RELEASE_APP_PRIVATE_KEY }}
     # secrets:
     #   release-token: ${{ secrets.RELEASE_TOKEN }}   # optional PAT/App token, see Tokens below
 ```
@@ -100,6 +104,16 @@ comma-separated list of workflow files to run after a release; set
 `dispatch-version-workflow` when one of them accepts a `version` input. These
 features replace the duplicated `gh run list` and `gh workflow run` shell
 scripts that would otherwise live in every repository.
+
+### GitHub App authentication
+
+Set `github-app-id` and pass `github-app-private-key` to have the reusable
+workflow mint an installation token with `actions/create-github-app-token`.
+The release action and downstream workflow dispatches then authenticate as the
+App. The App installation must have repository `contents: write`,
+`pull_requests: write`, and `actions: write` permissions. If these values are
+not configured, the workflow falls back to `release-token` and finally the
+default `GITHUB_TOKEN`.
 ## How Versions Are Computed
 
 Commits since the latest `<tag-prefix>X.Y.Z` tag are classified by their
@@ -133,6 +147,7 @@ and `Cargo.lock` entries for workspace packages. Merge commits are ignored.
 | `commit-message` | `chore: release v{version}` | Release commit message template. |
 | `create-pr` | `false` | Create or update an automated release pull request instead of publishing directly. |
 | `release-branch` | `automation/release` | Automation-owned branch; must use the `automation/release` prefix. |
+| `github-app-id` | empty | Optional App ID used with the `github-app-private-key` secret. |
 | `dry-run` | `false` | Analyze and report without creating anything. |
 
 ## Outputs
