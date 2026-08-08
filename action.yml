@@ -122,10 +122,12 @@ outputs:
 runs:
   using: docker
   image: runtime/Dockerfile
-  # Only the flags every subcommand accepts are passed positionally, so this
-  # action keeps working while the pinned runtime image still holds an older
-  # binary. Every other input travels through the INPUT_<NAME> environment
-  # variables GitHub sets automatically for Docker container actions.
+  # Only the flags every published binary accepts are passed positionally, so
+  # this action keeps working while the pinned runtime image still holds an
+  # older binary (--create-pr is rejected by pre-0.6.0 release subcommands, so
+  # it is deliberately absent here). Every other input travels through the
+  # INPUT_<NAME> environment variables GitHub sets automatically for Docker
+  # container actions.
   args:
     - ${{ inputs.command }}
     - --repo
@@ -138,7 +140,5 @@ runs:
     - ${{ inputs.repo-name }}
     - --base-branch
     - ${{ inputs.base-branch }}
-    - --create-pr
-    - ${{ inputs.create-pr }}
     - --dry-run
     - ${{ inputs.dry-run }}
