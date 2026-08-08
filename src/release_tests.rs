@@ -31,6 +31,8 @@ fn options(repo_root: &Path) -> ReleaseOptions {
         tag_style: TagStyle::Annotated,
         update_major_alias: false,
         commit_message: String::from("chore: release v{version}"),
+        create_pr: false,
+        release_branch: String::from("automation/release"),
         dry_run: false,
     }
 }
@@ -261,7 +263,7 @@ fn release_dry_run_performs_no_mutations_and_renders_outputs() {
     assert_eq!(report.files_updated.len(), 1);
     assert_eq!(
         report.github_outputs(Path::new("release_notes.md")),
-        "released=false\nversion=0.3.0\ntag=v0.3.0\nrelease-url=\nnotes-file=release_notes.md\n"
+        "released=false\nversion=0.3.0\ntag=v0.3.0\nrelease-url=\nrelease-pr-number=\nrelease-pr-url=\nrelease-branch=\nnotes-file=release_notes.md\n"
     );
 }
 
@@ -297,6 +299,51 @@ fn release_lightweight_tags_point_directly_at_the_commit() {
     let report = publisher(&server).release(&release_options).expect("release report");
 
     assert_eq!(report.outcome, ReleaseOutcome::Released);
+}
+
+#[test]
+fn release_creates_automated_release_branch_and_pull_request() {
+    let temp_dir = write_fixture_repo();
+    let mut server = Server::new();
+    let _analysis = mock_analysis(&mut server, 2, FEAT_AND_FIX);
+    let _build = mock_build_chain(&mut server);
+    let _release_branch_missing = server
+        .mock("GET", "/repos/acme/demo/git/ref/heads/automation/release")
+        .with_status(404)
+        .with_body(r#"{"message":"Not Found"}"#)
+        .create();
+    let _create_branch = server
+        .mock("POST", "/repos/acme/demo/git/refs")
+        .match_body(Matcher::Regex(
+            r#""ref":"refs/heads/automation/release".*"sha":"newcommitsha""#.into(),
+        ))
+        .with_status(201)
+        .with_body(r#"{"ref":"refs/heads/automation/release"}"#)
+        .create();
+    let _find_pr = server
+        .mock(
+            "GET",
+            "/repos/acme/demo/pulls?state=open&head=acme%3Aautomation%2Frelease&base=main&per_page=100",
+        )
+        .with_status(200)
+        .with_body("[]")
+        .create();
+    let _create_pr = server
+        .mock("POST", "/repos/acme/demo/pulls")
+        .match_body(Matcher::Regex(r#""head":"automation/release".*"base":"main""#.into()))
+        .with_status(201)
+        .with_body(r#"{"number":42,"html_url":"https://github.com/acme/demo/pull/42"}"#)
+        .create();
+
+    let mut release_options = options(temp_dir.path());
+    release_options.create_pr = true;
+    let report = publisher(&server).release(&release_options).expect("release report");
+
+    assert_eq!(report.outcome, ReleaseOutcome::PullRequestCreated);
+    assert_eq!(report.pull_request_number, Some(42));
+    assert_eq!(report.pull_request_url.as_deref(), Some("https://github.com/acme/demo/pull/42"));
+    assert_eq!(report.release_branch.as_deref(), Some("automation/release"));
+    assert_eq!(report.release_url, None);
 }
 
 #[test]

@@ -21,6 +21,7 @@ use crate::{
 
 const MAX_COMPARE_PAGES: u32 = 10;
 const MAX_FIRST_RELEASE_PAGES: u32 = 3;
+const AUTOMATED_RELEASE_BRANCH_PREFIX: &str = "automation/release";
 
 /// How the release tag is created. Annotated tags are the default: they
 /// carry a tagger identity and satisfy `git cat-file -t == "tag"` provenance
@@ -45,12 +46,18 @@ pub struct ReleaseOptions {
     pub update_major_alias: bool,
     /// Commit message template; `{version}` is replaced with the new version.
     pub commit_message: String,
+    /// Create or refresh an automation-owned release branch and pull request
+    /// instead of publishing directly to the base branch.
+    pub create_pr: bool,
+    pub release_branch: String,
     pub dry_run: bool,
 }
 
 #[derive(Debug, Clone, Copy, Eq, PartialEq)]
 pub enum ReleaseOutcome {
     Released,
+    PullRequestCreated,
+    PullRequestUpdated,
     DryRun,
     SkippedNoReleasableChanges,
     SkippedRace,
@@ -67,6 +74,9 @@ pub struct ReleaseReport {
     pub major_alias: Option<String>,
     pub commit_sha: Option<String>,
     pub release_url: Option<String>,
+    pub pull_request_number: Option<u64>,
+    pub pull_request_url: Option<String>,
+    pub release_branch: Option<String>,
     pub notes: Option<String>,
     pub commits_analyzed: usize,
     pub commit_range_truncated: bool,
@@ -80,11 +90,14 @@ impl ReleaseReport {
         let notes_path =
             if self.notes.is_some() { notes_file.display().to_string() } else { String::new() };
         format!(
-            "released={}\nversion={}\ntag={}\nrelease-url={}\nnotes-file={notes_path}\n",
+            "released={}\nversion={}\ntag={}\nrelease-url={}\nrelease-pr-number={}\nrelease-pr-url={}\nrelease-branch={}\nnotes-file={notes_path}\n",
             self.outcome == ReleaseOutcome::Released,
             self.next_version.as_deref().unwrap_or_default(),
             self.tag.as_deref().unwrap_or_default(),
             self.release_url.as_deref().unwrap_or_default(),
+            self.pull_request_number.map(|number| number.to_string()).unwrap_or_default(),
+            self.pull_request_url.as_deref().unwrap_or_default(),
+            self.release_branch.as_deref().unwrap_or_default(),
         )
     }
 }
@@ -121,6 +134,9 @@ impl ReleasePublisher {
 
     pub fn release(&self, options: &ReleaseOptions) -> Result<ReleaseReport> {
         self.github.ensure_token()?;
+        if options.create_pr {
+            validate_release_branch(&options.release_branch)?;
+        }
         let analysis = self.analyze(options)?;
         let bump = options.bump.or_else(|| conventional::required_bump(&analysis.commits));
         let mut report = initial_report(&analysis, bump);
@@ -210,20 +226,86 @@ impl ReleasePublisher {
 
         let current_head =
             self.github.branch_head_sha(&options.owner, &options.repo, &prepared.branch)?;
-        if current_head != prepared.head_sha
-            || !self.github.update_ref_fast_forward(
-                &options.owner,
-                &options.repo,
-                &format!("heads/{}", prepared.branch),
-                &commit_sha,
-            )?
-        {
+        if current_head != prepared.head_sha {
             report.outcome = ReleaseOutcome::SkippedRace;
             return Ok(());
         }
         report.commit_sha = Some(commit_sha.clone());
 
+        if options.create_pr {
+            return self.publish_pull_request(options, prepared, &commit_sha, report);
+        }
+
+        if !self.github.update_ref_fast_forward(
+            &options.owner,
+            &options.repo,
+            &format!("heads/{}", prepared.branch),
+            &commit_sha,
+        )? {
+            report.outcome = ReleaseOutcome::SkippedRace;
+            return Ok(());
+        }
+
         self.finalize(options, prepared, &commit_sha, report)
+    }
+
+    fn publish_pull_request(
+        &self,
+        options: &ReleaseOptions,
+        prepared: &PreparedRelease,
+        commit_sha: &str,
+        report: &mut ReleaseReport,
+    ) -> Result<()> {
+        let owner = &options.owner;
+        let repo = &options.repo;
+        let branch_ref = format!("heads/{}", options.release_branch);
+        if self.github.reference_sha(owner, repo, &branch_ref)?.is_some() {
+            self.github.update_ref(owner, repo, &branch_ref, commit_sha, true)?;
+        } else {
+            self.github.create_ref(owner, repo, &branch_ref, commit_sha)?;
+        }
+
+        let title = format!("chore(release): {}", prepared.tag);
+        let notes = report.notes.clone().unwrap_or_default();
+        let body = format!(
+            "Automated release update for `{}`.\n\nThis PR updates the package version from `{}` to `{}`. Merging it into `{}` allows the release workflow to publish the tag and GitHub release.\n\n{}\n\n<!-- automated-release-branch: {} -->",
+            prepared.tag,
+            report.current_version,
+            prepared.next_version,
+            prepared.branch,
+            notes,
+            options.release_branch,
+        );
+        let pull_request = self.github.find_open_pull_request(
+            owner,
+            repo,
+            &options.release_branch,
+            &prepared.branch,
+        )?;
+        let pull_request = match pull_request {
+            Some(existing) => {
+                let updated =
+                    self.github.update_pull_request(owner, repo, existing.number, &title, &body)?;
+                report.outcome = ReleaseOutcome::PullRequestUpdated;
+                updated
+            }
+            None => {
+                let created = self.github.create_pull_request(
+                    owner,
+                    repo,
+                    &title,
+                    &body,
+                    &options.release_branch,
+                    &prepared.branch,
+                )?;
+                report.outcome = ReleaseOutcome::PullRequestCreated;
+                created
+            }
+        };
+        report.pull_request_number = Some(pull_request.number);
+        report.pull_request_url = Some(pull_request.url);
+        report.release_branch = Some(options.release_branch.clone());
+        Ok(())
     }
 
     fn build_commit(&self, options: &ReleaseOptions, prepared: &PreparedRelease) -> Result<String> {
@@ -304,11 +386,25 @@ fn initial_report(analysis: &Analysis, bump: Option<BumpLevel>) -> ReleaseReport
         major_alias: None,
         commit_sha: None,
         release_url: None,
+        pull_request_number: None,
+        pull_request_url: None,
+        release_branch: None,
         notes: None,
         commits_analyzed: analysis.commits.len(),
         commit_range_truncated: analysis.truncated,
         files_updated: Vec::new(),
     }
+}
+
+fn validate_release_branch(branch: &str) -> Result<()> {
+    if branch != AUTOMATED_RELEASE_BRANCH_PREFIX
+        && !branch.starts_with(&format!("{AUTOMATED_RELEASE_BRANCH_PREFIX}/"))
+    {
+        anyhow::bail!(
+            "automated release branch '{branch}' must use the reserved '{AUTOMATED_RELEASE_BRANCH_PREFIX}/' prefix"
+        );
+    }
+    Ok(())
 }
 
 // Tests live in a sibling file to keep this module within the repository's

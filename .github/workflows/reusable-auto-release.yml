@@ -32,6 +32,16 @@ on:
         required: false
         default: false
         type: boolean
+      create-pr:
+        description: Create or update an automated release branch and pull request instead of publishing directly.
+        required: false
+        default: false
+        type: boolean
+      release-branch:
+        description: Automation-owned release branch (automation/release or automation/release/*).
+        required: false
+        default: automation/release
+        type: string
     secrets:
       release-token:
         description: Optional GitHub App or PAT token; falls back to GITHUB_TOKEN. Required if the created tag must trigger tag pipelines natively.
@@ -49,9 +59,19 @@ on:
       release-url:
         description: URL of the created GitHub Release.
         value: ${{ jobs.release.outputs.release-url }}
+      release-pr-number:
+        description: Number of the created or updated automated release pull request.
+        value: ${{ jobs.release.outputs.release-pr-number }}
+      release-pr-url:
+        description: URL of the created or updated automated release pull request.
+        value: ${{ jobs.release.outputs.release-pr-url }}
+      release-branch:
+        description: Branch used for the automated release pull request.
+        value: ${{ jobs.release.outputs.release-branch }}
 
 permissions:
   contents: read
+  pull-requests: write
 
 jobs:
   release:
@@ -59,11 +79,15 @@ jobs:
     runs-on: ubuntu-latest
     permissions:
       contents: write
+      pull-requests: write
     outputs:
       released: ${{ steps.release.outputs.released }}
       version: ${{ steps.release.outputs.version }}
       tag: ${{ steps.release.outputs.tag }}
       release-url: ${{ steps.release.outputs.release-url }}
+      release-pr-number: ${{ steps.release.outputs.release-pr-number }}
+      release-pr-url: ${{ steps.release.outputs.release-pr-url }}
+      release-branch: ${{ steps.release.outputs.release-branch }}
     steps:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -92,3 +116,5 @@ jobs:
           update-major-alias: ${{ inputs.update-major-alias }}
           notes-file: ${{ inputs.notes-file }}
           dry-run: ${{ inputs.dry-run }}
+          create-pr: ${{ inputs.create-pr }}
+          release-branch: ${{ inputs.release-branch }}

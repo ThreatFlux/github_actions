@@ -178,7 +178,7 @@ The repository also ships an [`action.yml`](action.yml) wrapper so the binary ca
 
 ## Auto Release Action
 
-The [`release/`](release/) sub-action gives any Cargo-based repository automatic releases on merge to main: it bumps the version from conventional commits, rewrites `Cargo.toml`/`Cargo.lock`, and creates the release commit, tag, and GitHub Release with generated notes — entirely through the GitHub API, from a prebuilt image that starts in seconds.
+The [`release/`](release/) sub-action gives any Cargo-based repository automatic releases on merge to main: it bumps the version from conventional commits, rewrites `Cargo.toml`/`Cargo.lock`, and either creates the release commit/tag/GitHub Release directly or stages those updates on an automation-owned release branch with a pull request — entirely through the GitHub API, from a prebuilt image that starts in seconds.
 
 ```yaml
 name: Auto Release

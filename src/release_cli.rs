@@ -63,6 +63,15 @@ pub struct ReleaseArgs {
     #[arg(long, default_value = "chore: release v{version}")]
     commit_message: String,
 
+    /// Create or update an automated release branch and pull request instead
+    /// of publishing directly to the base branch.
+    #[arg(long, default_value_t = false, num_args = 0..=1, default_missing_value = "true")]
+    create_pr: bool,
+
+    /// Automation-owned branch used for the release pull request.
+    #[arg(long, default_value = "automation/release")]
+    release_branch: String,
+
     #[arg(long, env = "GITHUB_OUTPUT", hide = true)]
     github_output: Option<PathBuf>,
 
@@ -125,6 +134,8 @@ pub fn run_release(args: ReleaseArgs, github_api_base_url: Option<String>) -> Re
         tag_style: args.tag_style.style(),
         update_major_alias: args.update_major_alias,
         commit_message: args.commit_message,
+        create_pr: args.create_pr,
+        release_branch: args.release_branch,
         dry_run: args.dry_run,
     })?;
 
@@ -174,6 +185,29 @@ fn print_released(report: &ReleaseReport, notes_file: &Path) {
 fn print_release_report(report: &ReleaseReport, notes_file: &Path) {
     match report.outcome {
         ReleaseOutcome::Released => print_released(report, notes_file),
+        ReleaseOutcome::PullRequestCreated | ReleaseOutcome::PullRequestUpdated => {
+            let action = if report.outcome == ReleaseOutcome::PullRequestCreated {
+                "Created"
+            } else {
+                "Updated"
+            };
+            println!(
+                "{action} automated release PR for {} ({} -> {}).",
+                report.tag.as_deref().unwrap_or_default(),
+                report.current_version,
+                report.next_version.as_deref().unwrap_or_default()
+            );
+            if let Some(branch) = &report.release_branch {
+                println!("- release branch {branch}");
+            }
+            if let Some(url) = &report.pull_request_url {
+                println!("- pull request {url}");
+            }
+            for file in &report.files_updated {
+                println!("- updated {}", file.display());
+            }
+            println!("- release notes written to {}", notes_file.display());
+        }
         ReleaseOutcome::DryRun => {
             println!(
                 "Dry run: would release {} ({} -> {}).",

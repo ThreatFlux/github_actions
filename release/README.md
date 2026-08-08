@@ -20,6 +20,7 @@ concurrency:
   group: auto-release-${{ github.ref }}
 permissions:
   contents: write
+  pull-requests: write # required when create-pr is true
 jobs:
   release:
     uses: ThreatFlux/github_actions/.github/workflows/reusable-auto-release.yml@v0 # pin to a SHA in production
@@ -41,6 +42,7 @@ concurrency:
   cancel-in-progress: false
 permissions:
   contents: write
+  pull-requests: write # required when create-pr is true
 jobs:
   release:
     runs-on: ubuntu-latest
@@ -60,6 +62,26 @@ jobs:
 Merges whose commits are only `chore:`/`docs:`/etc. produce no release — the
 action exits successfully with `released=false`. That no-op is also what stops
 release commits from triggering an endless release loop.
+
+## Automated release pull requests
+
+Set `create-pr: true` to stage the version update on the reserved
+`automation/release` branch and create or refresh one pull request against the
+base branch:
+
+```yaml
+- uses: ThreatFlux/github_actions/release@<pinned-sha>
+  with:
+    token: ${{ secrets.GITHUB_TOKEN }}
+    create-pr: true
+    release-branch: automation/release
+```
+
+PR mode requires `contents: write` and `pull-requests: write`, and force-refreshes that automation-owned branch from the analyzed base,
+then opens or updates the matching open PR. It does not move tags or publish a
+GitHub Release; those happen in the follow-on release workflow after merge.
+The action exposes `release-pr-number`, `release-pr-url`, and `release-branch`
+outputs, while `released` remains `false`.
 
 ## How Versions Are Computed
 
@@ -92,6 +114,8 @@ and `Cargo.lock` entries for workspace packages. Merge commits are ignored.
 | `update-major-alias` | `false` | Also move the moving major alias tag (for example `v1`) to the release commit. |
 | `notes-file` | `release_notes.md` | Where generated release notes are written (also on dry runs). |
 | `commit-message` | `chore: release v{version}` | Release commit message template. |
+| `create-pr` | `false` | Create or update an automated release pull request instead of publishing directly. |
+| `release-branch` | `automation/release` | Automation-owned branch; must use the `automation/release` prefix. |
 | `dry-run` | `false` | Analyze and report without creating anything. |
 
 ## Outputs
@@ -102,6 +126,9 @@ and `Cargo.lock` entries for workspace packages. Merge commits are ignored.
 | `version` | Version without the tag prefix (also set on dry runs and tag-exists skips). |
 | `tag` | Release tag name. |
 | `release-url` | URL of the created GitHub Release. |
+| `release-pr-number` | Number of the created or updated automated release pull request. |
+| `release-pr-url` | URL of the created or updated automated release pull request. |
+| `release-branch` | Branch used for the automated release pull request. |
 | `notes-file` | Path to the generated notes file, empty when no notes were generated. |
 
 ## Tokens and Downstream Pipelines
