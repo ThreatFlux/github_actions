@@ -188,9 +188,15 @@ on:
 concurrency:
   group: auto-release-${{ github.ref }}
 permissions:
-  contents: write
+  contents: read
+  actions: read
+  pull-requests: read
 jobs:
   release:
+    permissions:
+      contents: write
+      actions: write
+      pull-requests: write
     uses: ThreatFlux/github_actions/.github/workflows/reusable-auto-release.yml@v0 # pin to a SHA in production
     with:
       bump: auto

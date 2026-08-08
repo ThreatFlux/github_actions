@@ -24,11 +24,15 @@ concurrency:
   cancel-in-progress: false
 
 permissions:
-  contents: write
-  actions: write # required when dispatch-workflows is used
-  pull-requests: write # required when create-pr is true
+  contents: read
+  actions: read
+  pull-requests: read
 jobs:
   release:
+    permissions:
+      contents: write
+      actions: write # required when dispatch-workflows is used
+      pull-requests: write # required when create-pr is true
     uses: ThreatFlux/github_actions/.github/workflows/reusable-auto-release.yml@v0 # pin to a SHA in production
     with:
       bump: auto
