@@ -1,0 +1,10 @@
+vulnerabilities:
+  - id: CVE-2023-45853
+    purls:
+      - pkg:deb/debian/zlib1g
+    statement: >-
+      The vulnerable code is in MiniZip (zlib's contrib/ directory), which
+      Debian does not build into the zlib1g binary package. Debian marks this
+      CVE as not affecting zlib1g. Scoped to zlib1g so the CVE still surfaces
+      if it ever appears via another package (e.g. bundled MiniZip copies).
+      https://security-tracker.debian.org/tracker/CVE-2023-45853

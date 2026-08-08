@@ -254,7 +254,7 @@ jobs:
           vuln-type: os,library
           ignore-unfixed: true
           limit-severities-for-sarif: true
-          trivyignores: .trivyignore
+          trivyignores: .trivyignore.yaml
         continue-on-error: true
 
       - name: Upload Trivy results
