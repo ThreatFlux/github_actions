@@ -1,0 +1,5 @@
+# CVE-2023-45853 (zlib1g, CRITICAL): the vulnerable code is in MiniZip
+# (zlib's contrib/ directory), which Debian does not build into the
+# zlib1g binary package. Debian marks this CVE as not affecting zlib1g.
+# https://security-tracker.debian.org/tracker/CVE-2023-45853
+CVE-2023-45853
