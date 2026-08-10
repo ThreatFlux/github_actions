@@ -77,13 +77,10 @@ pub struct ReleaseArgs {
     /// top of the manifest and lockfile version rewrites. Lets a caller pin a
     /// value it can only resolve at release time, such as a runtime image
     /// digest, inside the commit the release tag points at.
-    #[arg(
-        long = "extra-files",
-        env = "INPUT_EXTRA-FILES",
-        value_delimiter = ',',
-        default_value = "",
-        hide_default_value = true
-    )]
+    // No `default_value`: combined with `value_delimiter` an empty default
+    // splits into zero values, and clap then rejects every `release` parse for
+    // supplying no value.
+    #[arg(long = "extra-files", env = "INPUT_EXTRA-FILES", value_delimiter = ',')]
     pub extra_files: Vec<PathBuf>,
 
     #[arg(long, env = "GITHUB_OUTPUT", hide = true)]
