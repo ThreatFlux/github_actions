@@ -73,6 +73,16 @@ pub struct ReleaseArgs {
     #[arg(long, env = "INPUT_RELEASE-BRANCH", default_value = "automation/release")]
     pub release_branch: String,
 
+    /// Extra repository-relative files to stage into the release commit, on
+    /// top of the manifest and lockfile version rewrites. Lets a caller pin a
+    /// value it can only resolve at release time, such as a runtime image
+    /// digest, inside the commit the release tag points at.
+    // No `default_value`: combined with `value_delimiter` an empty default
+    // splits into zero values, and clap then rejects every `release` parse for
+    // supplying no value.
+    #[arg(long = "extra-files", env = "INPUT_EXTRA-FILES", value_delimiter = ',')]
+    pub extra_files: Vec<PathBuf>,
+
     #[arg(long, env = "GITHUB_OUTPUT", hide = true)]
     pub github_output: Option<PathBuf>,
 
@@ -138,6 +148,11 @@ pub fn run_release(args: ReleaseArgs, github_api_base_url: Option<String>) -> Re
         create_pr: args.create_pr,
         release_branch: args.release_branch,
         dry_run: args.dry_run,
+        extra_files: args
+            .extra_files
+            .into_iter()
+            .filter(|file| !file.as_os_str().is_empty())
+            .collect(),
     })?;
 
     if let Some(notes) = &report.notes {

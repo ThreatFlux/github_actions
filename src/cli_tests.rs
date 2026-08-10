@@ -248,6 +248,32 @@ fn commit_message_defaults_stay_per_subcommand() {
 }
 
 #[test]
+fn release_parses_without_extra_files() {
+    // Regression: an empty `default_value` combined with `value_delimiter`
+    // made clap reject every `release` parse, not just ones passing the flag.
+    with_env(&[], || {
+        assert!(release_args(parse(&["bin", "release"])).extra_files.is_empty());
+    });
+}
+
+#[test]
+fn release_extra_files_resolve_from_input_env() {
+    with_env(&[("INPUT_EXTRA-FILES", "runtime/Dockerfile,release/Dockerfile")], || {
+        assert_eq!(
+            release_args(parse(&["bin", "release"])).extra_files,
+            vec![PathBuf::from("runtime/Dockerfile"), PathBuf::from("release/Dockerfile")]
+        );
+    });
+}
+
+#[test]
+fn empty_extra_files_input_env_yields_no_files() {
+    with_env(&[("INPUT_EXTRA-FILES", "")], || {
+        assert!(release_args(parse(&["bin", "release"])).extra_files.is_empty());
+    });
+}
+
+#[test]
 fn commit_message_input_env_overrides_both_subcommand_defaults() {
     with_env(&[("INPUT_COMMIT-MESSAGE", "chore: sync deps")], || {
         assert_eq!(repo_args(parse(&["bin", "update"])).commit_message, "chore: sync deps");

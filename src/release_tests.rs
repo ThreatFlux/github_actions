@@ -6,6 +6,11 @@ use tempfile::{TempDir, tempdir};
 use super::{ReleaseOptions, ReleaseOutcome, ReleasePublisher, TagStyle};
 use crate::{GitHubClient, conventional::BumpLevel};
 
+// Extra-file staging has its own mock scaffolding, so it lives in a sibling
+// file to keep both modules within the repository's file-size lint budget.
+#[path = "release_extra_files_tests.rs"]
+mod extra_files;
+
 const FEAT_AND_FIX: &str = r#"{"total_commits":2,"commits":[{"sha":"feataaaaaaa","commit":{"message":"feat: add thing"},"parents":[{}]},{"sha":"fixbbbbbbbb","commit":{"message":"fix: repair thing"},"parents":[{}]}]}"#;
 const CHORE_ONLY: &str = r#"{"total_commits":1,"commits":[{"sha":"choreaaaaaa","commit":{"message":"chore: tidy"},"parents":[{}]}]}"#;
 const TAGS_V023: &str = r#"[{"name":"v0.2.3","commit":{"sha":"tagsha"}}]"#;
@@ -34,6 +39,7 @@ fn options(repo_root: &Path) -> ReleaseOptions {
         create_pr: false,
         release_branch: String::from("automation/release"),
         dry_run: false,
+        extra_files: Vec::new(),
     }
 }
 
