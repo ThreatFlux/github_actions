@@ -11,8 +11,8 @@ use std::{ffi::OsString, path::PathBuf};
 use clap::Parser as _;
 
 use super::{
-    Cli, Commands, RepoArgs, TargetArgs, input_env, release_cli::ReleaseArgs,
-    release_cli::TagStyleArg,
+    Cli, Commands, RepoArgs, TargetArgs, input_env, release_cli::PhaseArg,
+    release_cli::ReleaseArgs, release_cli::TagStyleArg,
 };
 use crate::input_env::testing::with_env;
 
@@ -270,6 +270,32 @@ fn release_extra_files_resolve_from_input_env() {
 fn empty_extra_files_input_env_yields_no_files() {
     with_env(&[("INPUT_EXTRA-FILES", "")], || {
         assert!(release_args(parse(&["bin", "release"])).extra_files.is_empty());
+    });
+}
+
+#[test]
+fn release_phase_defaults_to_a_single_run() {
+    with_env(&[], || {
+        assert_eq!(release_args(parse(&["bin", "release"])).phase, PhaseArg::All);
+    });
+}
+
+#[test]
+fn release_phase_resolves_from_input_env() {
+    with_env(&[("INPUT_PHASE", "bump")], || {
+        assert_eq!(release_args(parse(&["bin", "release"])).phase, PhaseArg::Bump);
+    });
+    with_env(&[("INPUT_PHASE", "tag")], || {
+        assert_eq!(release_args(parse(&["bin", "release"])).phase, PhaseArg::Tag);
+    });
+}
+
+#[test]
+fn empty_phase_input_env_still_releases_in_one_run() {
+    // action.yml passes every optional input as an empty string when unset, so
+    // an unset phase must not turn into a partial release.
+    with_env(&[("INPUT_PHASE", "")], || {
+        assert_eq!(release_args(parse(&["bin", "release"])).phase, PhaseArg::All);
     });
 }
 

@@ -3,13 +3,16 @@ use std::{fs, path::Path};
 use mockito::{Matcher, Mock, Server, ServerGuard};
 use tempfile::{TempDir, tempdir};
 
-use super::{ReleaseOptions, ReleaseOutcome, ReleasePublisher, TagStyle};
+use super::{ReleaseOptions, ReleaseOutcome, ReleasePhase, ReleasePublisher, TagStyle};
 use crate::{GitHubClient, conventional::BumpLevel};
 
-// Extra-file staging has its own mock scaffolding, so it lives in a sibling
-// file to keep both modules within the repository's file-size lint budget.
+// Extra-file staging and the phased release each have their own mock
+// scaffolding, so they live in sibling files to keep every module within the
+// repository's file-size lint budget.
 #[path = "release_extra_files_tests.rs"]
 mod extra_files;
+#[path = "release_phase_tests.rs"]
+mod phases;
 
 const FEAT_AND_FIX: &str = r#"{"total_commits":2,"commits":[{"sha":"feataaaaaaa","commit":{"message":"feat: add thing"},"parents":[{}]},{"sha":"fixbbbbbbbb","commit":{"message":"fix: repair thing"},"parents":[{}]}]}"#;
 const CHORE_ONLY: &str = r#"{"total_commits":1,"commits":[{"sha":"choreaaaaaa","commit":{"message":"chore: tidy"},"parents":[{}]}]}"#;
@@ -40,6 +43,7 @@ fn options(repo_root: &Path) -> ReleaseOptions {
         release_branch: String::from("automation/release"),
         dry_run: false,
         extra_files: Vec::new(),
+        phase: ReleasePhase::All,
     }
 }
 
@@ -269,7 +273,7 @@ fn release_dry_run_performs_no_mutations_and_renders_outputs() {
     assert_eq!(report.files_updated.len(), 1);
     assert_eq!(
         report.github_outputs(Path::new("release_notes.md")),
-        "released=false\nversion=0.3.0\ntag=v0.3.0\nrelease-url=\nrelease-pr-number=\nrelease-pr-url=\nrelease-branch=\nnotes-file=release_notes.md\n"
+        "released=false\nversion=0.3.0\ntag=v0.3.0\ncommit=\nrelease-url=\nrelease-pr-number=\nrelease-pr-url=\nrelease-branch=\nnotes-file=release_notes.md\n"
     );
 }
 

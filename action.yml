@@ -118,6 +118,10 @@ inputs:
     description: Comma-separated repository-relative files to stage into the release commit on top of the manifest and lockfile version rewrites. Use it to pin a value that can only be resolved at release time, such as a runtime image digest, inside the commit the release tag points at. (release only)
     required: false
     default: ""
+  phase:
+    description: 'Which part of the release to perform: all (default) bumps, tags, and publishes in one run; bump commits the version bump and stops, so an artifact built from the released version can be published before the tag exists; tag then tags the version the manifest already holds. Leave empty to use the default ("all"). (release only)'
+    required: false
+    default: ""
 
 outputs:
   released:
@@ -126,6 +130,8 @@ outputs:
     description: The released version without the tag prefix, empty when skipped without a computed version. Release-command output; empty for other commands.
   tag:
     description: The created release tag, empty when skipped without a computed version. Release-command output; empty for other commands.
+  commit:
+    description: SHA of the commit the release created, which for the bump phase is the version commit the follow-up tag phase builds on. Release-command output; empty for other commands.
   release-url:
     description: URL of the created GitHub Release, empty unless released. Release-command output; empty for other commands.
   notes-file:
