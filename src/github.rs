@@ -6,6 +6,7 @@ use reqwest::{
     blocking::{Client, RequestBuilder, Response},
     header::{AUTHORIZATION, HeaderMap, HeaderValue, RETRY_AFTER, USER_AGENT},
 };
+use semver::Version;
 use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone)]
@@ -297,6 +298,12 @@ impl GitHubClient {
 
     pub fn latest_reference(&self, owner: &str, repository: &str) -> Result<LatestReference> {
         if let Some(version) = self.latest_release_tag(owner, repository)? {
+            if !is_version_tag(&version)
+                && let Some(reference) = self.latest_version_tag(owner, repository)?
+            {
+                return Ok(reference);
+            }
+
             let sha = self.resolve_reference(owner, repository, &version)?;
             return Ok(LatestReference { version, sha });
         }
@@ -337,6 +344,35 @@ impl GitHubClient {
         })?;
 
         Ok(commit.sha)
+    }
+
+    /// Newest tag that looks like a version, used when the latest release tag
+    /// is not a version at all.
+    ///
+    /// Some actions publish releases under names that carry no version ordering
+    /// relative to the refs consumers actually use. `github/codeql-action`, for
+    /// example, tags every release `codeql-bundle-v<bundle version>` while
+    /// workflows track `v<major>.<minor>.<patch>`, so trusting the release tag
+    /// would repin `v4.37.4` to a `codeql-bundle-v2.26.2` commit and silently
+    /// drop the `v4` series.
+    fn latest_version_tag(&self, owner: &str, repository: &str) -> Result<Option<LatestReference>> {
+        const MAX_TAG_PAGES: u32 = 1;
+        let tags = self.list_tags(owner, repository, MAX_TAG_PAGES)?;
+        let Some(best) = tags
+            .into_iter()
+            .filter_map(|tag| parse_version_tag(&tag.name).map(|version| (version, tag)))
+            .max_by(|(left, _), (right, _)| left.cmp(right))
+            .map(|(_, tag)| tag)
+        else {
+            return Ok(None);
+        };
+
+        let sha = match best.sha {
+            Some(sha) => sha,
+            None => self.resolve_reference(owner, repository, &best.name)?,
+        };
+
+        Ok(Some(LatestReference { version: best.name, sha }))
     }
 
     fn latest_release_tag(&self, owner: &str, repository: &str) -> Result<Option<String>> {
@@ -1083,6 +1119,30 @@ fn commit_info_from_response(commit: RepoCommitResponse) -> CommitInfo {
     }
 }
 
+fn is_version_tag(tag: &str) -> bool {
+    parse_version_tag(tag).is_some()
+}
+
+/// Parse a tag such as `v4`, `v4.37` or `4.37.6` into a comparable version.
+///
+/// Stable releases only: prereleases are skipped so an unfinished `v5.0.0-rc.1`
+/// never wins over a shipped `v4.37.6`.
+fn parse_version_tag(tag: &str) -> Option<Version> {
+    let trimmed = tag.trim().trim_start_matches('v');
+    if !trimmed.starts_with(|character: char| character.is_ascii_digit()) {
+        return None;
+    }
+
+    let normalized = match trimmed.matches('.').count() {
+        0 => format!("{trimmed}.0.0"),
+        1 => format!("{trimmed}.0"),
+        _ => trimmed.to_owned(),
+    };
+    let version = Version::parse(&normalized).ok()?;
+
+    version.pre.is_empty().then_some(version)
+}
+
 fn normalize_token(token: &str) -> Option<String> {
     let trimmed = token.trim();
     if trimmed.is_empty() { None } else { Some(trimmed.to_owned()) }
@@ -1306,6 +1366,62 @@ mod tests {
         assert_eq!(latest.sha, "6c175e9c4083a92bbca2f9724c8a5e33bc2d97a5");
         forbidden.assert();
         anonymous.assert();
+    }
+
+    #[test]
+    fn latest_reference_prefers_a_version_tag_over_a_non_version_release_tag() {
+        let mut server = Server::new();
+        let _release = server
+            .mock("GET", "/repos/github/codeql-action/releases/latest")
+            .with_status(200)
+            .with_body(r#"{"tag_name":"codeql-bundle-v2.26.2"}"#)
+            .create();
+        let tags = server
+            .mock("GET", "/repos/github/codeql-action/tags")
+            .match_query(Matcher::AllOf(vec![
+                Matcher::UrlEncoded("per_page".into(), "100".into()),
+                Matcher::UrlEncoded("page".into(), "1".into()),
+            ]))
+            .expect(1)
+            .with_status(200)
+            .with_body(
+                r#"[
+                    {"name":"codeql-bundle-v2.26.2","commit":{"sha":"18420e3271f74589575af831a523c833acda327f"}},
+                    {"name":"v4.37.6","commit":{"sha":"5595ccaf912efad79be6eef63a5619ff05969be3"}},
+                    {"name":"v4.37.4","commit":{"sha":"f205ea1c3313d32999d8d6a48b4f6530d4437b38"}},
+                    {"name":"v5.0.0-beta.1","commit":{"sha":"1111111111111111111111111111111111111111"}}
+                ]"#,
+            )
+            .create();
+
+        let client = GitHubClient::new(server.url(), None).expect("github client");
+        let latest = client.latest_reference("github", "codeql-action").expect("latest reference");
+
+        assert_eq!(latest.version, "v4.37.6");
+        assert_eq!(latest.sha, "5595ccaf912efad79be6eef63a5619ff05969be3");
+        tags.assert();
+    }
+
+    #[test]
+    fn latest_reference_uses_a_version_release_tag_directly() {
+        let mut server = Server::new();
+        let _release = server
+            .mock("GET", "/repos/taiki-e/install-action/releases/latest")
+            .with_status(200)
+            .with_body(r#"{"tag_name":"v2.85.11"}"#)
+            .create();
+        let _commit = server
+            .mock("GET", "/repos/taiki-e/install-action/commits/v2.85.11")
+            .with_status(200)
+            .with_body(r#"{"sha":"7f4eb899022d8fe70b20c4f3de697aa85c309026"}"#)
+            .create();
+
+        let client = GitHubClient::new(server.url(), None).expect("github client");
+        let latest =
+            client.latest_reference("taiki-e", "install-action").expect("latest reference");
+
+        assert_eq!(latest.version, "v2.85.11");
+        assert_eq!(latest.sha, "7f4eb899022d8fe70b20c4f3de697aa85c309026");
     }
 
     #[test]

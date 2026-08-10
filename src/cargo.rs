@@ -6,7 +6,7 @@ use std::{
 };
 
 use anyhow::{Context, Result, bail};
-use semver::Version;
+use semver::{BuildMetadata, Version};
 use toml_edit::{DocumentMut, InlineTable, Item, Table, Value, value};
 use walkdir::{DirEntry, WalkDir};
 
@@ -160,8 +160,10 @@ impl CargoUpdater {
                 &self.crates_io,
                 &dependency.dependency_name,
             )?;
-            let latest_parsed = Version::parse(&latest_version)
+            let mut latest_parsed = Version::parse(&latest_version)
                 .with_context(|| format!("invalid crates.io version '{latest_version}'"))?;
+            latest_parsed.build = BuildMetadata::EMPTY;
+            let latest_version = latest_parsed.to_string();
             let update_needed = latest_parsed > parsed_requirement.version;
 
             manifest_result.entries.push(CargoDependencyEntry {
@@ -371,6 +373,9 @@ fn analyze_inline_table(table: &InlineTable) -> DependencyAnalysis {
     if table.contains_key("workspace") {
         return unmanaged_reason("workspace dependency");
     }
+    if table.contains_key("registry") || table.contains_key("registry-index") {
+        return unmanaged_reason("alternate registry dependency");
+    }
 
     let current_requirement = table.get("version").and_then(Value::as_str).map(ToOwned::to_owned);
     if current_requirement.is_some() {
@@ -389,6 +394,9 @@ fn analyze_table(table: &Table) -> DependencyAnalysis {
     }
     if table.contains_key("workspace") {
         return unmanaged_reason("workspace dependency");
+    }
+    if table.contains_key("registry") || table.contains_key("registry-index") {
+        return unmanaged_reason("alternate registry dependency");
     }
 
     let current_requirement = table
@@ -606,6 +614,7 @@ anyhow = "1.0.95"
 serde = { version = "^1.0.200", features = ["derive"] }
 local-crate = { path = "../local-crate" }
 git-crate = { git = "https://github.com/example/git-crate" }
+private-crate = { version = "=1.6.8", registry = "example-registry" }
 
 [target.'cfg(unix)'.dependencies]
 regex = "~1.10.0"
@@ -646,9 +655,17 @@ regex = "~1.10.0"
             .expect("cargo status");
 
         assert_eq!(report.manifest_files, 1);
-        assert_eq!(report.dependencies_scanned, 5);
-        assert_eq!(report.unmanaged_dependencies, 2);
-        assert_eq!(report.entries.len(), 5);
+        assert_eq!(report.dependencies_scanned, 6);
+        assert_eq!(report.unmanaged_dependencies, 3);
+        assert_eq!(report.entries.len(), 6);
+
+        let private = report
+            .entries
+            .iter()
+            .find(|entry| entry.dependency_name == "private-crate")
+            .expect("private entry");
+        assert!(!private.managed);
+        assert_eq!(private.reason.as_deref(), Some("alternate registry dependency"));
 
         let anyhow = report
             .entries
@@ -667,6 +684,65 @@ regex = "~1.10.0"
             .expect("local entry");
         assert!(!local.managed);
         assert_eq!(local.reason.as_deref(), Some("path dependency"));
+    }
+
+    #[test]
+    fn build_metadata_is_stripped_from_latest_versions() {
+        let temp_dir = tempdir().expect("tempdir");
+        fs::write(
+            temp_dir.path().join("Cargo.toml"),
+            r#"[package]
+name = "demo"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+serde_yaml = "0.9.34"
+toml = "1.0"
+"#,
+        )
+        .expect("write Cargo.toml");
+
+        let mut server = Server::new();
+        let _serde_yaml = server
+            .mock("GET", "/crates/serde_yaml")
+            .with_status(200)
+            .with_body(
+                r#"{"crate":{"id":"serde_yaml","name":"serde_yaml","max_version":"0.9.34+deprecated","max_stable_version":"0.9.34+deprecated","newest_version":"0.9.34+deprecated"}}"#,
+            )
+            .create();
+        let _toml = server
+            .mock("GET", "/crates/toml")
+            .with_status(200)
+            .with_body(
+                r#"{"crate":{"id":"toml","name":"toml","max_version":"1.1.4+spec-1.1.0","max_stable_version":"1.1.4+spec-1.1.0","newest_version":"1.1.4+spec-1.1.0"}}"#,
+            )
+            .create();
+
+        let update_manager =
+            CargoUpdater::new(CratesIoClient::new(server.url()).expect("crates.io client"));
+        let report = update_manager
+            .update(&CargoUpdateOptions {
+                repo_root: temp_dir.path().to_path_buf(),
+                mode: UpdateMode::Status,
+            })
+            .expect("cargo status");
+
+        let serde_yaml = report
+            .entries
+            .iter()
+            .find(|entry| entry.dependency_name == "serde_yaml")
+            .expect("serde_yaml entry");
+        assert_eq!(serde_yaml.latest_version.as_deref(), Some("0.9.34"));
+        assert!(!serde_yaml.update_needed);
+
+        let toml = report
+            .entries
+            .iter()
+            .find(|entry| entry.dependency_name == "toml")
+            .expect("toml entry");
+        assert_eq!(toml.latest_version.as_deref(), Some("1.1.4"));
+        assert!(toml.update_needed);
     }
 
     #[test]
