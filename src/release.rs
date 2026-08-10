@@ -8,7 +8,10 @@
 //! garbage-collects; the window between tag creation and release creation is
 //! not auto-healed and requires a manual `gh release create` for the tag.
 
-use std::path::{Path, PathBuf};
+use std::{
+    fs,
+    path::{Path, PathBuf},
+};
 
 use anyhow::{Context, Result};
 use semver::Version;
@@ -16,6 +19,7 @@ use semver::Version;
 use crate::{
     conventional::{self, BumpLevel, ConventionalCommit},
     github::{GitHubClient, TreeEntry},
+    model::FileUpdate,
     remote, versioning,
 };
 
@@ -51,6 +55,10 @@ pub struct ReleaseOptions {
     pub create_pr: bool,
     pub release_branch: String,
     pub dry_run: bool,
+    /// Extra working-tree files to stage into the release commit, on top of
+    /// the manifest and lockfile rewrites. Paths already covered by the
+    /// version rewrite are ignored so the rewrite stays authoritative.
+    pub extra_files: Vec<PathBuf>,
 }
 
 #[derive(Debug, Clone, Copy, Eq, PartialEq)]
@@ -162,7 +170,13 @@ impl ReleasePublisher {
             return Ok(report);
         }
 
-        let plan = versioning::plan_version_rewrite(&options.repo_root, &next_version.to_string())?;
+        let mut plan =
+            versioning::plan_version_rewrite(&options.repo_root, &next_version.to_string())?;
+        plan.file_updates.extend(extra_file_updates(
+            &options.repo_root,
+            &options.extra_files,
+            &plan.file_updates,
+        )?);
         report.files_updated = plan.file_updates.iter().map(|update| update.file.clone()).collect();
 
         if options.dry_run {
@@ -410,6 +424,48 @@ fn initial_report(analysis: &Analysis, bump: Option<BumpLevel>) -> ReleaseReport
         commit_range_truncated: analysis.truncated,
         files_updated: Vec::new(),
     }
+}
+
+/// Read `extra_files` from the working tree so they ride along in the release
+/// commit. Paths the version rewrite already covers are skipped: the rewrite
+/// holds the bumped version, and staging a stale working-tree copy of the same
+/// path would silently revert it.
+fn extra_file_updates(
+    repo_root: &Path,
+    extra_files: &[PathBuf],
+    planned: &[FileUpdate],
+) -> Result<Vec<FileUpdate>> {
+    if extra_files.is_empty() {
+        return Ok(Vec::new());
+    }
+
+    let repo_root = repo_root
+        .canonicalize()
+        .with_context(|| format!("failed to resolve repository root '{}'", repo_root.display()))?;
+
+    let mut updates = Vec::new();
+    for extra_file in extra_files {
+        let path =
+            if extra_file.is_absolute() { extra_file.clone() } else { repo_root.join(extra_file) };
+        let path = path.canonicalize().with_context(|| {
+            format!("failed to resolve release file '{}'", extra_file.display())
+        })?;
+        // Keeps the commit inside the repository even when a caller passes an
+        // absolute path or one containing `..`.
+        remote::relative_repository_path(&repo_root, &path)?;
+
+        if planned.iter().any(|update| update.file == path)
+            || updates.iter().any(|update: &FileUpdate| update.file == path)
+        {
+            continue;
+        }
+
+        let updated_content = fs::read_to_string(&path)
+            .with_context(|| format!("failed to read release file '{}'", path.display()))?;
+        updates.push(FileUpdate { file: path, updated_content });
+    }
+
+    Ok(updates)
 }
 
 fn validate_release_branch(branch: &str) -> Result<()> {

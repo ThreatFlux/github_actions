@@ -6,7 +6,10 @@ concurrency:
 
 on:
   workflow_run:
-    workflows: ["CI", "Security"]
+    # Docker is included because the release pins the runtime image built from
+    # the release target commit, so that publish has to land first. Whichever
+    # of the three finishes last triggers the run that actually releases.
+    workflows: ["CI", "Security", "Docker"]
     types: [completed]
     branches: [main]
   schedule:
@@ -73,7 +76,11 @@ jobs:
           TARGET_SHA="${{ steps.target.outputs.sha }}"
           CI_STATUS=$(gh run list --workflow=ci.yml --branch=main --commit="$TARGET_SHA" --event=push --limit=1 --json conclusion --jq '.[0].conclusion // ""')
           SECURITY_STATUS=$(gh run list --workflow=security.yml --branch=main --commit="$TARGET_SHA" --event=push --limit=1 --json conclusion --jq '.[0].conclusion // ""')
-          if [[ "$CI_STATUS" == "success" ]] && [[ "$SECURITY_STATUS" == "success" ]]; then
+          # The runtime pin resolves the image docker.yml publishes for this
+          # commit, so a release before that publish would have nothing to pin.
+          DOCKER_STATUS=$(gh run list --workflow=docker.yml --branch=main --commit="$TARGET_SHA" --event=push --limit=1 --json conclusion --jq '.[0].conclusion // ""')
+          echo "ci=$CI_STATUS security=$SECURITY_STATUS docker=$DOCKER_STATUS"
+          if [[ "$CI_STATUS" == "success" ]] && [[ "$SECURITY_STATUS" == "success" ]] && [[ "$DOCKER_STATUS" == "success" ]]; then
             echo "all_passed=true" >> "$GITHUB_OUTPUT"
           else
             echo "all_passed=false" >> "$GITHUB_OUTPUT"
@@ -110,6 +117,45 @@ jobs:
           persist-credentials: false
           ref: ${{ needs.check.outputs.target_sha }}
 
+      # The published version-tagged image only exists after the release tag is
+      # pushed, so a Dockerfile can never pin its own release. The docker.yml
+      # run for this same commit already published a short-SHA image though, so
+      # pin that: it is built from exactly the code being released, and staging
+      # the rewrite into the release commit makes the tag self-consistent.
+      # Without this the tag ships whatever older image the pin happened to
+      # name, which is how v0.7.0 shipped a 0.6.2 binary. The short-SHA tag is
+      # mutable — scheduled rebuilds re-push it — so the resolved digest is
+      # what gets written, which is immutable once committed.
+      - name: Pin runtime images to this commit
+        id: runtime_pin
+        env:
+          TARGET_SHA: ${{ needs.check.outputs.target_sha }}
+          PIN_FILES: runtime/Dockerfile release/Dockerfile
+        run: |
+          set -euo pipefail
+          repo_path="$(echo "${GITHUB_REPOSITORY}" | tr '[:upper:]' '[:lower:]')"
+          short="${TARGET_SHA:0:7}"
+          token="$(curl -fsSL "https://ghcr.io/token?scope=repository:${repo_path}:pull&service=ghcr.io" | jq -r .token)"
+          digest="$(
+            curl -fsSL -o /dev/null -D - \
+              -H "Authorization: Bearer ${token}" \
+              -H 'Accept: application/vnd.oci.image.index.v1+json' \
+              -H 'Accept: application/vnd.docker.distribution.manifest.list.v2+json' \
+              -H 'Accept: application/vnd.docker.distribution.manifest.v2+json' \
+              "https://ghcr.io/v2/${repo_path}/manifests/${short}" \
+              | tr -d '\r' | awk 'tolower($1) == "docker-content-digest:" { print $2 }'
+          )"
+          if [[ -z "${digest}" ]]; then
+            echo "no published ghcr.io/${repo_path} image tagged ${short}; refusing to release a mismatched runtime" >&2
+            exit 1
+          fi
+          for file in ${PIN_FILES}; do
+            [[ -f "${file}" ]] || { echo "missing ${file}" >&2; exit 1; }
+            sed -i -E "s|^FROM [^[:space:]]+|FROM ghcr.io/${repo_path}:${short}@${digest}|" "${file}"
+            grep -m1 '^FROM ' "${file}"
+          done
+          echo "files=${PIN_FILES// /,}" >> "$GITHUB_OUTPUT"
+
       - name: Release
         id: release
         uses: ./
@@ -118,6 +164,7 @@ jobs:
           token: ${{ secrets.GITHUB_TOKEN }}
           bump: ${{ github.event.inputs.version_bump || 'auto' }}
           update-major-alias: "true"
+          extra-files: ${{ steps.runtime_pin.outputs.files }}
 
       # Tags created with GITHUB_TOKEN do not trigger tag-push workflows, so
       # dispatch the tag pipelines explicitly (workflow_dispatch is exempt

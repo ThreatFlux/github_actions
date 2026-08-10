@@ -114,6 +114,10 @@ inputs:
     description: Automation-owned release branch used with create-pr. Must be automation/release or use the automation/release/ prefix. Leave empty to use the default ("automation/release"). (release only)
     required: false
     default: ""
+  extra-files:
+    description: Comma-separated repository-relative files to stage into the release commit on top of the manifest and lockfile version rewrites. Use it to pin a value that can only be resolved at release time, such as a runtime image digest, inside the commit the release tag points at. (release only)
+    required: false
+    default: ""
 
 outputs:
   released:

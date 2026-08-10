@@ -68,6 +68,7 @@ Options:
 - `--labels`, `--title`, `--commit-message`, `--base-branch`, `--branch-name`: control remote PR creation
 - `--check-scripts` / `--check-policies`: enable or disable the `policy` script and policy scans, both enabled by default
 - `--fail-on-findings`: make `policy` exit non-zero when it finds script usage or policy violations
+- `--extra-files`: comma-separated files to stage into the release commit alongside the version rewrites
 
 Command behavior:
 
@@ -206,6 +207,7 @@ prebuilt image, so it starts in seconds instead of compiling from source.
 | `update-major-alias` | `release` | `false` | Also move the moving major alias tag (for example `v0`). |
 | `notes-file` | `release` | `release_notes.md` | Where generated release notes are written, including on dry runs. |
 | `release-branch` | `release` | `automation/release` | Automation-owned branch used with `create-pr`; must use the `automation/release` prefix. |
+| `extra-files` | `release` | none | Comma-separated repository-relative files to stage into the release commit, for values that can only be resolved at release time. |
 
 ### Outputs
 
