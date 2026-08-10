@@ -30,6 +30,7 @@ fn repo_args(cli: Cli) -> RepoArgs {
         Commands::Pin(args) => args.repo,
         Commands::Update(args) => args.repo,
         Commands::Status(args) => args.repo,
+        Commands::Policy(args) => args.repo,
         Commands::Release(_) => panic!("expected a maintainer subcommand"),
     }
 }
@@ -39,7 +40,9 @@ fn target_args(cli: Cli) -> TargetArgs {
         Commands::Pin(args) => args.targets,
         Commands::Update(args) => args.targets,
         Commands::Status(args) => args.targets,
-        Commands::Release(_) => panic!("expected a maintainer subcommand"),
+        Commands::Policy(_) | Commands::Release(_) => {
+            panic!("expected a subcommand with dependency targets")
+        }
     }
 }
 
@@ -55,6 +58,51 @@ fn update_dry_run(cli: Cli) -> bool {
         Commands::Update(args) => args.dry_run,
         _ => panic!("expected the update subcommand"),
     }
+}
+
+fn policy_args(cli: Cli) -> super::PolicyArgs {
+    match cli.command {
+        Commands::Policy(args) => args,
+        _ => panic!("expected the policy subcommand"),
+    }
+}
+
+#[test]
+fn policy_scan_toggles_default_on_and_fail_on_findings_defaults_off() {
+    with_env(&[], || {
+        let args = policy_args(parse(&["bin", "policy"]));
+
+        assert!(args.check_scripts);
+        assert!(args.check_policies);
+        assert!(!args.fail_on_findings);
+    });
+}
+
+#[test]
+fn policy_scan_toggles_resolve_from_input_env() {
+    with_env(
+        &[
+            ("INPUT_CHECK-SCRIPTS", "false"),
+            ("INPUT_CHECK-POLICIES", "false"),
+            ("INPUT_FAIL-ON-FINDINGS", "true"),
+        ],
+        || {
+            let args = policy_args(parse(&["bin", "policy"]));
+
+            assert!(!args.check_scripts);
+            assert!(!args.check_policies);
+            assert!(args.fail_on_findings);
+        },
+    );
+}
+
+#[test]
+fn explicit_policy_flags_beat_input_env() {
+    with_env(&[("INPUT_FAIL-ON-FINDINGS", "false")], || {
+        let args = policy_args(parse(&["bin", "policy", "--fail-on-findings", "true"]));
+
+        assert!(args.fail_on_findings);
+    });
 }
 
 #[test]

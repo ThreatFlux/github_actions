@@ -13,8 +13,9 @@ use anyhow::Result;
 use clap::{Args, Parser, Subcommand};
 use github_actions_maintainer::{
     CargoUpdateOptions, CargoUpdater, CratesIoClient, FileUpdate, GitHubClient, PinMode,
-    PinOptions, PullRequestOptions, RemoteUpdatePublisher, UpdateChange, UpdateMode, UpdateOptions,
-    WorkflowPinner, WorkflowUpdater,
+    PinOptions, PolicyOptions, PolicyReport, PolicyScanner, PullRequestOptions,
+    RemoteUpdatePublisher, UpdateChange, UpdateMode, UpdateOptions, WorkflowPinner,
+    WorkflowUpdater,
 };
 use release_cli::{ReleaseArgs, run_release};
 
@@ -43,6 +44,8 @@ enum Commands {
     Update(UpdateArgs),
     /// Report current and latest versions for GitHub Actions in workflows.
     Status(StatusArgs),
+    /// Scan workflows for script usage and baseline policy findings.
+    Policy(PolicyArgs),
     /// Bump the Cargo version from conventional commits, then commit, tag, and
     /// publish a GitHub Release.
     Release(ReleaseArgs),
@@ -134,6 +137,31 @@ struct StatusArgs {
     _dry_run: bool,
 }
 
+// Every field here is an independent action input, and one of them only exists
+// to absorb the `--dry-run` the container action passes to every command, so
+// there is no state machine to factor these into.
+#[allow(clippy::struct_excessive_bools)]
+#[derive(Debug, Args)]
+struct PolicyArgs {
+    #[command(flatten)]
+    repo: RepoArgs,
+
+    /// Report explicit Bash/sh and Python usage in `run:` and `shell:` blocks.
+    #[arg(long, env = "INPUT_CHECK-SCRIPTS", default_value_t = true, num_args = 0..=1, default_missing_value = "true")]
+    check_scripts: bool,
+
+    /// Report unpinned actions, permission, and job timeout findings.
+    #[arg(long, env = "INPUT_CHECK-POLICIES", default_value_t = true, num_args = 0..=1, default_missing_value = "true")]
+    check_policies: bool,
+
+    /// Exit non-zero when the scan reports any finding.
+    #[arg(long, env = "INPUT_FAIL-ON-FINDINGS", default_value_t = false, num_args = 0..=1, default_missing_value = "true")]
+    fail_on_findings: bool,
+
+    #[arg(long, env = "INPUT_DRY-RUN", hide = true, default_value_t = false, num_args = 0..=1, default_missing_value = "true")]
+    _dry_run: bool,
+}
+
 #[derive(Debug, Args, Clone, Default)]
 struct TargetArgs {
     /// Include GitHub Actions workflow updates.
@@ -192,7 +220,78 @@ fn run(args: Vec<OsString>) -> Result<()> {
         Commands::Status(args) => {
             run_status(args, cli.github_api_base_url, cli.crates_api_base_url)
         }
+        Commands::Policy(args) => run_policy(args),
         Commands::Release(args) => run_release(args, cli.github_api_base_url),
+    }
+}
+
+fn run_policy(args: PolicyArgs) -> Result<()> {
+    let scanner = PolicyScanner::new();
+    let report = scanner.scan(&PolicyOptions {
+        repo_root: args.repo.repo,
+        workflows_path: args.repo.workflows_path,
+        check_scripts: args.check_scripts,
+        check_policies: args.check_policies,
+    })?;
+
+    print_policy_report(&report);
+
+    if args.fail_on_findings && report.has_findings() {
+        anyhow::bail!(
+            "workflow policy scan found {} script usages and {} policy violations",
+            report.script_usages.len(),
+            report.policy_violations.len()
+        );
+    }
+
+    Ok(())
+}
+
+fn print_policy_report(report: &PolicyReport) {
+    println!(
+        "Scanned {} workflow files. Found {} script usages and {} policy violations.",
+        report.workflow_files,
+        report.script_usages.len(),
+        report.policy_violations.len()
+    );
+    println!(
+        "Script summary: bash={}, python={}",
+        report.summary.bash_scripts, report.summary.python_scripts
+    );
+    println!(
+        "Policy summary: high={}, medium={}, low={}",
+        report.summary.high_violations,
+        report.summary.medium_violations,
+        report.summary.low_violations
+    );
+
+    if !report.script_usages.is_empty() {
+        println!();
+        println!("Script usages:");
+        for usage in &report.script_usages {
+            println!(
+                "- {}:{} [{}] {}",
+                usage.file.display(),
+                usage.line_number,
+                usage.script_type_label(),
+                usage.command
+            );
+        }
+    }
+
+    if !report.policy_violations.is_empty() {
+        println!();
+        println!("Policy violations:");
+        for violation in &report.policy_violations {
+            println!(
+                "- {}:{} [{}] {}: {}",
+                violation.file.display(),
+                violation.line_number,
+                violation.severity_label(),
+                violation.violation_type_label(),
+                violation.description
+            );
+        }
     }
 }
 

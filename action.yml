@@ -1,13 +1,13 @@
 name: GitHub Actions Maintainer
 author: ThreatFlux
-description: Pin, update, and report GitHub Actions and cargo dependency versions, and cut conventional-commit releases, entirely through the GitHub API.
+description: Pin, update, report, and policy-scan GitHub Actions and cargo dependency versions, and cut conventional-commit releases, entirely through the GitHub API.
 branding:
   icon: shield
   color: blue
 
 inputs:
   command:
-    description: Command to run. Use pin, update, status, or release.
+    description: Command to run. Use pin, update, status, policy, or release.
     required: false
     default: "pin"
 
@@ -45,9 +45,9 @@ inputs:
     required: false
     default: ""
 
-  # Maintainer inputs (pin, update, status).
+  # Maintainer inputs (pin, update, status, policy).
   workflows-path:
-    description: Relative path to the workflow directory beneath the repository root. (pin, update, and status only)
+    description: Relative path to the workflow directory beneath the repository root. (pin, update, status, and policy only)
     required: false
     default: ".github/workflows"
   github-actions:
@@ -74,6 +74,20 @@ inputs:
     description: Title for the dependency-update pull request. Leave empty to use the default ("Update dependencies"). (update only)
     required: false
     default: ""
+
+  # Policy inputs (policy only).
+  check-scripts:
+    description: Report explicit Bash/sh and Python usage in run and shell blocks. (policy only)
+    required: false
+    default: "true"
+  check-policies:
+    description: Report unpinned actions, permission, and job timeout findings. (policy only)
+    required: false
+    default: "true"
+  fail-on-findings:
+    description: Fail the action when the scan reports any finding. (policy only)
+    required: false
+    default: "false"
 
   # Release inputs (release only).
   bump:

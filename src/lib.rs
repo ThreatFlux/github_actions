@@ -10,6 +10,7 @@ pub mod crates_io;
 pub mod github;
 pub mod model;
 pub mod pinning;
+pub mod policy;
 pub mod release;
 pub mod remote;
 pub mod update;
@@ -20,8 +21,12 @@ pub use cargo::{CargoDependencyEntry, CargoUpdateOptions, CargoUpdateReport, Car
 pub use conventional::{BumpLevel, CommitKind, ConventionalCommit};
 pub use crates_io::CratesIoClient;
 pub use github::{CommitInfo, CommitRange, GitHubClient, ReleaseInfo, TagInfo};
-pub use model::{FileUpdate, PinChange, PinReport, UpdateChange, UpdateChangeKind, WorkflowAction};
+pub use model::{
+    FileUpdate, PinChange, PinReport, PolicySeverity, PolicyViolation, PolicyViolationType,
+    ScriptType, ScriptUsage, UpdateChange, UpdateChangeKind, WorkflowAction,
+};
 pub use pinning::{PinMode, PinOptions, WorkflowPinner};
+pub use policy::{PolicyOptions, PolicyReport, PolicyScanner, PolicySummary};
 pub use release::{ReleaseOptions, ReleaseOutcome, ReleasePublisher, ReleaseReport, TagStyle};
 pub use remote::{PullRequestOptions, PullRequestResult, RemoteUpdatePublisher};
 pub use update::{UpdateMode, UpdateOptions, UpdateReport, VersionEntry, WorkflowUpdater};

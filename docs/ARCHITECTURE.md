@@ -9,8 +9,9 @@
 - rewrites the workflow to `owner/repo[/path]@<sha>  # <original-ref>`
 - `update`: resolves the latest release tag, or newest tag as a fallback, then rewrites workflows to that version and SHA
 - `status`: reports current tracked version versus latest upstream version without modifying files
+- `policy`: reports explicit Bash/Python script usage and baseline workflow policy findings without modifying files
 - `release`: computes the next version from conventional commits, then publishes the release commit, tag, and GitHub Release, or stages them on a release pull request
-- one container action (root `action.yml`) exposes all four commands through its `command` input
+- one container action (root `action.yml`) exposes all five commands through its `command` input
 - remote PR mode: stages updated workflow content into GitHub blobs, trees, commits, branch refs, and a pull request without shelling out to `git`
 
 That keeps the original intent visible while making the executed dependency immutable.
@@ -19,8 +20,9 @@ That keeps the original intent visible while making the executed dependency immu
 
 - `src/github.rs`: blocking GitHub API client used to resolve refs, discover latest releases, retry through rate limits, and perform remote repository mutations (branches, tags, commits, releases)
 - `src/workflow.rs`: workflow discovery, `uses:` scanning, and line-oriented rewrites
-- `src/model.rs`: shared domain types for scanned actions and rewrite reports
+- `src/model.rs`: shared domain types for scanned actions, script findings, policy findings, and rewrite reports
 - `src/pinning.rs`: orchestration layer for conservative pinning of the existing ref
+- `src/policy.rs`: read-only workflow policy and script-usage scanning
 - `src/update.rs`: version-aware update and status orchestration
 - `src/cargo.rs`: Cargo manifest scanning and registry-backed dependency updates
 - `src/crates_io.rs`: blocking crates.io API client with retry handling
@@ -36,5 +38,6 @@ That keeps the original intent visible while making the executed dependency immu
 - `pin` pins the ref already present in the workflow.
 - `update` intentionally upgrades to the latest release or tag instead of preserving the existing major.
 - `update --create-pr` computes changes locally first, then publishes them through the GitHub API.
-- Local actions, Docker actions, and dynamic matrix expressions are skipped.
+- Local actions, Docker actions, and dynamic matrix expressions are skipped by the pinning and update commands.
+- `policy` is read-only and intentionally line-oriented, so it can run without mutating repository workflows.
 - Rewrites are line-oriented to preserve the rest of the workflow file exactly.

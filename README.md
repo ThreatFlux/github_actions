@@ -34,6 +34,8 @@ That preserves operator intent while eliminating runtime drift from moving tags 
 - Can scan `Cargo.toml` manifests, find the latest stable crates.io versions, and update supported cargo dependency requirements
 - Reports unmanaged cargo dependency shapes such as `path`, `git`, and `workspace = true` entries instead of rewriting them
 - Can create a remote branch and pull request with labels instead of rewriting the checked-out repo
+- Can scan workflows for explicit Bash/sh and Python usage in `run:` blocks and `shell:` declarations
+- Can report baseline workflow policy findings for unpinned actions, missing explicit permissions, write-level permissions, and missing job timeouts
 - Retries GitHub API calls with exponential backoff and respects `Retry-After` plus rate-limit reset headers
 - Validates token scopes before remote PR creation so missing `repo` or `workflow` permissions fail early
 
@@ -47,6 +49,8 @@ cargo run -- update --all
 cargo run -- update
 cargo run -- status
 cargo run -- status --cargo
+cargo run -- policy
+cargo run -- policy --fail-on-findings
 cargo run -- pin --repo /path/to/repo --workflows-path .github/workflows
 ```
 
@@ -62,12 +66,15 @@ Options:
 - `--create-pr`: create a remote branch and pull request instead of editing files locally
 - `--owner` and `--repo-name`: remote repository coordinates for PR creation
 - `--labels`, `--title`, `--commit-message`, `--base-branch`, `--branch-name`: control remote PR creation
+- `--check-scripts` / `--check-policies`: enable or disable the `policy` script and policy scans, both enabled by default
+- `--fail-on-findings`: make `policy` exit non-zero when it finds script usage or policy violations
 
 Command behavior:
 
 - `pin`: pin the ref already declared in the workflow
 - `update`: move selected dependencies to the latest upstream version. By default it targets GitHub Actions; add `--cargo` or `--all` for cargo support
 - `status`: report current tracked versions, latest upstream versions, and whether a change is needed for the selected target set
+- `policy`: scan workflow files for explicit Bash/Python script usage and baseline workflow policy findings without modifying files
 - `update` without `--create-pr`: apply changes locally in the checked-out repository, which is the equivalent of the original tool's stage mode
 - `release`: bump the Cargo version from conventional commits, then create the release commit, tag, and GitHub Release through the API (see below)
 
@@ -78,6 +85,16 @@ Cargo update support currently manages registry-backed dependencies that declare
 - `regex = { version = "~1.10.0" }`
 
 The updater preserves the existing requirement operator where possible and skips unsupported forms such as multi-range requirements, `path` dependencies, `git` dependencies, and `workspace = true` references.
+
+Policy scanning reports:
+
+- unpinned action references that do not use a full 40-character commit SHA (high)
+- `permissions: write-all` (high) and other write-carrying shorthand values (medium)
+- individual `<scope>: write` permission entries, with `id-token: write` treated as low
+- workflows with no explicit top-level `permissions` block (medium)
+- jobs with no `timeout-minutes` (medium)
+
+Script scanning reports explicit Bash/sh and Python usage, both from `shell:` declarations and from interpreter invocations inside `run:` blocks. Both scans are read-only; pair them with `--fail-on-findings` to gate a pull request.
 
 Remote update mode:
 
@@ -154,6 +171,7 @@ One action ships every command. Reference it as `ThreatFlux/github_actions@<ref>
 | `pin` | Rewrite floating action refs in workflow files to the commit SHA they resolve to today. |
 | `update` | Move GitHub Actions and/or cargo dependencies to their latest upstream version, locally or on a pull request. |
 | `status` | Report current versus latest versions without writing anything. |
+| `policy` | Report script usage and baseline workflow policy findings without writing anything. |
 | `release` | Bump the Cargo version from conventional commits and publish the release commit, tag, and GitHub Release — or stage them on a release pull request. |
 
 The action is a Docker container action built from
@@ -164,7 +182,7 @@ prebuilt image, so it starts in seconds instead of compiling from source.
 
 | Input | Commands | Default | Description |
 |---|---|---|---|
-| `command` | all | `pin` | Command to run: `pin`, `update`, `status`, or `release`. |
+| `command` | all | `pin` | Command to run: `pin`, `update`, `status`, `policy`, or `release`. |
 | `token` | all | `${{ github.token }}` | GitHub token. Required for remote pull request creation and for `release`; recommended everywhere to raise API rate limits. |
 | `owner` / `repo-name` | all | from `GITHUB_REPOSITORY` | Target repository coordinates. |
 | `repo` | all | `.` | Path to the checked-out repository. |
@@ -172,13 +190,16 @@ prebuilt image, so it starts in seconds instead of compiling from source.
 | `dry-run` | all | `false` | Analyze and report without writing files, commits, tags, releases, or pull requests. |
 | `create-pr` | `update`, `release` | `false` | Open a dependency-update pull request, or stage the release on a release pull request instead of publishing directly. |
 | `commit-message` | `update`, `release` | per command | `Update dependencies` for `update`; `chore: release v{version}` for `release`. |
-| `workflows-path` | `pin`, `update`, `status` | `.github/workflows` | Workflow directory relative to the repository root. |
+| `workflows-path` | `pin`, `update`, `status`, `policy` | `.github/workflows` | Workflow directory relative to the repository root. |
 | `github-actions` | `update`, `status` | `false` | Include GitHub Actions workflow updates. |
 | `cargo` | `update`, `status` | `false` | Include cargo package dependency updates. |
 | `all` | `update`, `status` | `false` | Include both GitHub Actions and cargo updates. |
 | `branch-name` | `update` | generated | Branch name for the dependency-update pull request. |
 | `labels` | `update` | `dependencies` | Comma-separated labels for the dependency-update pull request. |
 | `title` | `update` | `Update dependencies` | Title for the dependency-update pull request. |
+| `check-scripts` | `policy` | `true` | Report explicit Bash/sh and Python usage in `run:` and `shell:` blocks. |
+| `check-policies` | `policy` | `true` | Report unpinned actions, permission, and job timeout findings. |
+| `fail-on-findings` | `policy` | `false` | Fail the action when the scan reports any finding. |
 | `bump` | `release` | `auto` | `auto`, `major`, `minor`, or `patch`. |
 | `tag-prefix` | `release` | `v` | Prefix for release tags. |
 | `tag-style` | `release` | `annotated` | `annotated` or `lightweight`. |
@@ -235,6 +256,21 @@ jobs:
 ```
 
 `status` never writes; `contents: read` is enough.
+
+### `command: policy`
+
+```yaml
+      - name: Scan workflow policy
+        uses: ThreatFlux/github_actions@v0 # pin to a SHA in production
+        with:
+          command: policy
+          fail-on-findings: "true"
+```
+
+`policy` reads only the checked-out workflow files, so it needs no token and
+`contents: read` is enough. Narrow the scan with `check-scripts: "false"` or
+`check-policies: "false"`; drop `fail-on-findings` to report without failing the
+job.
 
 ### `command: update`
 
