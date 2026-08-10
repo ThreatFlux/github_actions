@@ -17,6 +17,24 @@ fn mock_no_tagging(server: &mut ServerGuard) -> Vec<Mock> {
     ]
 }
 
+/// Tag ref and GitHub Release mocks for a release of `version`.
+fn mock_publish_refs(server: &mut ServerGuard, version: &str) -> Vec<Mock> {
+    vec![
+        server
+            .mock("POST", "/repos/acme/demo/git/refs")
+            .with_status(201)
+            .with_body(format!(r#"{{"ref":"refs/tags/v{version}"}}"#))
+            .create(),
+        server
+            .mock("POST", "/repos/acme/demo/releases")
+            .with_status(201)
+            .with_body(format!(
+                r#"{{"html_url":"https://github.com/acme/demo/releases/tag/v{version}"}}"#
+            ))
+            .create(),
+    ]
+}
+
 fn mock_commit_chain(server: &mut ServerGuard) -> Vec<Mock> {
     vec![
         server
@@ -100,17 +118,7 @@ fn tag_phase_releases_the_manifest_version_without_bumping_it() {
         .with_status(201)
         .with_body(r#"{"sha":"tagobjectsha"}"#)
         .create();
-    let _tag_ref = server
-        .mock("POST", "/repos/acme/demo/git/refs")
-        .with_status(201)
-        .with_body(r#"{"ref":"refs/tags/v0.2.3"}"#)
-        .create();
-    let _release = server
-        .mock("POST", "/repos/acme/demo/releases")
-        .match_body(Matcher::Regex(r#""tag_name":"v0\.2\.3""#.into()))
-        .with_status(201)
-        .with_body(r#"{"html_url":"https://github.com/acme/demo/releases/tag/v0.2.3"}"#)
-        .create();
+    let _publish = mock_publish_refs(&mut server, "0.2.3");
 
     let mut release_options = options(temp_dir.path());
     release_options.phase = ReleasePhase::Tag;
@@ -149,17 +157,7 @@ fn tag_phase_tags_the_existing_head_when_nothing_is_staged() {
         .with_status(201)
         .with_body(r#"{"sha":"tagobjectsha"}"#)
         .create();
-    let _tag_ref = server
-        .mock("POST", "/repos/acme/demo/git/refs")
-        .with_status(201)
-        .with_body(r#"{"ref":"refs/tags/v0.2.3"}"#)
-        .create();
-    let _release = server
-        .mock("POST", "/repos/acme/demo/releases")
-        .match_body(Matcher::Regex(r#""target_commitish":"basecommitsha""#.into()))
-        .with_status(201)
-        .with_body(r#"{"html_url":"https://github.com/acme/demo/releases/tag/v0.2.3"}"#)
-        .create();
+    let _publish = mock_publish_refs(&mut server, "0.2.3");
 
     let mut release_options = options(temp_dir.path());
     release_options.phase = ReleasePhase::Tag;
@@ -209,16 +207,7 @@ fn tag_phase_releases_even_when_no_commit_warrants_a_bump() {
         .with_status(201)
         .with_body(r#"{"sha":"tagobjectsha"}"#)
         .create();
-    let _tag_ref = server
-        .mock("POST", "/repos/acme/demo/git/refs")
-        .with_status(201)
-        .with_body(r#"{"ref":"refs/tags/v0.2.3"}"#)
-        .create();
-    let _release = server
-        .mock("POST", "/repos/acme/demo/releases")
-        .with_status(201)
-        .with_body(r#"{"html_url":"https://github.com/acme/demo/releases/tag/v0.2.3"}"#)
-        .create();
+    let _publish = mock_publish_refs(&mut server, "0.2.3");
 
     let mut release_options = options(temp_dir.path());
     release_options.phase = ReleasePhase::Tag;
