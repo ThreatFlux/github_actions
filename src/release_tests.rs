@@ -1,7 +1,4 @@
-use std::{
-    fs,
-    path::{Path, PathBuf},
-};
+use std::{fs, path::Path};
 
 use mockito::{Matcher, Mock, Server, ServerGuard};
 use tempfile::{TempDir, tempdir};
