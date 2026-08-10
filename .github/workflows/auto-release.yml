@@ -121,7 +121,9 @@ jobs:
           # published for this commit so it runs a current binary, and the tag
           # phase has nothing to pin if that publish never happened.
           for workflow in ci security docker; do
-            status="$(gh run list --workflow="${workflow}.yml" --branch=main --commit="${TARGET_SHA}" --event=push --limit=1 --json conclusion --jq '.[0].conclusion // ""')"
+            # --repo is required: this job has no checkout, so gh cannot infer
+            # the repository from a git remote.
+            status="$(gh run list --repo "${GITHUB_REPOSITORY}" --workflow="${workflow}.yml" --branch=main --commit="${TARGET_SHA}" --event=push --limit=1 --json conclusion --jq '.[0].conclusion // ""')"
             echo "${workflow}=${status}"
             if [[ "${status}" != "success" ]]; then
               echo "all_passed=false" >> "$GITHUB_OUTPUT"
