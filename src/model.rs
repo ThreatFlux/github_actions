@@ -158,3 +158,95 @@ fn looks_like_version_hint(value: &str) -> bool {
             || trimmed.chars().next().is_some_and(|character| character.is_ascii_digit())
             || matches!(trimmed, "main" | "master" | "stable" | "beta" | "nightly"))
 }
+
+#[derive(Debug, Clone, Eq, PartialEq)]
+pub struct ScriptUsage {
+    pub file: PathBuf,
+    pub line_number: usize,
+    pub script_type: ScriptType,
+    pub command: String,
+    pub context: String,
+}
+
+#[derive(Debug, Clone, Copy, Eq, PartialEq)]
+pub enum ScriptType {
+    Bash,
+    Python,
+}
+
+impl ScriptType {
+    #[must_use]
+    pub const fn label(self) -> &'static str {
+        match self {
+            Self::Bash => "bash",
+            Self::Python => "python",
+        }
+    }
+}
+
+impl ScriptUsage {
+    #[must_use]
+    pub const fn script_type_label(&self) -> &'static str {
+        self.script_type.label()
+    }
+}
+
+#[derive(Debug, Clone, Eq, PartialEq)]
+pub struct PolicyViolation {
+    pub file: PathBuf,
+    pub line_number: usize,
+    pub violation_type: PolicyViolationType,
+    pub severity: PolicySeverity,
+    pub description: String,
+    pub context: String,
+}
+
+#[derive(Debug, Clone, Copy, Eq, PartialEq)]
+pub enum PolicyViolationType {
+    UnpinnedAction,
+    MissingPermissions,
+    ExcessivePermissions,
+    MissingTimeoutMinutes,
+}
+
+impl PolicyViolationType {
+    #[must_use]
+    pub const fn label(self) -> &'static str {
+        match self {
+            Self::UnpinnedAction => "unpinned-action",
+            Self::MissingPermissions => "missing-permissions",
+            Self::ExcessivePermissions => "excessive-permissions",
+            Self::MissingTimeoutMinutes => "missing-timeout-minutes",
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, Eq, PartialEq)]
+pub enum PolicySeverity {
+    High,
+    Medium,
+    Low,
+}
+
+impl PolicySeverity {
+    #[must_use]
+    pub const fn label(self) -> &'static str {
+        match self {
+            Self::High => "HIGH",
+            Self::Medium => "MEDIUM",
+            Self::Low => "LOW",
+        }
+    }
+}
+
+impl PolicyViolation {
+    #[must_use]
+    pub const fn severity_label(&self) -> &'static str {
+        self.severity.label()
+    }
+
+    #[must_use]
+    pub const fn violation_type_label(&self) -> &'static str {
+        self.violation_type.label()
+    }
+}
