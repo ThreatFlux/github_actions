@@ -18,6 +18,12 @@ on:
   schedule:
     - cron: "0 4 * * 1"
   workflow_dispatch:
+    inputs:
+      release-prep:
+        description: Set by Auto Release when this build publishes the runtime image for a committed version bump
+        required: false
+        default: false
+        type: boolean
 
 permissions:
   contents: read
@@ -287,6 +293,27 @@ jobs:
         run: cosign sign --yes ${{ env.REGISTRY }}/${{ needs.build.outputs.image_name }}@${{ needs.build.outputs.digest }}
         env:
           COSIGN_EXPERIMENTAL: 1
+
+  # Auto Release commits the version bump, then waits here: the image for the
+  # released version has to exist, be scanned, and be signed before the tag
+  # phase can pin it. A push by GITHUB_TOKEN starts no workflows and a dispatched
+  # run's completion does not reliably start one either, so hand back explicitly
+  # — workflow_dispatch is exempt from that suppression.
+  release-handoff:
+    name: Hand Off to Auto Release
+    needs: [build, scan, sign]
+    if: inputs.release-prep && github.ref == 'refs/heads/main'
+    runs-on: ${{ vars.RUST_TEMPLATE_RUNNER_UBUNTU || 'ubuntu-latest' }}
+    permissions:
+      actions: write
+    steps:
+      - name: Dispatch the release tag phase
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          echo "published runtime image ${{ needs.build.outputs.digest }} for ${GITHUB_SHA}"
+          gh workflow run auto-release.yml --repo "$GITHUB_REPOSITORY" --ref main -f phase=tag -f version_bump=auto
 
   sbom:
     name: Generate SBOM

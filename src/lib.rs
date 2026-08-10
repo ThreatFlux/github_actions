@@ -27,7 +27,9 @@ pub use model::{
 };
 pub use pinning::{PinMode, PinOptions, WorkflowPinner};
 pub use policy::{PolicyOptions, PolicyReport, PolicyScanner, PolicySummary};
-pub use release::{ReleaseOptions, ReleaseOutcome, ReleasePublisher, ReleaseReport, TagStyle};
+pub use release::{
+    ReleaseOptions, ReleaseOutcome, ReleasePhase, ReleasePublisher, ReleaseReport, TagStyle,
+};
 pub use remote::{PullRequestOptions, PullRequestResult, RemoteUpdatePublisher};
 pub use update::{UpdateMode, UpdateOptions, UpdateReport, VersionEntry, WorkflowUpdater};
 pub use versioning::{VersionRewritePlan, current_version, plan_version_rewrite};

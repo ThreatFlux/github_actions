@@ -37,6 +37,26 @@ pub enum TagStyle {
     Lightweight,
 }
 
+/// Which part of the release a run performs.
+///
+/// A container action cannot pin a runtime image built from its own release,
+/// because an image tagged with the version only exists once the tag does.
+/// Splitting the release breaks that cycle: [`Self::Bump`] lands the version
+/// bump so an image can be built from the released version, and [`Self::Tag`]
+/// then pins that image and tags the result. Only the two Dockerfiles differ
+/// between the image's source and the tagged tree, and they do not affect the
+/// image, so the tag ships a runtime whose reported version is its own.
+#[derive(Debug, Clone, Copy, Eq, PartialEq, Default)]
+pub enum ReleasePhase {
+    /// Bump, tag, and publish in a single run.
+    #[default]
+    All,
+    /// Commit the version bump and stop, leaving the version untagged.
+    Bump,
+    /// Tag and publish the version the manifest already holds, without bumping.
+    Tag,
+}
+
 #[derive(Debug, Clone, Eq, PartialEq)]
 pub struct ReleaseOptions {
     pub repo_root: PathBuf,
@@ -59,11 +79,14 @@ pub struct ReleaseOptions {
     /// the manifest and lockfile rewrites. Paths already covered by the
     /// version rewrite are ignored so the rewrite stays authoritative.
     pub extra_files: Vec<PathBuf>,
+    pub phase: ReleasePhase,
 }
 
 #[derive(Debug, Clone, Copy, Eq, PartialEq)]
 pub enum ReleaseOutcome {
     Released,
+    /// The version bump was committed; the tag and release are still pending.
+    VersionCommitted,
     PullRequestCreated,
     PullRequestUpdated,
     DryRun,
@@ -98,10 +121,11 @@ impl ReleaseReport {
         let notes_path =
             if self.notes.is_some() { notes_file.display().to_string() } else { String::new() };
         format!(
-            "released={}\nversion={}\ntag={}\nrelease-url={}\nrelease-pr-number={}\nrelease-pr-url={}\nrelease-branch={}\nnotes-file={notes_path}\n",
+            "released={}\nversion={}\ntag={}\ncommit={}\nrelease-url={}\nrelease-pr-number={}\nrelease-pr-url={}\nrelease-branch={}\nnotes-file={notes_path}\n",
             self.outcome == ReleaseOutcome::Released,
             self.next_version.as_deref().unwrap_or_default(),
             self.tag.as_deref().unwrap_or_default(),
+            self.commit_sha.as_deref().unwrap_or_default(),
             self.release_url.as_deref().unwrap_or_default(),
             self.pull_request_number.map(|number| number.to_string()).unwrap_or_default(),
             self.pull_request_url.as_deref().unwrap_or_default(),
@@ -126,7 +150,7 @@ struct PreparedRelease {
     head_sha: String,
     next_version: Version,
     tag: String,
-    plan: versioning::VersionRewritePlan,
+    file_updates: Vec<FileUpdate>,
 }
 
 #[derive(Debug, Clone)]
@@ -143,9 +167,27 @@ impl ReleasePublisher {
     pub fn release(&self, options: &ReleaseOptions) -> Result<ReleaseReport> {
         self.github.ensure_token()?;
         if options.create_pr {
+            if options.phase != ReleasePhase::All {
+                anyhow::bail!(
+                    "--create-pr cannot be combined with --phase: the release pull request already separates the version bump from the tag"
+                );
+            }
             validate_release_branch(&options.release_branch)?;
         }
         let analysis = self.analyze(options)?;
+        if options.phase == ReleasePhase::Tag {
+            return self.release_manifest_version(options, analysis);
+        }
+        self.release_bumped_version(options, analysis)
+    }
+
+    /// Bump the manifest version from the conventional commits, then commit it.
+    /// [`ReleasePhase::Bump`] stops there; otherwise the same run tags it.
+    fn release_bumped_version(
+        &self,
+        options: &ReleaseOptions,
+        analysis: Analysis,
+    ) -> Result<ReleaseReport> {
         let bump = options.bump.or_else(|| conventional::required_bump(&analysis.commits));
         let mut report = initial_report(&analysis, bump);
 
@@ -161,23 +203,59 @@ impl ReleasePublisher {
         report.next_version = Some(next);
         report.tag = Some(tag.clone());
 
-        if self
-            .github
-            .reference_sha(&options.owner, &options.repo, &format!("tags/{tag}"))?
-            .is_some()
-        {
+        if self.tag_exists(options, &tag)? {
             report.outcome = ReleaseOutcome::SkippedTagExists;
             return Ok(report);
         }
 
-        let mut plan =
-            versioning::plan_version_rewrite(&options.repo_root, &next_version.to_string())?;
-        plan.file_updates.extend(extra_file_updates(
-            &options.repo_root,
-            &options.extra_files,
-            &plan.file_updates,
-        )?);
-        report.files_updated = plan.file_updates.iter().map(|update| update.file.clone()).collect();
+        let plan = versioning::plan_version_rewrite(&options.repo_root, &next_version.to_string())?;
+        let mut file_updates = plan.file_updates;
+        let extra = extra_file_updates(&options.repo_root, &options.extra_files, &file_updates)?;
+        file_updates.extend(extra);
+
+        self.prepare_and_publish(options, analysis, next_version, tag, file_updates, report)
+    }
+
+    /// Tag the version the manifest already holds, without bumping it. The
+    /// bump landed in an earlier [`ReleasePhase::Bump`] run, so a runtime image
+    /// built from this exact version already exists and can be pinned into the
+    /// commit the tag points at.
+    fn release_manifest_version(
+        &self,
+        options: &ReleaseOptions,
+        analysis: Analysis,
+    ) -> Result<ReleaseReport> {
+        let mut report = initial_report(&analysis, None);
+        let version = analysis.current.clone();
+        let tag = format!("{}{version}", options.tag_prefix);
+        report.notes =
+            Some(conventional::release_notes(&tag, &analysis.commits, analysis.truncated));
+        report.next_version = Some(version.to_string());
+        report.tag = Some(tag.clone());
+
+        if self.tag_exists(options, &tag)? {
+            report.outcome = ReleaseOutcome::SkippedTagExists;
+            return Ok(report);
+        }
+
+        // No version rewrite: the manifest is already at the released version,
+        // so only the caller's extra files are staged. With none to stage the
+        // tag lands on the existing head instead of an empty commit.
+        let file_updates = extra_file_updates(&options.repo_root, &options.extra_files, &[])?;
+
+        self.prepare_and_publish(options, analysis, version, tag, file_updates, report)
+    }
+
+    fn prepare_and_publish(
+        &self,
+        options: &ReleaseOptions,
+        analysis: Analysis,
+        next_version: Version,
+        tag: String,
+        file_updates: Vec<FileUpdate>,
+        mut report: ReleaseReport,
+    ) -> Result<ReleaseReport> {
+        report.files_updated = file_updates.iter().map(|update| update.file.clone()).collect();
 
         if options.dry_run {
             report.outcome = ReleaseOutcome::DryRun;
@@ -189,10 +267,17 @@ impl ReleasePublisher {
             head_sha: analysis.head_sha,
             next_version,
             tag,
-            plan,
+            file_updates,
         };
         self.publish(options, &prepared, &mut report)?;
         Ok(report)
+    }
+
+    fn tag_exists(&self, options: &ReleaseOptions, tag: &str) -> Result<bool> {
+        Ok(self
+            .github
+            .reference_sha(&options.owner, &options.repo, &format!("tags/{tag}"))?
+            .is_some())
     }
 
     fn analyze(&self, options: &ReleaseOptions) -> Result<Analysis> {
@@ -236,7 +321,9 @@ impl ReleasePublisher {
         prepared: &PreparedRelease,
         report: &mut ReleaseReport,
     ) -> Result<()> {
-        let commit_sha = self.build_commit(options, prepared)?;
+        let staged = !prepared.file_updates.is_empty();
+        let commit_sha =
+            if staged { self.build_commit(options, prepared)? } else { prepared.head_sha.clone() };
 
         let current_head =
             self.github.branch_head_sha(&options.owner, &options.repo, &prepared.branch)?;
@@ -250,13 +337,20 @@ impl ReleasePublisher {
             return self.publish_pull_request(options, prepared, &commit_sha, report);
         }
 
-        if !self.github.update_ref_fast_forward(
-            &options.owner,
-            &options.repo,
-            &format!("heads/{}", prepared.branch),
-            &commit_sha,
-        )? {
+        if staged
+            && !self.github.update_ref_fast_forward(
+                &options.owner,
+                &options.repo,
+                &format!("heads/{}", prepared.branch),
+                &commit_sha,
+            )?
+        {
             report.outcome = ReleaseOutcome::SkippedRace;
+            return Ok(());
+        }
+
+        if options.phase == ReleasePhase::Bump {
+            report.outcome = ReleaseOutcome::VersionCommitted;
             return Ok(());
         }
 
@@ -347,7 +441,7 @@ impl ReleasePublisher {
 
         let base_tree_sha = self.github.commit_tree_sha(owner, repo, &prepared.head_sha)?;
         let mut tree_entries = Vec::new();
-        for update in &prepared.plan.file_updates {
+        for update in &prepared.file_updates {
             let path = remote::relative_repository_path(&repo_root, &update.file)?;
             let blob_sha = self.github.create_blob(owner, repo, &update.updated_content)?;
             tree_entries.push(TreeEntry { path, sha: blob_sha });

@@ -69,6 +69,7 @@ Options:
 - `--check-scripts` / `--check-policies`: enable or disable the `policy` script and policy scans, both enabled by default
 - `--fail-on-findings`: make `policy` exit non-zero when it finds script usage or policy violations
 - `--extra-files`: comma-separated files to stage into the release commit alongside the version rewrites
+- `--phase`: `all` (default), `bump` to commit the version bump without tagging it, or `tag` to release the version the manifest already holds
 
 Command behavior:
 
@@ -136,9 +137,23 @@ cargo run -- release \
 2. Finds the latest `--tag-prefix` semver tag and classifies the conventional commits since it (`feat:` → minor, `fix:` → patch, `!`/`BREAKING CHANGE` → major). Merge commits are skipped. When no commit warrants a release it exits successfully with `released=false`; `--bump major|minor|patch` forces a release.
 3. Rewrites the version across workspace member manifests, internal dependency pins, and `Cargo.lock`.
 4. Creates the release commit directly on the base branch (fast-forward only — if the branch advanced past the analyzed head, the run skips cleanly), the `vX.Y.Z` tag (annotated by default so provenance checks like `git cat-file -t` pass; `--tag-style lightweight` opts out), an optional moving major alias tag (`--update-major-alias`), and the GitHub Release with grouped release notes.
-5. Writes release notes to `--notes-file` and `released`/`version`/`tag`/`release-url`/`notes-file` outputs to `$GITHUB_OUTPUT` when set.
+5. Writes release notes to `--notes-file` and `released`/`version`/`tag`/`commit`/`release-url`/`notes-file` outputs to `$GITHUB_OUTPUT` when set.
 
 Release mode requires a token with `contents: write` on the target repository. The `workflow` scope is not required because release commits only touch Cargo manifests.
+
+#### Splitting a release across two runs
+
+`--phase` exists for one problem: an artifact that has to be built *from* the released version cannot be referenced *by* that release, because the version-tagged artifact only exists once the tag does. A container action pinning its own runtime image is the canonical case — and releasing in one pass is why `v0.7.0` shipped a `0.6.2` binary.
+
+Splitting the release breaks the cycle:
+
+1. `--phase bump` bumps the manifest and commits it, then stops. `released=false`, `version` holds the pending version, and `commit` holds the version commit. Nothing is tagged, so the version stays claimable.
+2. Build and publish whatever has to carry that version. It is built from a tree whose manifest already reads the released version.
+3. `--phase tag` releases the version the manifest already holds — no second bump — and stages `--extra-files` into the commit the tag points at, so a digest resolved in step 2 lands inside the tag.
+
+The tagged tree and the artifact's source then differ only in the files staged in step 3. `--phase tag` skips when the manifest version is already tagged, so a re-run after a failure finishes the pending release instead of starting another. It also releases regardless of whether the commit range still warrants a bump, since the bump decision was already made in step 1. Neither phase combines with `--create-pr`, which separates the bump from the tag by its own means.
+
+This repository's own `auto-release.yml` runs both phases; see [Release flow](#release-flow).
 
 ## Token Permissions
 
@@ -208,6 +223,7 @@ prebuilt image, so it starts in seconds instead of compiling from source.
 | `notes-file` | `release` | `release_notes.md` | Where generated release notes are written, including on dry runs. |
 | `release-branch` | `release` | `automation/release` | Automation-owned branch used with `create-pr`; must use the `automation/release` prefix. |
 | `extra-files` | `release` | none | Comma-separated repository-relative files to stage into the release commit, for values that can only be resolved at release time. |
+| `phase` | `release` | `all` | `all`, `bump` (commit the version bump without tagging), or `tag` (release the version the manifest already holds). |
 
 ### Outputs
 
@@ -218,6 +234,7 @@ Every output is set by `release` and is empty for the other commands.
 | `released` | `true` when a release was created, otherwise `false`. |
 | `version` | Released version without the tag prefix (also set on dry runs and tag-exists skips). |
 | `tag` | Created release tag. |
+| `commit` | SHA of the commit the release created; with `phase: bump` this is the version commit the `tag` phase builds on. |
 | `release-url` | URL of the created GitHub Release. |
 | `notes-file` | Path to the generated notes file, empty when no notes were generated. |
 | `release-pr-number` | Number of the created or updated release pull request. |
@@ -416,6 +433,47 @@ App authentication attributes API commits and pull requests to the App;
 cryptographic commit signing still requires a separate signing-key policy.
 Configure both values together — a half-configured App fails the workflow
 instead of silently falling back.
+
+## Release flow
+
+This repository releases itself, and it is a container action, so its runtime
+image has to be pinned to an image built from the release being cut. That is
+circular in a single pass — `docker.yml` derives version tags from the git tag,
+so `ghcr.io/threatflux/github_actions:0.7.2` cannot exist before `v0.7.2` does.
+`v0.7.0` shipped a `0.6.2` binary for exactly this reason.
+
+`auto-release.yml` therefore releases in two phases:
+
+| Phase | Trigger | What it does |
+|---|---|---|
+| 1 — bump | `CI`, `Security`, and `Docker` all green on the head | Pins the runtime to the head's image so this run executes a current binary, then `phase: bump` commits the version bump and stops. Dispatches `docker.yml` with `release-prep=true`. |
+| 2 — tag | `docker.yml` hands off after build, scan, and sign | Resolves the new image's digest, **verifies its `--version` equals the manifest version**, gives the digest its `:X.Y.Z`, `:X.Y`, and `:X` tags, rewrites both Dockerfile pins, then `phase: tag` stages those pins into the commit it tags. |
+
+Consequences worth knowing:
+
+- **The tag ships a runtime that reports its own version.** The tagged tree and
+  the image's source differ only in the two Dockerfiles, which do not affect the
+  image.
+- **A release takes as long as a multi-arch image build** (roughly 40–60 minutes
+  on QEMU) because phase 2 waits for the image. It costs no extra build:
+  `docker.yml` is no longer dispatched for the tag, since retagging the verified
+  digest already produces the version tags, and rebuilding would move them to a
+  digest the release does not pin.
+- **The version commit is pushed with `GITHUB_TOKEN`, so it starts no
+  workflows.** Both the image build and the handoff back are explicit
+  dispatches, which are exempt from that suppression.
+- **A committed-but-untagged version is the resumable state.** Phase detection
+  reads the manifest version at `main` and checks whether its tag exists, so any
+  later run — the weekly cron, a push, or a manual dispatch — finishes a release
+  that stalled after phase 1 rather than bumping again. `workflow_dispatch`
+  accepts an explicit `phase` to force either half.
+- **Phase 2 is not gated on CI and Security runs** for its target, because no
+  workflow runs for a token-pushed commit. Its gate is the registry: the image
+  must exist and must report the version being tagged.
+
+Consumer repositories do not need any of this. The reusable workflow below
+releases in a single pass, which is correct for a repository that does not
+package its own release into an image it then runs.
 
 ## Reusable Auto Release Workflow
 

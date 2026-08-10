@@ -10,8 +10,8 @@ use std::{
 use anyhow::{Context, Result};
 use clap::{Args, ValueEnum};
 use github_actions_maintainer::{
-    BumpLevel, GitHubClient, ReleaseOptions, ReleaseOutcome, ReleasePublisher, ReleaseReport,
-    TagStyle,
+    BumpLevel, GitHubClient, ReleaseOptions, ReleaseOutcome, ReleasePhase, ReleasePublisher,
+    ReleaseReport, TagStyle,
 };
 
 use crate::resolve_repository;
@@ -86,6 +86,13 @@ pub struct ReleaseArgs {
     #[arg(long, env = "GITHUB_OUTPUT", hide = true)]
     pub github_output: Option<PathBuf>,
 
+    /// Which part of the release to perform. `all` bumps, tags, and publishes
+    /// in one run. `bump` stops after committing the version bump so a runtime
+    /// image can be built from the released version before the tag exists, and
+    /// `tag` then tags the version the manifest already holds.
+    #[arg(long, env = "INPUT_PHASE", value_enum, default_value_t = PhaseArg::All)]
+    pub phase: PhaseArg,
+
     /// Analyze and report without creating any commit, tag, or release.
     #[arg(long, env = "INPUT_DRY-RUN", default_value_t = false, num_args = 0..=1, default_missing_value = "true")]
     pub dry_run: bool,
@@ -128,6 +135,26 @@ impl TagStyleArg {
     }
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum)]
+pub enum PhaseArg {
+    /// Bump, tag, and publish in a single run.
+    All,
+    /// Commit the version bump and stop, leaving the version untagged.
+    Bump,
+    /// Tag the version the manifest already holds, without bumping it.
+    Tag,
+}
+
+impl PhaseArg {
+    const fn phase(self) -> ReleasePhase {
+        match self {
+            Self::All => ReleasePhase::All,
+            Self::Bump => ReleasePhase::Bump,
+            Self::Tag => ReleasePhase::Tag,
+        }
+    }
+}
+
 pub fn run_release(args: ReleaseArgs, github_api_base_url: Option<String>) -> Result<()> {
     let github = GitHubClient::new(
         github_api_base_url.unwrap_or_else(|| String::from("https://api.github.com")),
@@ -153,6 +180,7 @@ pub fn run_release(args: ReleaseArgs, github_api_base_url: Option<String>) -> Re
             .into_iter()
             .filter(|file| !file.as_os_str().is_empty())
             .collect(),
+        phase: args.phase.phase(),
     })?;
 
     if let Some(notes) = &report.notes {
@@ -201,6 +229,21 @@ fn print_released(report: &ReleaseReport, notes_file: &Path) {
 fn print_release_report(report: &ReleaseReport, notes_file: &Path) {
     match report.outcome {
         ReleaseOutcome::Released => print_released(report, notes_file),
+        ReleaseOutcome::VersionCommitted => {
+            println!(
+                "Committed version {} ({} -> {}); tag and release are still pending.",
+                report.next_version.as_deref().unwrap_or_default(),
+                report.current_version,
+                report.next_version.as_deref().unwrap_or_default()
+            );
+            if let Some(commit_sha) = &report.commit_sha {
+                println!("- version commit {commit_sha}");
+            }
+            for file in &report.files_updated {
+                println!("- updated {}", file.display());
+            }
+            println!("- publish the runtime image for this commit, then re-run with --phase tag");
+        }
         ReleaseOutcome::PullRequestCreated | ReleaseOutcome::PullRequestUpdated => {
             let action = if report.outcome == ReleaseOutcome::PullRequestCreated {
                 "Created"
