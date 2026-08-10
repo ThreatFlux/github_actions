@@ -9,6 +9,11 @@ use tempfile::{TempDir, tempdir};
 use super::{ReleaseOptions, ReleaseOutcome, ReleasePublisher, TagStyle};
 use crate::{GitHubClient, conventional::BumpLevel};
 
+// Extra-file staging has its own mock scaffolding, so it lives in a sibling
+// file to keep both modules within the repository's file-size lint budget.
+#[path = "release_extra_files_tests.rs"]
+mod extra_files;
+
 const FEAT_AND_FIX: &str = r#"{"total_commits":2,"commits":[{"sha":"feataaaaaaa","commit":{"message":"feat: add thing"},"parents":[{}]},{"sha":"fixbbbbbbbb","commit":{"message":"fix: repair thing"},"parents":[{}]}]}"#;
 const CHORE_ONLY: &str = r#"{"total_commits":1,"commits":[{"sha":"choreaaaaaa","commit":{"message":"chore: tidy"},"parents":[{}]}]}"#;
 const TAGS_V023: &str = r#"[{"name":"v0.2.3","commit":{"sha":"tagsha"}}]"#;
@@ -249,103 +254,6 @@ fn release_creates_commit_tag_and_release() {
         Some("https://github.com/acme/demo/releases/tag/v0.3.0")
     );
     assert_eq!(report.files_updated.len(), 1);
-}
-
-#[test]
-fn release_stages_extra_files_into_the_release_commit() {
-    let temp_dir = write_fixture_repo();
-    fs::write(temp_dir.path().join("runtime.Dockerfile"), "FROM example@sha256:abc\n")
-        .expect("write runtime pin");
-    let mut server = Server::new();
-    let _analysis = mock_analysis(&mut server, 2, FEAT_AND_FIX);
-    let _base = server
-        .mock("GET", "/repos/acme/demo/git/commits/basecommitsha")
-        .with_status(200)
-        .with_body(r#"{"sha":"basecommitsha","tree":{"sha":"basetreesha"}}"#)
-        .create();
-    let manifest_blob = server
-        .mock("POST", "/repos/acme/demo/git/blobs")
-        .match_body(Matcher::Regex(r#"version = \\"0\.3\.0\\""#.into()))
-        .expect(1)
-        .with_status(201)
-        .with_body(r#"{"sha":"manifestblobsha"}"#)
-        .create();
-    let extra_blob = server
-        .mock("POST", "/repos/acme/demo/git/blobs")
-        .match_body(Matcher::Regex(r"FROM example@sha256:abc".into()))
-        .expect(1)
-        .with_status(201)
-        .with_body(r#"{"sha":"extrablobsha"}"#)
-        .create();
-    let tree = server
-        .mock("POST", "/repos/acme/demo/git/trees")
-        .match_body(Matcher::AllOf(vec![
-            Matcher::Regex(r#""path":"Cargo\.toml""#.into()),
-            Matcher::Regex(r#""path":"runtime\.Dockerfile""#.into()),
-            Matcher::Regex(r#""sha":"extrablobsha""#.into()),
-        ]))
-        .expect(1)
-        .with_status(201)
-        .with_body(r#"{"sha":"treesha"}"#)
-        .create();
-    let _commit = server
-        .mock("POST", "/repos/acme/demo/git/commits")
-        .with_status(201)
-        .with_body(r#"{"sha":"newcommitsha"}"#)
-        .create();
-    let _ref_update = server
-        .mock("PATCH", "/repos/acme/demo/git/refs/heads/main")
-        .with_status(200)
-        .with_body(r#"{"ref":"refs/heads/main"}"#)
-        .create();
-    let _finalize = mock_strict_finalize(&mut server);
-
-    let mut options = options(temp_dir.path());
-    options.extra_files = vec![PathBuf::from("runtime.Dockerfile")];
-    let report = publisher(&server).release(&options).expect("release report");
-
-    assert_eq!(report.outcome, ReleaseOutcome::Released);
-    assert_eq!(report.files_updated.len(), 2);
-    assert!(
-        report.files_updated.iter().any(|file| file.ends_with("runtime.Dockerfile")),
-        "expected the extra file to be staged: {:?}",
-        report.files_updated
-    );
-    manifest_blob.assert();
-    extra_blob.assert();
-    tree.assert();
-}
-
-#[test]
-fn release_ignores_extra_files_the_version_rewrite_already_covers() {
-    let temp_dir = write_fixture_repo();
-    let mut server = Server::new();
-    let _analysis = mock_analysis(&mut server, 2, FEAT_AND_FIX);
-    let _pipeline = mock_strict_pipeline(&mut server);
-    let _finalize = mock_strict_finalize(&mut server);
-
-    let mut options = options(temp_dir.path());
-    // Duplicated on purpose: the manifest rewrite carries the bumped version,
-    // so staging the pre-bump working-tree copy would revert the release.
-    options.extra_files = vec![PathBuf::from("Cargo.toml"), PathBuf::from("./Cargo.toml")];
-    let report = publisher(&server).release(&options).expect("release report");
-
-    assert_eq!(report.outcome, ReleaseOutcome::Released);
-    assert_eq!(report.files_updated.len(), 1);
-}
-
-#[test]
-fn release_fails_when_an_extra_file_is_missing() {
-    let temp_dir = write_fixture_repo();
-    let mut server = Server::new();
-    let _analysis = mock_analysis(&mut server, 1, FEAT_AND_FIX);
-    let _no_mutations = mock_no_mutations(&mut server);
-
-    let mut options = options(temp_dir.path());
-    options.extra_files = vec![PathBuf::from("missing.Dockerfile")];
-    let error = publisher(&server).release(&options).expect_err("missing file must fail");
-
-    assert!(error.to_string().contains("missing.Dockerfile"), "unexpected error: {error}");
 }
 
 #[test]
