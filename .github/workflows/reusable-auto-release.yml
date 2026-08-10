@@ -165,6 +165,11 @@ jobs:
       actions: write
       contents: write
       pull-requests: write
+    env:
+      # The `secrets` context is not available to a step-level `if:`, so the
+      # presence of the App key is surfaced here, where `secrets` is allowed,
+      # and the steps below branch on this value instead.
+      HAS_GITHUB_APP_PRIVATE_KEY: ${{ secrets.github-app-private-key != '' }}
     outputs:
       released: ${{ steps.release.outputs.released }}
       version: ${{ steps.release.outputs.version }}
@@ -194,7 +199,7 @@ jobs:
 
       - name: Create GitHub App installation token
         id: github-app-token
-        if: inputs.github-app-id != '' && secrets.github-app-private-key != ''
+        if: inputs.github-app-id != '' && env.HAS_GITHUB_APP_PRIVATE_KEY == 'true'
         uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3.2.0
         with:
           app-id: ${{ inputs.github-app-id }}
@@ -203,7 +208,7 @@ jobs:
           repositories: ${{ github.event.repository.name }}
 
       - name: Validate GitHub App configuration
-        if: (inputs.github-app-id == '') != (secrets.github-app-private-key == '')
+        if: (inputs.github-app-id == '') != (env.HAS_GITHUB_APP_PRIVATE_KEY == 'false')
         run: |
           echo "github-app-id and github-app-private-key must be configured together" >&2
           exit 1
