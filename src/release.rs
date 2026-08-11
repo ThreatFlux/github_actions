@@ -140,8 +140,21 @@ struct Analysis {
     head_sha: String,
     current_version: String,
     current: Version,
+    /// Version of the latest release tag, absent until the first release.
+    last_released: Option<Version>,
     commits: Vec<ConventionalCommit>,
     truncated: bool,
+}
+
+impl Analysis {
+    /// True when the manifest holds a version that was never tagged.
+    ///
+    /// A direct release tags the version in the same run that bumps it, so the
+    /// two only diverge once a release pull request lands its bump on the base
+    /// branch without a tag - or on a repository that has never released.
+    fn manifest_unreleased(&self) -> bool {
+        self.last_released.as_ref().is_none_or(|released| self.current > *released)
+    }
 }
 
 #[derive(Debug)]
@@ -151,6 +164,10 @@ struct PreparedRelease {
     next_version: Version,
     tag: String,
     file_updates: Vec<FileUpdate>,
+    /// Route the version bump through a pull request instead of publishing it.
+    /// Tagging a version the manifest already holds needs no bump, so it
+    /// publishes directly even when the caller asked for release pull requests.
+    via_pull_request: bool,
 }
 
 #[derive(Debug, Clone)]
@@ -176,6 +193,13 @@ impl ReleasePublisher {
         }
         let analysis = self.analyze(options)?;
         if options.phase == ReleasePhase::Tag {
+            return self.release_manifest_version(options, analysis);
+        }
+        // A merged release pull request leaves the bump on the base branch with
+        // no tag. Bumping again would open a fresh pull request for a version
+        // nobody asked for and leave the merged one unreleased forever, so the
+        // version already on the branch is what gets tagged.
+        if options.create_pr && analysis.manifest_unreleased() {
             return self.release_manifest_version(options, analysis);
         }
         self.release_bumped_version(options, analysis)
@@ -213,7 +237,15 @@ impl ReleasePublisher {
         let extra = extra_file_updates(&options.repo_root, &options.extra_files, &file_updates)?;
         file_updates.extend(extra);
 
-        self.prepare_and_publish(options, analysis, next_version, tag, file_updates, report)
+        self.prepare_and_publish(
+            options,
+            analysis,
+            next_version,
+            tag,
+            file_updates,
+            options.create_pr,
+            report,
+        )
     }
 
     /// Tag the version the manifest already holds, without bumping it. The
@@ -243,7 +275,7 @@ impl ReleasePublisher {
         // tag lands on the existing head instead of an empty commit.
         let file_updates = extra_file_updates(&options.repo_root, &options.extra_files, &[])?;
 
-        self.prepare_and_publish(options, analysis, version, tag, file_updates, report)
+        self.prepare_and_publish(options, analysis, version, tag, file_updates, false, report)
     }
 
     fn prepare_and_publish(
@@ -253,6 +285,7 @@ impl ReleasePublisher {
         next_version: Version,
         tag: String,
         file_updates: Vec<FileUpdate>,
+        via_pull_request: bool,
         mut report: ReleaseReport,
     ) -> Result<ReleaseReport> {
         report.files_updated = file_updates.iter().map(|update| update.file.clone()).collect();
@@ -268,6 +301,7 @@ impl ReleasePublisher {
             next_version,
             tag,
             file_updates,
+            via_pull_request,
         };
         self.publish(options, &prepared, &mut report)?;
         Ok(report)
@@ -295,6 +329,10 @@ impl ReleasePublisher {
         })?;
 
         let last_tag = self.github.latest_semver_tag(owner, repo, &options.tag_prefix)?;
+        let last_released = last_tag
+            .as_ref()
+            .and_then(|tag| tag.name.strip_prefix(options.tag_prefix.as_str()))
+            .and_then(|version| Version::parse(version).ok());
         let range = match &last_tag {
             Some(tag) => {
                 self.github.compare_commits(owner, repo, &tag.name, &head_sha, MAX_COMPARE_PAGES)?
@@ -307,6 +345,7 @@ impl ReleasePublisher {
             head_sha,
             current_version,
             current,
+            last_released,
             commits: conventional::classify_commits(&range.commits),
             truncated: range.truncated,
         })
@@ -333,7 +372,7 @@ impl ReleasePublisher {
         }
         report.commit_sha = Some(commit_sha.clone());
 
-        if options.create_pr {
+        if prepared.via_pull_request {
             return self.publish_pull_request(options, prepared, &commit_sha, report);
         }
 

@@ -376,9 +376,15 @@ jobs:
 In pull-request mode no tag moves and no GitHub Release is published, so
 `released` stays `false` and `release-pr-number`/`release-pr-url`/`release-branch`
 carry the result; the tag and Release are cut by the follow-on release run
-after the pull request merges. Merges whose commits are only `chore:`/`docs:`
-produce no release at all — the action exits successfully with
-`released=false`, which is also what keeps release commits from looping.
+after the pull request merges.
+
+That follow-on run tags the version the merged pull request left in the
+manifest rather than bumping again. The release range is measured from the
+latest tag, so a run that bumped a second time would keep proposing new
+versions for commits the merged pull request already covered and never
+publish any of them. Once the manifest version is tagged, later runs bump
+from it as usual, and merges whose commits are only `chore:`/`docs:` produce
+no release at all — the action exits successfully with `released=false`.
 
 ### Tokens and downstream pipelines
 

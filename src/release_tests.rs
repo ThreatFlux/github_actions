@@ -357,6 +357,67 @@ fn release_creates_automated_release_branch_and_pull_request() {
 }
 
 #[test]
+fn release_tags_the_merged_release_pull_request_instead_of_opening_another() {
+    // The merged release pull request left 0.2.3 on main with only v0.2.2
+    // tagged. Bumping again here would open a pull request for 0.3.0 and leave
+    // the merged 0.2.3 unreleased forever.
+    let temp_dir = write_fixture_repo();
+    let mut server = Server::new();
+    let _head = mock_head_ref(&mut server, "basecommitsha", 2);
+    let _tags = mock_tags(&mut server, r#"[{"name":"v0.2.2","commit":{"sha":"tagsha"}}]"#);
+    let _compare = server
+        .mock("GET", "/repos/acme/demo/compare/v0.2.2...basecommitsha?per_page=100&page=1")
+        .with_status(200)
+        .with_body(FEAT_AND_FIX)
+        .create();
+    let _tag_missing = mock_tag_lookup(&mut server, "v0.2.3", 404, r#"{"message":"Not Found"}"#);
+    let _no_release_branch = server
+        .mock("POST", "/repos/acme/demo/git/refs/heads/automation/release")
+        .expect(0)
+        .create();
+    let _no_pull_request = server.mock("POST", "/repos/acme/demo/pulls").expect(0).create();
+    // Nothing to rewrite, so the tag lands on the existing head commit.
+    let _no_blobs = server.mock("POST", "/repos/acme/demo/git/blobs").expect(0).create();
+    let _no_branch_advance =
+        server.mock("PATCH", "/repos/acme/demo/git/refs/heads/main").expect(0).create();
+    let _tag_object = server
+        .mock("POST", "/repos/acme/demo/git/tags")
+        .match_body(Matcher::AllOf(vec![
+            Matcher::Regex(r#""tag":"v0\.2\.3""#.into()),
+            Matcher::Regex(r#""object":"basecommitsha""#.into()),
+        ]))
+        .with_status(201)
+        .with_body(r#"{"sha":"tagobjectsha"}"#)
+        .create();
+    let _tag_ref = server
+        .mock("POST", "/repos/acme/demo/git/refs")
+        .match_body(Matcher::Regex(r#""ref":"refs/tags/v0\.2\.3""#.into()))
+        .with_status(201)
+        .with_body(r#"{"ref":"refs/tags/v0.2.3"}"#)
+        .create();
+    let _release = server
+        .mock("POST", "/repos/acme/demo/releases")
+        .match_body(Matcher::Regex(r#""tag_name":"v0\.2\.3""#.into()))
+        .with_status(201)
+        .with_body(r#"{"html_url":"https://github.com/acme/demo/releases/tag/v0.2.3"}"#)
+        .create();
+
+    let mut release_options = options(temp_dir.path());
+    release_options.create_pr = true;
+    let report = publisher(&server).release(&release_options).expect("release report");
+
+    assert_eq!(report.outcome, ReleaseOutcome::Released);
+    assert_eq!(report.next_version.as_deref(), Some("0.2.3"));
+    assert_eq!(report.tag.as_deref(), Some("v0.2.3"));
+    assert_eq!(report.pull_request_number, None);
+    assert_eq!(
+        report.release_url.as_deref(),
+        Some("https://github.com/acme/demo/releases/tag/v0.2.3")
+    );
+    assert!(report.files_updated.is_empty());
+}
+
+#[test]
 fn release_skips_when_no_commits_warrant_a_release() {
     let temp_dir = write_fixture_repo();
     let mut server = Server::new();
