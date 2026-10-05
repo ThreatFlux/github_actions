@@ -414,7 +414,7 @@ fn release_tags_the_merged_release_pull_request_instead_of_opening_another() {
         report.release_url.as_deref(),
         Some("https://github.com/acme/demo/releases/tag/v0.2.3")
     );
-    assert!(report.files_updated.is_empty());
+    assert_eq!(report.files_updated, [] as [std::path::PathBuf; 0]);
 }
 
 #[test]

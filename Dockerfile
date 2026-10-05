@@ -1,7 +1,10 @@
 # ThreatFlux Rust Dockerfile
 # Multi-stage build for single-crate or workspace-based applications.
 
-FROM rust:1.98.0-bookworm AS rust-base
+FROM rust:1.99.0-bookworm@sha256:59037199c44290f2befcdd58dcc540164763fc296950255aaefeef096a1866b0 AS rust-base
+
+ARG CARGO_BUILD_JOBS=2
+ENV CARGO_BUILD_JOBS=${CARGO_BUILD_JOBS}
 
 ARG VERSION=0.0.0
 ARG BUILD_DATE=unknown
@@ -30,13 +33,14 @@ WORKDIR /build
 
 COPY --chown=builder:builder . .
 
-RUN if [ -n "${BINARY_PACKAGE}" ]; then \
-      cargo build --release -p "${BINARY_PACKAGE}" --bin "${BINARY_NAME}" --all-features; \
+RUN rustc --version --verbose && cargo --version && \
+    if [ -n "${BINARY_PACKAGE}" ]; then \
+      cargo build --locked --release -p "${BINARY_PACKAGE}" --bin "${BINARY_NAME}" --all-features; \
     else \
-      cargo build --release --bin "${BINARY_NAME}" --all-features || cargo build --release --all-features; \
+      cargo build --locked --release --bin "${BINARY_NAME}" --all-features; \
     fi
 
-RUN cargo install cargo-cyclonedx --locked --version 0.5.8 && \
+RUN cargo install cargo-cyclonedx --locked --version 0.5.9 && \
     cargo cyclonedx \
       --manifest-path "${SBOM_MANIFEST_PATH}" \
       --all-features \
@@ -44,7 +48,7 @@ RUN cargo install cargo-cyclonedx --locked --version 0.5.8 && \
       --spec-version 1.5 \
       --override-filename "${BINARY_NAME}-sbom"
 
-FROM debian:bookworm-slim AS runtime
+FROM debian:bookworm-slim@sha256:3783cc01769c7b2b1b83a5c5ad96c815348e28ed7da68e2e3687004faa906251 AS runtime
 
 ARG VERSION=0.0.0
 ARG BUILD_DATE=unknown

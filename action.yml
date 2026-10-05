@@ -37,11 +37,15 @@ inputs:
     required: false
     default: "false"
   create-pr:
-    description: For update, open a dependency-update pull request instead of rewriting files locally. For release, stage the release on an automation-owned release pull request instead of publishing directly to the base branch. (update and release)
+    description: >-
+      For update, open a dependency-update pull request instead of rewriting files locally. For release, stage the release on an automation-owned
+      release pull request instead of publishing directly to the base branch. (update and release)
     required: false
     default: "false"
   commit-message:
-    description: 'Commit message. Leave empty to use the per-command default ("Update dependencies" for update; "chore: release v{version}" for release, where "{version}" is replaced with the new version). (update and release)'
+    description: >-
+      Commit message. Leave empty to use the per-command default ("Update dependencies" for update; "chore: release v{version}" for release, where
+      "{version}" is replaced with the new version). (update and release)
     required: false
     default: ""
 
@@ -111,15 +115,22 @@ inputs:
     required: false
     default: ""
   release-branch:
-    description: Automation-owned release branch used with create-pr. Must be automation/release or use the automation/release/ prefix. Leave empty to use the default ("automation/release"). (release only)
+    description: >-
+      Automation-owned release branch used with create-pr. Must be automation/release or use the automation/release/ prefix. Leave empty to use the
+      default ("automation/release"). (release only)
     required: false
     default: ""
   extra-files:
-    description: Comma-separated repository-relative files to stage into the release commit on top of the manifest and lockfile version rewrites. Use it to pin a value that can only be resolved at release time, such as a runtime image digest, inside the commit the release tag points at. (release only)
+    description: >-
+      Comma-separated repository-relative files to stage into the release commit on top of the manifest and lockfile version rewrites. Use it to pin a
+      value that can only be resolved at release time, such as a runtime image digest, inside the commit the release tag points at. (release only)
     required: false
     default: ""
   phase:
-    description: 'Which part of the release to perform: all (default) bumps, tags, and publishes in one run; bump commits the version bump and stops, so an artifact built from the released version can be published before the tag exists; tag then tags the version the manifest already holds. Leave empty to use the default ("all"). (release only)'
+    description: >-
+      Which part of the release to perform: all (default) bumps, tags, and publishes in one run; bump commits the version bump and stops, so an
+      artifact built from the released version can be published before the tag exists; tag then tags the version the manifest already holds. Leave
+      empty to use the default ("all"). (release only)
     required: false
     default: ""
 

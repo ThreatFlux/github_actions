@@ -1,0 +1,8 @@
+# GitHub added these job identity fields on September 3, 2026, after the latest
+# stable actionlint 1.7.12 release. Preserve the reusable workflow's exact source.
+# https://github.blog/changelog/2026-09-03-github-actions-early-september-2026-updates/
+paths:
+  .github/workflows/reusable-auto-release.yml:
+    ignore:
+      - '^property "workflow_repository" is not defined in object type \{check_run_id: number; container:'
+      - '^property "workflow_sha" is not defined in object type \{check_run_id: number; container:'
