@@ -1,7 +1,9 @@
 """Exercise real Git lineage, reference ambiguity, and inherited hook isolation."""
 
 import os
-import subprocess
+
+# B404: Only CalledProcessError is referenced here; all argv calls live in git().
+import subprocess  # nosec B404
 import tempfile
 import unittest
 from pathlib import Path
@@ -55,6 +57,12 @@ class ReleaseSourceTests(unittest.TestCase):
         git(self.root, "update-ref", "refs/remotes/origin/v0.7.5", self.head)
         with self.assertRaises(ValueError):
             resolve_release_source(self.root, "v0.7.5")
+
+    def test_shell_metacharacters_remain_literal_git_reference_data(self) -> None:
+        source = "branch;touch${IFS}injected"
+        git(self.root, "update-ref", f"refs/remotes/origin/{source}", self.head)
+        self.assertEqual(resolve_release_source(self.root, source), self.head)
+        self.assertFalse((self.root / "injected").exists())
 
     def test_fixture_git_cannot_modify_inherited_repository(self) -> None:
         with tempfile.TemporaryDirectory() as inherited:

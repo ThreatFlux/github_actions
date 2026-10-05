@@ -66,6 +66,19 @@ diagnostics are scoped to the existing reusable workflow and job object type.
 Negative fixtures prove unrelated expressions and other workflow paths still
 fail; an independent upstream schema check rejects unknown Checkout inputs.
 
+Published Scorecard results require no workflow-level environment variables.
+Rust security variables therefore belong only to the audit, dependency and
+SBOM jobs; Scorecard publication, permissions and repository scope are retained.
+
+Codacy's five subprocess import/argument warnings reproduce as Bandit **B404**
+and **B603**. The hook installer now uses fixed, quoted POSIX commands. The
+release helper's two import locations and one Git subprocess call carry only
+their specific reviewed rule IDs: fixed Git subcommands, argv arguments,
+explicit `shell=False`, reference validation and sanitized hook-local Git state.
+Six real Git regressions include shell metacharacters treated as literal ref
+data and inherited repository/config isolation. Native negative scanner fixtures
+prove other B404/B603 findings and shell execution B602 remain enabled.
+
 ## Release compatibility
 
 This repository's release workflow now requires its `source_ref` to identify a
@@ -87,7 +100,7 @@ handoff are unchanged.
 
 The required gate is `make all`, followed by `make msrv test-features-full sbom
 lint-strict`. Tests use local HTTP mocks with GitHub mutation tokens unset.
-Local evidence includes all 137 Rust tests with zero ignored tests, five Git
+Local evidence includes all 137 Rust tests with zero ignored tests, six Git
 lineage/reference/isolation regressions, strict Clippy/rustdoc, native LCOV,
 benchmark compilation, locked feature powersets, actual MSRV compilation,
 native audit and SBOM reports, actionlint/ShellCheck and yamllint.

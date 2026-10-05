@@ -62,7 +62,7 @@ dev-setup: ## Install development tools
 .PHONY: install-hooks
 install-hooks: ## Install git hooks
 	@echo "$(CYAN)Installing git hooks...$(NC)"
-	@python3 scripts/install_hooks.py
+	@sh scripts/install_hooks.sh
 	@echo "$(GREEN)Git hooks installed!$(NC)"
 
 .PHONY: build

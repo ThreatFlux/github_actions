@@ -4,7 +4,9 @@
 import argparse
 import os
 import re
-import subprocess
+
+# B404: Git is invoked as an argv array without a shell; refs are validated below.
+import subprocess  # nosec B404
 from pathlib import Path
 
 LOCAL_GIT_ENV = {
@@ -20,9 +22,11 @@ def git(root: Path, *args: str) -> str:
         key: value for key, value in os.environ.items()
         if key not in LOCAL_GIT_ENV and not key.startswith("GIT_CONFIG")
     }
-    result = subprocess.run(
+    # B603: Every caller supplies a fixed Git subcommand; dynamic refs pass Git
+    # format validation and ancestry checks. No argument is evaluated by a shell.
+    result = subprocess.run(  # nosec B603
         ["git", "-C", str(root), *args], env=env, check=True,
-        text=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+        text=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE, shell=False,
     )
     return result.stdout.strip()
 
