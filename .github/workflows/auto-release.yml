@@ -123,7 +123,9 @@ jobs:
           for workflow in ci security docker; do
             # --repo is required: this job has no checkout, so gh cannot infer
             # the repository from a git remote.
-            status="$(gh run list --repo "${GITHUB_REPOSITORY}" --workflow="${workflow}.yml" --branch=main --commit="${TARGET_SHA}" --event=push --limit=1 --json conclusion --jq '.[0].conclusion // ""')"
+            status="$(gh run list --repo "${GITHUB_REPOSITORY}" --workflow="${workflow}.yml" \
+              --branch=main --commit="${TARGET_SHA}" --event=push --limit=1 \
+              --json conclusion --jq '.[0].conclusion // ""')"
             echo "${workflow}=${status}"
             if [[ "${status}" != "success" ]]; then
               echo "all_passed=false" >> "$GITHUB_OUTPUT"

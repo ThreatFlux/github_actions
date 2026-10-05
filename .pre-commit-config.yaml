@@ -8,11 +8,11 @@ repos:
         pass_filenames: false
       - id: clippy
         name: clippy
-        entry: cargo clippy --all-features --all-targets -- -D warnings
+        entry: cargo clippy --locked --all-features --all-targets -- -D warnings
         language: system
         pass_filenames: false
       - id: docs
         name: doc tests
-        entry: cargo test --doc --all-features
+        entry: cargo test --locked --doc --all-features
         language: system
         pass_filenames: false

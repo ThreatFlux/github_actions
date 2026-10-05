@@ -26,7 +26,8 @@ on:
 env:
   CARGO_TERM_COLOR: always
   RUST_BACKTRACE: 1
-  RUST_VERSION: 1.97.1
+  RUST_VERSION: 1.99.0
+  RUSTUP_TOOLCHAIN: 1.99.0
   BINARY_NAME: ${{ vars.RUST_TEMPLATE_BINARY_NAME || 'github-actions-maintainer' }}
   BINARY_PACKAGE: ${{ vars.RUST_TEMPLATE_BINARY_PACKAGE || '' }}
   SBOM_MANIFEST_PATH: ${{ vars.RUST_TEMPLATE_SBOM_MANIFEST_PATH || 'Cargo.toml' }}
@@ -42,7 +43,15 @@ jobs:
     outputs:
       version: ${{ steps.version.outputs.version }}
       source_ref: ${{ steps.release_ref.outputs.source_ref }}
+      release_revision: ${{ steps.vetted_source.outputs.sha }}
     steps:
+      - name: Checkout trusted release tooling
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          ref: ${{ github.sha }}
+          persist-credentials: false
+
       - name: Determine source ref
         id: source_ref
         env:
@@ -60,11 +69,22 @@ jobs:
           fi
           echo "source_ref=${SOURCE_REF}" >> "$GITHUB_OUTPUT"
 
-      - name: Checkout
+      - name: Require a source in main history
+        id: vetted_source
+        env:
+          SOURCE_REF: ${{ steps.source_ref.outputs.source_ref }}
+        run: |
+          set -euo pipefail
+          git fetch --no-recurse-submodules origin '+refs/heads/*:refs/remotes/origin/*' '+refs/tags/*:refs/tags/*'
+          revision="$(python3 scripts/check_release_ref.py "${SOURCE_REF}")"
+          echo "sha=${revision}" >> "$GITHUB_OUTPUT"
+
+      - name: Checkout verified release source
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           fetch-depth: 0
-          ref: ${{ steps.source_ref.outputs.source_ref }}
+          ref: ${{ steps.vetted_source.outputs.sha }}
+          persist-credentials: false
 
       - name: Determine version
         id: version
@@ -102,12 +122,13 @@ jobs:
 
       - name: Ensure release tag
         id: release_ref
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           set -euo pipefail
           VERSION="${{ steps.version.outputs.version }}"
           TAG="v${VERSION}"
-          TARGET_REF="${{ steps.source_ref.outputs.source_ref }}"
-          TARGET_SHA="$(git rev-parse "${TARGET_REF}^{commit}")"
+          TARGET_SHA="${{ steps.vetted_source.outputs.sha }}"
 
           if git rev-parse -q --verify "refs/tags/${TAG}^{commit}" >/dev/null; then
             TAG_SHA="$(git rev-parse "${TAG}^{commit}")"
@@ -116,8 +137,11 @@ jobs:
               exit 1
             fi
           elif [[ "${{ github.event_name }}" == "workflow_dispatch" ]]; then
-            git tag -a "${TAG}" "${TARGET_SHA}" -m "Release ${TAG}"
-            git push origin "refs/tags/${TAG}"
+            tag_object="$(gh api --method POST "repos/${GITHUB_REPOSITORY}/git/tags" \
+              -f tag="${TAG}" -f message="Release ${TAG}" -f object="${TARGET_SHA}" \
+              -f type=commit --jq .sha)"
+            gh api --method POST "repos/${GITHUB_REPOSITORY}/git/refs" \
+              -f ref="refs/tags/${TAG}" -f sha="${tag_object}"
           else
             echo "Missing expected release tag ${TAG}"
             exit 1
@@ -157,14 +181,20 @@ jobs:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          ref: ${{ needs.prepare.outputs.source_ref }}
+          ref: ${{ needs.prepare.outputs.release_revision }}
           persist-credentials: false
 
       - name: Install Rust
-        uses: dtolnay/rust-toolchain@e97e2d8cc328f1b50210efc529dca0028893a2d9 # v1
+        uses: dtolnay/rust-toolchain@7e38f4b43b4db5c8dd498af069a4f6196df1d067 # v1
         with:
           toolchain: ${{ env.RUST_VERSION }}
           targets: ${{ matrix.target }}
+
+      - name: Verify selected compiler
+        run: |
+          rustup show active-toolchain
+          rustc --version --verbose
+          cargo --version
 
       - name: Install dependencies (Ubuntu)
         if: contains(matrix.os, 'ubuntu')
@@ -174,15 +204,15 @@ jobs:
 
       - name: Install cross
         if: matrix.use_cross
-        run: cargo install cross
+        run: cargo install cross --locked --version 0.2.5
 
       - name: Build (cross)
         if: matrix.use_cross
         run: |
           if [[ -n "${BINARY_PACKAGE}" ]]; then
-            cross build --release --target ${{ matrix.target }} -p "${BINARY_PACKAGE}" --bin "${BINARY_NAME}" --all-features
+            cross build --locked --release --target ${{ matrix.target }} -p "${BINARY_PACKAGE}" --bin "${BINARY_NAME}" --all-features
           else
-            cross build --release --target ${{ matrix.target }} --bin "${BINARY_NAME}" --all-features || cross build --release --target ${{ matrix.target }} --all-features
+            cross build --locked --release --target ${{ matrix.target }} --bin "${BINARY_NAME}" --all-features
           fi
 
       - name: Build (native)
@@ -191,20 +221,20 @@ jobs:
         shell: bash
         run: |
           if [[ -n "${BINARY_PACKAGE}" ]]; then
-            cargo build --release --target ${{ matrix.target }} -p "${BINARY_PACKAGE}" --bin "${BINARY_NAME}" --all-features
+            cargo build --locked --release --target ${{ matrix.target }} -p "${BINARY_PACKAGE}" --bin "${BINARY_NAME}" --all-features
           else
-            cargo build --release --target ${{ matrix.target }} --bin "${BINARY_NAME}" --all-features || cargo build --release --target ${{ matrix.target }} --all-features
+            cargo build --locked --release --target ${{ matrix.target }} --bin "${BINARY_NAME}" --all-features
           fi
 
       - name: Package (Unix)
         if: runner.os != 'Windows'
         run: |
           mkdir -p dist
-          cp target/${{ matrix.target }}/release/${BINARY_NAME} dist/
+          cp "target/${{ matrix.target }}/release/${BINARY_NAME}" dist/
           cd dist
-          tar czf ../${BINARY_NAME}-${{ matrix.artifact }}.tar.gz *
+          tar czf "../${BINARY_NAME}-${{ matrix.artifact }}.tar.gz" ./*
           cd ..
-          shasum -a 256 ${BINARY_NAME}-${{ matrix.artifact }}.tar.gz > ${BINARY_NAME}-${{ matrix.artifact }}.tar.gz.sha256
+          shasum -a 256 "${BINARY_NAME}-${{ matrix.artifact }}.tar.gz" > "${BINARY_NAME}-${{ matrix.artifact }}.tar.gz.sha256"
 
       - name: Package (Windows)
         if: runner.os == 'Windows'
@@ -241,18 +271,24 @@ jobs:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          ref: ${{ needs.prepare.outputs.source_ref }}
+          ref: ${{ needs.prepare.outputs.release_revision }}
           persist-credentials: false
 
       - name: Install Rust
-        uses: dtolnay/rust-toolchain@e97e2d8cc328f1b50210efc529dca0028893a2d9 # v1
+        uses: dtolnay/rust-toolchain@7e38f4b43b4db5c8dd498af069a4f6196df1d067 # v1
         with:
           toolchain: ${{ env.RUST_VERSION }}
 
+      - name: Verify selected compiler
+        run: |
+          rustup show active-toolchain
+          rustc --version --verbose
+          cargo --version
+
       - name: Install cargo-cyclonedx
-        uses: taiki-e/install-action@6c6fd71fe4fb72c3697d269963d0e15df8adedad # v2.85.10
+        uses: taiki-e/install-action@183e4297cca2404691e9380e1307288dced5c82a # v2.87.25
         with:
-          tool: cargo-cyclonedx@0.5.8
+          tool: cargo-cyclonedx@0.5.9
 
       - name: Generate SBOM files
         run: |
@@ -277,7 +313,7 @@ jobs:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          ref: ${{ needs.prepare.outputs.source_ref }}
+          ref: ${{ needs.prepare.outputs.release_revision }}
           persist-credentials: false
 
       - name: Generate release notes
@@ -339,13 +375,19 @@ jobs:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          ref: ${{ needs.prepare.outputs.source_ref }}
+          ref: ${{ needs.prepare.outputs.release_revision }}
           persist-credentials: false
 
       - name: Install Rust
-        uses: dtolnay/rust-toolchain@e97e2d8cc328f1b50210efc529dca0028893a2d9 # v1
+        uses: dtolnay/rust-toolchain@7e38f4b43b4db5c8dd498af069a4f6196df1d067 # v1
         with:
           toolchain: ${{ env.RUST_VERSION }}
+
+      - name: Verify selected compiler
+        run: |
+          rustup show active-toolchain
+          rustc --version --verbose
+          cargo --version
 
       - name: Check crates.io token
         id: check_token

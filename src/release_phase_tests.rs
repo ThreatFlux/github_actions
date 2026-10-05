@@ -165,7 +165,7 @@ fn tag_phase_tags_the_existing_head_when_nothing_is_staged() {
 
     assert_eq!(report.outcome, ReleaseOutcome::Released);
     assert_eq!(report.commit_sha.as_deref(), Some("basecommitsha"));
-    assert!(report.files_updated.is_empty());
+    assert_eq!(report.files_updated, [] as [std::path::PathBuf; 0]);
     no_commit.assert();
     no_advance.assert();
     tag_object.assert();

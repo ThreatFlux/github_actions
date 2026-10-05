@@ -252,7 +252,7 @@ fn release_parses_without_extra_files() {
     // Regression: an empty `default_value` combined with `value_delimiter`
     // made clap reject every `release` parse, not just ones passing the flag.
     with_env(&[], || {
-        assert!(release_args(parse(&["bin", "release"])).extra_files.is_empty());
+        assert_eq!(release_args(parse(&["bin", "release"])).extra_files, [] as [PathBuf; 0]);
     });
 }
 
@@ -269,7 +269,7 @@ fn release_extra_files_resolve_from_input_env() {
 #[test]
 fn empty_extra_files_input_env_yields_no_files() {
     with_env(&[("INPUT_EXTRA-FILES", "")], || {
-        assert!(release_args(parse(&["bin", "release"])).extra_files.is_empty());
+        assert_eq!(release_args(parse(&["bin", "release"])).extra_files, [] as [PathBuf; 0]);
     });
 }
 

@@ -315,6 +315,6 @@ mod tests {
         assert_eq!(report.entries[0].latest_version, "v2.26.0");
         assert!(report.entries[0].pinned);
         assert!(report.entries[0].update_needed);
-        assert!(report.changes.is_empty());
+        assert_eq!(report.changes, [] as [crate::model::UpdateChange; 0]);
     }
 }
