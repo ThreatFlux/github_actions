@@ -226,17 +226,14 @@ fn print_released(report: &ReleaseReport, notes_file: &Path) {
     println!("- release notes written to {}", notes_file.display());
 }
 
-/// Describe a dry run: the version it computed and the path the real run would
-/// take with it, which differs by mode even for the same version.
-fn dry_run_lines(report: &ReleaseReport, notes_file: &Path) -> Vec<String> {
+/// What a dry run would do: the headline's verb phrase and the next-action
+/// sentence, which differ by mode even for the same version.
+fn dry_run_plan(report: &ReleaseReport) -> (String, Option<String>) {
     let tag = report.tag.as_deref().unwrap_or_default();
-    let current = &report.current_version;
     let next = report.next_version.as_deref().unwrap_or_default();
-    let (headline, next_action) = match &report.action {
+    match &report.action {
         Some(ReleaseAction::ProposeReleasePullRequest { release_branch, base }) => (
-            format!(
-                "Dry run: would propose {tag} in the release pull request ({current} -> {next})."
-            ),
+            format!("propose {tag} in the release pull request"),
             Some(format!(
                 "point {release_branch} at a version-bump commit on top of {base} and open or update its pull request into {base}; nothing is tagged or released until it merges"
             )),
@@ -248,28 +245,37 @@ fn dry_run_lines(report: &ReleaseReport, notes_file: &Path) -> Vec<String> {
                 format!("commit the staged files to {branch}, tag that commit as {tag},")
             };
             (
-                format!("Dry run: would release {tag} ({current} -> {next})."),
+                format!("release {tag}"),
                 Some(format!(
                     "{target} and publish its GitHub Release; the manifest already holds the untagged {next}, so nothing is bumped"
                 )),
             )
         }
         Some(ReleaseAction::CommitBump { branch }) => (
-            format!("Dry run: would commit version {next} ({current} -> {next})."),
+            format!("commit version {next}"),
             Some(format!(
                 "commit the version bump to {branch} and stop; {tag} is created by a later --phase tag run"
             )),
         ),
         Some(ReleaseAction::CommitAndRelease { branch }) => (
-            format!("Dry run: would release {tag} ({current} -> {next})."),
+            format!("release {tag}"),
             Some(format!(
                 "commit the version bump to {branch}, tag that commit as {tag}, and publish its GitHub Release"
             )),
         ),
-        None => (format!("Dry run: would release {tag} ({current} -> {next})."), None),
-    };
+        None => (format!("release {tag}"), None),
+    }
+}
 
-    let mut lines = vec![headline];
+/// Describe a dry run: the version it computed, the path the real run would
+/// take with it, the files it would rewrite, and that nothing was written.
+fn dry_run_lines(report: &ReleaseReport, notes_file: &Path) -> Vec<String> {
+    let (would, next_action) = dry_run_plan(report);
+    let mut lines = vec![format!(
+        "Dry run: would {would} ({} -> {}).",
+        report.current_version,
+        report.next_version.as_deref().unwrap_or_default()
+    )];
     if let Some(next_action) = next_action {
         lines.push(format!("- next action: {next_action}"));
     }
@@ -283,6 +289,7 @@ fn dry_run_lines(report: &ReleaseReport, notes_file: &Path) -> Vec<String> {
     lines
 }
 
+/// Print the human-readable summary of a release run to the action log.
 fn print_release_report(report: &ReleaseReport, notes_file: &Path) {
     match report.outcome {
         ReleaseOutcome::Released => print_released(report, notes_file),
@@ -363,6 +370,7 @@ mod tests {
 
     use super::dry_run_lines;
 
+    /// A dry-run report for `current -> next` taking `action`.
     fn dry_run_report(
         current: &str,
         next: &str,
@@ -389,6 +397,7 @@ mod tests {
         }
     }
 
+    /// The dry-run lines for `report`, with the default notes path.
     fn lines(report: &ReleaseReport) -> Vec<String> {
         dry_run_lines(report, Path::new("release_notes.md"))
     }
@@ -396,6 +405,7 @@ mod tests {
     const NOTHING_WRITTEN: &str =
         "- nothing was written to the repository: no commit, branch, tag, pull request, or release";
 
+    /// Push mode commits, tags, and releases in the same run.
     #[test]
     fn push_mode_dry_run_names_the_commit_tag_and_release() {
         let report = dry_run_report(
@@ -417,6 +427,7 @@ mod tests {
         );
     }
 
+    /// Release-pull-request mode proposes the bump instead of releasing it.
     #[test]
     fn create_pr_dry_run_names_the_release_pull_request_not_a_release() {
         let report = dry_run_report(
@@ -442,6 +453,7 @@ mod tests {
         );
     }
 
+    /// After a merged release pull request the run tags without bumping.
     #[test]
     fn create_pr_dry_run_after_a_merged_release_pull_request_names_the_tag() {
         let report = dry_run_report(
@@ -462,6 +474,7 @@ mod tests {
         );
     }
 
+    /// Staged extra files are committed before the tag is created.
     #[test]
     fn tag_phase_dry_run_with_staged_files_commits_them_before_tagging() {
         let report = dry_run_report(
@@ -477,6 +490,7 @@ mod tests {
         );
     }
 
+    /// The bump phase commits and leaves the tag to the tag phase.
     #[test]
     fn bump_phase_dry_run_leaves_the_tag_to_the_next_phase() {
         let report = dry_run_report(

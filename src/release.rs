@@ -228,6 +228,8 @@ impl ReleasePublisher {
         Self { github }
     }
 
+    /// Analyze the commits since the latest release tag and release, propose,
+    /// or (on a dry run) report the next version according to `options`.
     pub fn release(&self, options: &ReleaseOptions) -> Result<ReleaseReport> {
         self.github.ensure_token()?;
         if options.create_pr {
@@ -329,6 +331,8 @@ impl ReleasePublisher {
         self.prepare_and_publish(options, analysis, version, tag, file_updates, action, report)
     }
 
+    /// Record the files and the action the run takes, then stop for a dry run
+    /// or publish the prepared release.
     fn prepare_and_publish(
         &self,
         options: &ReleaseOptions,
@@ -367,6 +371,9 @@ impl ReleasePublisher {
             .is_some())
     }
 
+    /// Read the branch head, the manifest version, the latest release tag, and
+    /// the commits since that tag (or the recent history before the first
+    /// release).
     fn analyze(&self, options: &ReleaseOptions) -> Result<Analysis> {
         let owner = &options.owner;
         let repo = &options.repo;
@@ -593,6 +600,7 @@ impl ReleasePublisher {
     }
 }
 
+/// A report that releases nothing yet; callers fill in what the run decides.
 fn initial_report(analysis: &Analysis, bump: Option<BumpLevel>) -> ReleaseReport {
     ReleaseReport {
         outcome: ReleaseOutcome::SkippedNoReleasableChanges,

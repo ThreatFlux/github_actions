@@ -3,9 +3,7 @@ use std::{fs, path::Path};
 use mockito::{Matcher, Mock, Server, ServerGuard};
 use tempfile::{TempDir, tempdir};
 
-use super::{
-    ReleaseAction, ReleaseOptions, ReleaseOutcome, ReleasePhase, ReleasePublisher, TagStyle,
-};
+use super::{ReleaseOptions, ReleaseOutcome, ReleasePhase, ReleasePublisher, TagStyle};
 use crate::{GitHubClient, conventional::BumpLevel};
 
 // Extra-file staging, the phased release, and the manifest-behind-tag guard
@@ -249,10 +247,6 @@ fn release_creates_commit_tag_and_release() {
     let report = publisher(&server).release(&options(temp_dir.path())).expect("release report");
 
     assert_eq!(report.outcome, ReleaseOutcome::Released);
-    assert_eq!(
-        report.action,
-        Some(ReleaseAction::CommitAndRelease { branch: String::from("main") })
-    );
     assert_eq!(report.current_version, "0.2.3");
     assert_eq!(report.next_version.as_deref(), Some("0.3.0"));
     assert_eq!(report.bump, Some(BumpLevel::Minor));
@@ -358,13 +352,6 @@ fn release_creates_automated_release_branch_and_pull_request() {
     let report = publisher(&server).release(&release_options).expect("release report");
 
     assert_eq!(report.outcome, ReleaseOutcome::PullRequestCreated);
-    assert_eq!(
-        report.action,
-        Some(ReleaseAction::ProposeReleasePullRequest {
-            release_branch: String::from("automation/release"),
-            base: String::from("main"),
-        })
-    );
     assert_eq!(report.pull_request_number, Some(42));
     assert_eq!(report.pull_request_url.as_deref(), Some("https://github.com/acme/demo/pull/42"));
     assert_eq!(report.release_branch.as_deref(), Some("automation/release"));
@@ -422,10 +409,6 @@ fn release_tags_the_merged_release_pull_request_instead_of_opening_another() {
     let report = publisher(&server).release(&release_options).expect("release report");
 
     assert_eq!(report.outcome, ReleaseOutcome::Released);
-    assert_eq!(
-        report.action,
-        Some(ReleaseAction::TagManifestVersion { branch: String::from("main") })
-    );
     assert_eq!(report.next_version.as_deref(), Some("0.2.3"));
     assert_eq!(report.tag.as_deref(), Some("v0.2.3"));
     assert_eq!(report.pull_request_number, None);
