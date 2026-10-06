@@ -449,8 +449,9 @@ jobs:
           cargo --version
 
       # PUBLISH_PACKAGES lists workspace packages in dependency order; empty
-      # means the root package. A version crates.io already serves is skipped,
-      # so a rerun after a partial publish finishes the rest.
+      # means the root package. A real run skips a version crates.io already
+      # serves, so a rerun after a partial publish finishes the rest; a dry run
+      # rehearses every package regardless.
       - name: Find the packages to publish
         id: packages
         run: |
@@ -469,22 +470,30 @@ jobs:
               *) echo "crates.io answered HTTP ${status} for ${package} ${VERSION}" >&2; exit 1 ;;
             esac
           done
-          echo "pending=${pending}" >> "$GITHUB_OUTPUT"
+          {
+            echo "packages=${packages}"
+            echo "pending=${pending}"
+          } >> "$GITHUB_OUTPUT"
           echo "packages to publish: ${pending:-none}"
 
+      # One cargo invocation for all packages, so a crate that depends on a
+      # newly versioned sibling verifies against it (cargo stages the set
+      # locally) instead of failing to resolve a version that is not uploaded.
       - name: Package for crates.io (dry run)
-        if: env.DRY_RUN == 'true' && steps.packages.outputs.pending != ''
+        if: env.DRY_RUN == 'true'
         env:
-          PENDING: ${{ steps.packages.outputs.pending }}
+          PACKAGES: ${{ steps.packages.outputs.packages }}
         run: |
           set -euo pipefail
-          for package in ${PENDING}; do
-            if [[ -n "${PUBLISH_PACKAGES}" ]]; then
-              cargo publish --dry-run --locked -p "${package}"
-            else
-              cargo publish --dry-run --locked
-            fi
-          done
+          if [[ -n "${PUBLISH_PACKAGES}" ]]; then
+            selection=()
+            for package in ${PACKAGES}; do
+              selection+=(-p "${package}")
+            done
+            cargo publish --dry-run --locked "${selection[@]}"
+          else
+            cargo publish --dry-run --locked
+          fi
           echo "Dry run: nothing was published; a real run authenticates with crates.io trusted publishing"
 
       - name: Authenticate with crates.io (trusted publishing)
