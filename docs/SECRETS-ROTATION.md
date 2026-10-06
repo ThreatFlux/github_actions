@@ -100,8 +100,10 @@ If the health run fails, the script stops before step 4 and keeps the `.pem`. Th
 | --- | --- | --- |
 | Mint a token | `metadata: read` | **broken**: the key or App ID is wrong, or the secret is not shared with `github_actions`; the run fails |
 | List the installation's repositories and compare them with `EXPECTED_REPOSITORIES` | `metadata: read` | **broken**: a repository was added to or removed from the installation; the run fails |
-| List the organization's secrets (names and dates only) | `organization_secrets: read` | **attention**: the App private key is older than 90 days, another secret is older than 180 days, `GIT_TOKEN` or `CARGO_REGISTRY_TOKEN` still exists, or the key secret's repositories differ from the installation's |
+| List the organization's secrets (names, dates, and visibility only) | `organization_secrets: read` | **attention**: the App private key is older than 90 days, another credential is older than 180 days (name-only secrets such as `DOCKERHUB_USERNAME` are exempt), `GIT_TOKEN` or `CARGO_REGISTRY_TOKEN` still exists, or the key secret is not limited to exactly the installation's repositories |
 
 The secret audit needs the App's organization permission **Secrets: Read-only**. An organization owner grants it in the App's settings (Permissions and events, Organization permissions) and then approves the updated permissions on the installation. Until then the run reports "Organization secret audit skipped" as a finding instead of failing silently.
+
+The workflow has no `pull_request` trigger, because a pull request would run its own copy of a job that holds the App key. Its evaluation logic is unit tested in CI instead.
 
 Findings go to a single issue labelled `secret-rotation` in this repository, created with the workflow's `GITHUB_TOKEN` (`issues: write`). Each run rewrites the issue body with the latest report, reopens the issue if it was closed and something is wrong again, and closes it once a run finds nothing.

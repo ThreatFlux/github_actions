@@ -14,8 +14,10 @@ NOW = datetime(2026, 10, 6, 12, 0, tzinfo=timezone.utc)
 EXPECTED = frozenset({"github_actions", "ollama_rust_sdk", "rust-cicd-template"})
 
 
-def inventory_entry(name: str, updated: str) -> dict:
-    return {"name": name, "created_at": updated, "updated_at": updated, "visibility": "all"}
+def inventory_entry(name: str, updated: str, visibility: str = "") -> dict:
+    if not visibility:
+        visibility = "selected" if name == "TF_AUTOMATION_APP_PRIVATE_KEY" else "all"
+    return {"name": name, "created_at": updated, "updated_at": updated, "visibility": visibility}
 
 
 def audit(**overrides) -> Audit:
@@ -111,6 +113,31 @@ class EvaluateTests(unittest.TestCase):
         status, findings, _ = evaluate(audit(key_secret_repos=EXPECTED - {"github_actions"}))
         self.assertEqual(status, "attention")
         self.assertIn("installed but cannot read the key: `github_actions`", findings[0].detail)
+
+    def test_key_secret_visible_beyond_selected_repositories(self) -> None:
+        status, findings, _ = evaluate(audit(
+            secrets=(inventory_entry("TF_AUTOMATION_APP_PRIVATE_KEY", "2026-09-01T00:00:00Z", "all"),),
+            key_secret_repos=None,
+        ))
+        self.assertEqual(status, "attention")
+        self.assertEqual(findings[0].title, "`TF_AUTOMATION_APP_PRIVATE_KEY` is visible to all repositories")
+
+    def test_unreadable_key_secret_repositories_are_a_finding(self) -> None:
+        status, findings, _ = evaluate(audit(key_secret_repos=None))
+        self.assertEqual(status, "attention")
+        self.assertIn("Could not read which repositories", findings[0].title)
+
+    def test_names_that_are_not_credentials_never_need_rotation(self) -> None:
+        status, findings, rows = evaluate(audit(
+            secrets=(
+                inventory_entry("TF_AUTOMATION_APP_PRIVATE_KEY", "2026-09-01T00:00:00Z"),
+                inventory_entry("DOCKERHUB_USERNAME", "2025-02-01T05:02:57Z"),
+            ),
+            not_credentials=frozenset({"DOCKERHUB_USERNAME"}),
+        ))
+        self.assertEqual(status, "healthy")
+        self.assertEqual(findings, [])
+        self.assertEqual(rows[0].status, "not a credential")
 
     def test_key_secret_missing_from_the_organization(self) -> None:
         status, findings, _ = evaluate(audit(secrets=(inventory_entry("CODECOV_TOKEN", "2026-09-01T00:00:00Z"),)))

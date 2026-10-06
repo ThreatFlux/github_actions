@@ -163,9 +163,13 @@ gh secret set "${SECRET_NAME}" --org "${ORG}" --visibility selected --repos "${r
 log "Updated ${ORG}/${SECRET_NAME}"
 
 # --- 5. Prove Actions can use it ------------------------------------------------
+# The run-ID baseline is taken only after the secret was replaced: run IDs
+# only grow, so every run above it was created later and reads the new key,
+# even if the same person dispatches another run at the same time.
 actor="$(gh api /user --jq .login)"
 last_run="$(gh run list --repo "${HEALTH_REPO}" --workflow "${HEALTH_WORKFLOW}" --limit 1 \
     --json databaseId --jq '.[0].databaseId // 0')"
+[[ "${last_run}" =~ ^[0-9]+$ ]] || die "could not read the latest ${HEALTH_WORKFLOW} run; ${pem} was kept"
 gh workflow run "${HEALTH_WORKFLOW}" --repo "${HEALTH_REPO}" --ref "${HEALTH_REF}" >/dev/null
 log "Dispatched ${HEALTH_WORKFLOW}; waiting for the run to start"
 run_id=""

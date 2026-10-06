@@ -7,22 +7,19 @@ name: Automation App Health
 # scripts/rotate-automation-app-key.sh dispatches this workflow to prove a
 # freshly rotated key works before the old one is deleted.
 # Runbook: docs/SECRETS-ROTATION.md.
+#
+# There is deliberately no pull_request trigger: a pull request runs its own
+# version of this file, and this job holds the organization App private key.
+# scripts/test_automation_app_health.py covers the evaluation in CI instead.
 on:
   schedule:
     - cron: "17 7 * * 1"
   workflow_dispatch:
-  # Same-repository pull requests that change the audit run it report-only
-  # (no issue writes), so a change is proven before it lands.
-  pull_request:
-    branches: [main]
-    paths:
-      - ".github/workflows/automation-app-health.yml"
-      - "scripts/automation_app_health.py"
 
 permissions: {}
 
 concurrency:
-  group: automation-app-health-${{ github.event_name == 'pull_request' && github.ref || 'main' }}
+  group: automation-app-health
   cancel-in-progress: false
 
 env:
@@ -42,7 +39,6 @@ jobs:
     name: App token and secret audit
     runs-on: ${{ vars.RUST_TEMPLATE_RUNNER_UBUNTU || 'ubuntu-latest' }}
     timeout-minutes: 10
-    if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
     permissions:
       contents: read # check out the evaluation script
       issues: write # open, update, or close the tracking issue
@@ -157,6 +153,9 @@ jobs:
             --key-max-age-days "${KEY_MAX_AGE_DAYS}" \
             --max-age-days "${SECRET_MAX_AGE_DAYS}" \
             --obsolete "GIT_TOKEN=Classic personal access token that GitHub now rejects (401). Nothing may use it: replace any remaining reference with GITHUB_TOKEN or the threatflux-automation App, then delete the secret." \
+            --not-credential DOCKERHUB_USERNAME \
+            --not-credential CODACY_USERNAME \
+            --not-credential CODACY_ORGANIZATION_PROVIDER \
             --obsolete "CARGO_REGISTRY_TOKEN=crates.io rejects this token (403) and publishing moved to crates.io trusted publishing (OIDC). Delete the secret once every publishing repository's release.yml uses rust-lang/crates-io-auth-action." \
             --run-url "${RUN_URL}" \
             --repo-url "${REPO_URL}" \
@@ -164,7 +163,7 @@ jobs:
           cat health-report.md >> "$GITHUB_STEP_SUMMARY"
 
       - name: Open, update, or close the tracking issue
-        if: always() && steps.evaluate.outcome == 'success' && github.event_name != 'pull_request'
+        if: always() && steps.evaluate.outcome == 'success'
         env:
           GH_TOKEN: ${{ github.token }}
           STATUS: ${{ steps.evaluate.outputs.status }}
@@ -172,10 +171,13 @@ jobs:
           RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
         run: |
           set -euo pipefail
-          # One issue for the life of the repository: the newest one carrying
-          # the label is reused, reopened, or closed.
+          # One issue for the life of the repository, identified by the marker
+          # comment this workflow writes into its body (the label alone could
+          # match an unrelated issue). The newest such issue is reused,
+          # reopened, or closed; other labelled issues are never touched.
           existing="$(gh issue list --repo "${GITHUB_REPOSITORY}" --label "${ISSUE_LABEL}" --state all \
-            --limit 1 --json number,state --jq '.[0] | select(. != null) | "\(.number) \(.state)"')"
+            --limit 100 --json number,state,body \
+            --jq '[.[] | select(.body | contains("<!-- automation-app-health -->"))] | .[0] | select(. != null) | "\(.number) \(.state)"')"
           number="${existing%% *}"
           state="${existing#* }"
 
