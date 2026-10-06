@@ -317,17 +317,38 @@ jobs:
           persist-credentials: false
 
       - name: Generate release notes
+        id: notes
         run: |
           VERSION="${{ needs.prepare.outputs.version }}"
           echo "## Release v$VERSION" > release_notes.md
           echo "" >> release_notes.md
-          if [ -f CHANGELOG.md ]; then
-            awk "/## \[$VERSION\]/,/## \[/" CHANGELOG.md | sed '1d;$d' >> release_notes.md 2>/dev/null || echo "See CHANGELOG.md for details" >> release_notes.md
+          # The section runs from this version's "## [X.Y.Z]" heading to the
+          # next "## [" heading. (A sed/awk range on "## [" ended on the start
+          # line itself, so it never extracted anything.)
+          section=""
+          for changelog in CHANGELOG.md docs/CHANGELOG.md; do
+            if [ -f "$changelog" ]; then
+              section="$(awk -v heading="## [$VERSION]" 'index($0, heading) == 1 { found = 1; next } found && /^## \[/ { exit } found { print }' "$changelog")"
+              if [[ -n "${section//[[:space:]]/}" ]]; then
+                break
+              fi
+            fi
+          done
+          printf '%s\n' "$section" >> release_notes.md
+          # Auto Release publishes the Release with notes generated from the
+          # conventional commits. Only replace them when the changelog has a
+          # section for this version; otherwise editing would leave the bare
+          # heading above, as it did for v0.7.5 and v0.7.6.
+          if [[ -n "${section//[[:space:]]/}" ]]; then
+            echo "has-changelog=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "has-changelog=false" >> "$GITHUB_OUTPUT"
           fi
 
       - name: Create or update GitHub Release
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          HAS_CHANGELOG: ${{ steps.notes.outputs.has-changelog }}
         run: |
           VERSION="${{ needs.prepare.outputs.version }}"
           TAG="v${VERSION}"
@@ -341,7 +362,11 @@ jobs:
           fi
 
           if gh release view "$TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
-            gh release edit "$TAG" --repo "$GITHUB_REPOSITORY" --title "$TITLE" --notes-file release_notes.md
+            if [[ "${HAS_CHANGELOG}" == "true" ]]; then
+              gh release edit "$TAG" --repo "$GITHUB_REPOSITORY" --title "$TITLE" --notes-file release_notes.md
+            else
+              gh release edit "$TAG" --repo "$GITHUB_REPOSITORY" --title "$TITLE"
+            fi
           else
             if [[ "${IS_PRERELEASE}" == "true" ]]; then
               gh release create "$TAG" --repo "$GITHUB_REPOSITORY" --title "$TITLE" --notes-file release_notes.md --prerelease
