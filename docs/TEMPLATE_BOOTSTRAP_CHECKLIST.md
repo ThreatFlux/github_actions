@@ -37,6 +37,7 @@ Recommended values:
 - `RUST_TEMPLATE_BINARY_PACKAGE`: the package that owns that binary
 - `RUST_TEMPLATE_SBOM_MANIFEST_PATH`: the manifest used for SBOM generation
 - `RUST_TEMPLATE_PUBLISH_PACKAGES`: publish order, space separated
+- `RUST_TEMPLATE_PUBLISH_CRATES`: set to `false` for projects that do not publish to crates.io (the default publishes through crates.io trusted publishing)
 
 Runner defaults:
 

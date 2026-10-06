@@ -25,7 +25,8 @@ on:
       dry_run:
         description: >-
           Rehearse the release from source_ref (or the dispatch ref): build, SBOM, and cargo publish --dry-run, without creating a tag or
-          GitHub Release, uploading assets, or publishing. version must match the source's Cargo.toml.
+          GitHub Release, uploading assets, or publishing. version must match the source's Cargo.toml. Prerelease versions are never
+          published to crates.io, so their rehearsal skips the publish job as a real run does.
         required: false
         type: boolean
         default: false
@@ -416,12 +417,14 @@ jobs:
   # publisher matches owner ThreatFlux, repository github_actions, workflow
   # release.yml, and environment crates-io, so only real runs enter that
   # environment (an empty name runs the job without one). No registry token
-  # secret is read, and any publish failure fails the run.
+  # secret is read, and any publish failure fails the run. Projects that do
+  # not ship crates opt out with the repository variable
+  # RUST_TEMPLATE_PUBLISH_CRATES=false; prereleases are never published.
   publish:
     name: Publish to crates.io
     needs: [prepare, build]
     runs-on: ${{ vars.RUST_TEMPLATE_RUNNER_UBUNTU || 'ubuntu-latest' }}
-    if: "!contains(needs.prepare.outputs.version, '-')"
+    if: ${{ !contains(needs.prepare.outputs.version, '-') && vars.RUST_TEMPLATE_PUBLISH_CRATES != 'false' }}
     environment:
       name: ${{ !(github.event_name == 'workflow_dispatch' && inputs.dry_run) && 'crates-io' || '' }}
     permissions:
