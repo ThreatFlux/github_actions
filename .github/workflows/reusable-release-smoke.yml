@@ -1,0 +1,70 @@
+name: Reusable Release Smoke
+
+# Dry-runs reusable-auto-release.yml the way a consumer calls it, once with the
+# threatflux-automation GitHub App and once with GITHUB_TOKEN, so changes to
+# its token handling and dispatch decision run for real before they ship. A
+# dry run writes nothing: no commit, branch, tag, Release, pull request, or
+# workflow dispatch. bump: patch forces a would-be release so the dispatch
+# plan step has a tag to reason about.
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - ".github/workflows/reusable-auto-release.yml"
+      - ".github/workflows/reusable-release-smoke.yml"
+      - "scripts/dispatch_release_workflows.py"
+  workflow_dispatch:
+
+permissions: {}
+
+jobs:
+  github-app:
+    name: Dry run with the GitHub App
+    # Fork pull requests cannot read the App key.
+    if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
+    # The called workflow declares these for its release job; a dry run only
+    # reads, and the App token it mints is what the plan reasons about.
+    permissions:
+      actions: write
+      contents: write
+      pull-requests: write
+    uses: ./.github/workflows/reusable-auto-release.yml
+    with:
+      bump: patch
+      dry-run: true
+      dispatch-workflows: release.yml,docker.yml
+      dispatch-version-workflow: release.yml
+      github-app-id: ${{ vars.TF_AUTOMATION_APP_ID }}
+    secrets:
+      github-app-private-key: ${{ secrets.TF_AUTOMATION_APP_PRIVATE_KEY }}
+
+  github-token:
+    name: Dry run with GITHUB_TOKEN
+    permissions:
+      actions: write
+      contents: write
+      pull-requests: write
+    uses: ./.github/workflows/reusable-auto-release.yml
+    with:
+      bump: patch
+      dry-run: true
+      dispatch-workflows: release.yml,docker.yml
+      dispatch-version-workflow: release.yml
+
+  verify:
+    name: Verify dry runs released nothing
+    needs: [github-app, github-token]
+    runs-on: ${{ vars.RUST_TEMPLATE_RUNNER_UBUNTU || 'ubuntu-latest' }}
+    timeout-minutes: 5
+    steps:
+      - name: Check outputs
+        env:
+          APP_RELEASED: ${{ needs.github-app.outputs.released }}
+          APP_TAG: ${{ needs.github-app.outputs.tag }}
+          TOKEN_RELEASED: ${{ needs.github-token.outputs.released }}
+          TOKEN_TAG: ${{ needs.github-token.outputs.tag }}
+        run: |
+          set -euo pipefail
+          echo "App path: released=${APP_RELEASED} tag=${APP_TAG}; GITHUB_TOKEN path: released=${TOKEN_RELEASED} tag=${TOKEN_TAG}"
+          [[ "${APP_RELEASED}" == false && "${TOKEN_RELEASED}" == false ]] || { echo "a dry run reported a release" >&2; exit 1; }
+          [[ -n "${APP_TAG}" && "${APP_TAG}" == "${TOKEN_TAG}" ]] || { echo "both paths must compute the same would-be tag" >&2; exit 1; }

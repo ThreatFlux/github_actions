@@ -428,9 +428,11 @@ To attribute release commits and pull requests to an App instead of
 `github-actions[bot]`:
 
 1. Create a GitHub App under your organization and generate a private key.
-2. Grant the installation **Contents: Read and write**, **Pull requests: Read
-   and write**, and **Actions: Read and write**, then install it on every
-   repository that releases.
+2. Grant the installation **Contents: Read and write** and **Pull requests:
+   Read and write** (used with `create-pr`), plus **Actions: Read and write**
+   if you set `dispatch-on-app-token`, then install it on every repository
+   that releases. Each run's token is limited to the calling repository and
+   to the permissions that run needs.
 3. Add the App's numeric ID as the `RELEASE_APP_ID` repository or organization
    variable.
 4. Add the private-key PEM as the `RELEASE_APP_PRIVATE_KEY` secret. Never commit
@@ -443,6 +445,16 @@ App authentication attributes API commits and pull requests to the App;
 cryptographic commit signing still requires a separate signing-key policy.
 Configure both values together — a half-configured App fails the workflow
 instead of silently falling back.
+
+Unlike `GITHUB_TOKEN`, an App token's writes start workflows. The release pull
+request it opens runs your `pull_request` CI, and the tag it pushes runs your
+`on: push: tags` workflows. The reusable workflow therefore does **not**
+dispatch `dispatch-workflows` when the App cut the release, and logs why;
+dispatching them as well would run each one twice. Set
+`dispatch-on-app-token: true` only for dispatch workflows that have no tag
+trigger. The `release-token` and `GITHUB_TOKEN` paths keep dispatching. With
+`update-major-alias`, the App also pushes the major alias tag (for example
+`v1`), so keep tag filters as specific as `v*.*.*`.
 
 ## Release flow
 
@@ -556,7 +568,9 @@ What a dry run does, in either mode:
   opened or edited; no tag, major alias, or GitHub Release is created.
   `Dispatch downstream release workflows` is skipped: it requires
   `released == 'true'`, which a dry run never reports, and it also checks
-  `dry-run` directly.
+  `dry-run` directly. Instead, `Show the downstream dispatch plan (dry run)`
+  logs which workflows the real run would dispatch, or why it would skip them
+  (the GitHub App token pushed the tag), without running `gh`.
 - **Local files only.** The would-be release notes are written to
   `notes-file` in the runner workspace, and the outputs are written to
   `$GITHUB_OUTPUT`.
