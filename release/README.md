@@ -187,7 +187,7 @@ and `Cargo.lock` entries for workspace packages. Merge commits are ignored.
 | `create-pr` | `false` | Create or update an automated release pull request instead of publishing directly. |
 | `release-branch` | `automation/release` | Automation-owned branch; must use the `automation/release` prefix. |
 | `github-app-id` | empty | Optional App ID used with the `github-app-private-key` secret. |
-| `dry-run` | `false` | Analyze and report without creating anything. |
+| `dry-run` | `false` | Analyze and report the would-be version and tag without writing anything to the repository. See [Dry runs](../README.md#dry-runs) for what each mode computes. |
 
 ## Outputs
 

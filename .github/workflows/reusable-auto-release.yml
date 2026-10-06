@@ -28,7 +28,9 @@ on:
         default: release_notes.md
         type: string
       dry-run:
-        description: Analyze and report without creating any commit, tag, or release.
+        description: >-
+          Compute and log the would-be version, tag, and file rewrites without pushing a commit, branch, tag, pull request, or GitHub Release, and
+          without dispatching workflows. The required-workflows gate still applies.
         required: false
         default: false
         type: boolean
@@ -226,8 +228,11 @@ jobs:
           dry-run: ${{ inputs.dry-run }}
           create-pr: ${{ inputs.create-pr }}
           release-branch: ${{ inputs.release-branch }}
+      # A dry run never reports released=true, so this step cannot fire for
+      # one; the explicit dry-run check keeps that true even if a runtime that
+      # mishandles the flag is ever pinned.
       - name: Dispatch downstream release workflows
-        if: steps.release.outputs.released == 'true' && inputs.dispatch-workflows != ''
+        if: steps.release.outputs.released == 'true' && !inputs.dry-run && inputs.dispatch-workflows != ''
         env:
           GH_TOKEN: ${{ steps.github-app-token.outputs.token || secrets.release-token || github.token }}
           TAG: ${{ steps.release.outputs.tag }}
