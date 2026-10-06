@@ -51,15 +51,18 @@ class SecretAge:
     age_days: int
     limit_days: int
     obsolete_reason: str
+    credential: bool = True
 
     @property
     def overdue(self) -> bool:
-        return self.age_days > self.limit_days
+        return self.credential and self.age_days > self.limit_days
 
     @property
     def status(self) -> str:
         if self.obsolete_reason:
             return "obsolete: delete"
+        if not self.credential:
+            return "not a credential"
         if self.overdue:
             return "rotate"
         return "ok"
@@ -82,6 +85,7 @@ class Audit:
     max_age_days: int
     obsolete: dict[str, str]
     now: datetime
+    not_credentials: frozenset[str] = frozenset()
 
 
 def parse_json_stream(text: str) -> list[dict]:
@@ -135,7 +139,8 @@ def secret_ages(audit: Audit) -> list[SecretAge]:
         updated_at = secret.get("updated_at") or secret.get("created_at") or ""
         age_days = (audit.now - parse_timestamp(updated_at)).days if updated_at else 0
         limit = audit.key_max_age_days if name == audit.key_secret else audit.max_age_days
-        rows.append(SecretAge(name, updated_at, age_days, limit, audit.obsolete.get(name, "")))
+        rows.append(SecretAge(name, updated_at, age_days, limit, audit.obsolete.get(name, ""),
+                              credential=name not in audit.not_credentials))
     return rows
 
 
@@ -185,19 +190,32 @@ def secret_findings(audit: Audit, rows: list[SecretAge]) -> list[Finding]:
                 f"Last updated {row.updated_at[:10]} ({row.age_days} days ago); the limit is"
                 f" {row.limit_days} days. See {RUNBOOK}.",
             ))
-    return findings + key_access_findings(audit, {row.name for row in rows})
+    return findings + key_access_findings(audit)
 
 
-def key_access_findings(audit: Audit, names: set[str]) -> list[Finding]:
+def key_access_findings(audit: Audit) -> list[Finding]:
     """Check the App key is an org secret shared with exactly the installation's repositories."""
-    if audit.key_secret not in names:
+    entry = next((item for item in audit.secrets if item.get("name") == audit.key_secret), None)
+    if entry is None:
         return [Finding(
             WARNING, f"`{audit.key_secret}` is not an organization secret",
             "The App minted a token, so the key comes from somewhere else (a repository secret?)."
             f" Store it as the organization secret {audit.key_secret} with selected repositories.",
         )]
-    if audit.key_secret_repos is None or audit.installation_repos is None \
-            or audit.key_secret_repos == audit.installation_repos:
+    visibility = entry.get("visibility", "")
+    if visibility != "selected":
+        return [Finding(
+            WARNING, f"`{audit.key_secret}` is visible to {visibility or 'unknown'} repositories",
+            "Every repository in that scope can read the App private key. Set its visibility to selected,"
+            " limited to the installation's repositories (scripts/rotate-automation-app-key.sh --repos).",
+        )]
+    if audit.key_secret_repos is None:
+        return [Finding(
+            WARNING, f"Could not read which repositories can read `{audit.key_secret}`",
+            "Listing the secret's selected repositories failed, so its access was not compared with the"
+            " installation; see the run log.",
+        )]
+    if audit.installation_repos is None or audit.key_secret_repos == audit.installation_repos:
         return []
     only_secret = sorted(audit.key_secret_repos - audit.installation_repos)
     only_install = sorted(audit.installation_repos - audit.key_secret_repos)
@@ -304,6 +322,8 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--key-max-age-days", type=int, default=DEFAULT_KEY_MAX_AGE_DAYS)
     parser.add_argument("--max-age-days", type=int, default=DEFAULT_MAX_AGE_DAYS)
     parser.add_argument("--obsolete", action="append", default=[], metavar="NAME=REASON")
+    parser.add_argument("--not-credential", action="append", default=[], metavar="NAME",
+                        help="a secret that only holds a name (e.g. a username), so it never needs rotation")
     parser.add_argument("--now", help="ISO 8601 timestamp; defaults to the current time")
     parser.add_argument("--run-url", default="")
     parser.add_argument("--repo-url", default="", help="links the runbook, e.g. https://github.com/OWNER/REPO")
@@ -334,6 +354,7 @@ def main(argv: list[str] | None = None) -> int:
         key_max_age_days=args.key_max_age_days,
         max_age_days=args.max_age_days,
         obsolete=parse_obsolete(args.obsolete),
+        not_credentials=frozenset(args.not_credential),
         now=parse_timestamp(args.now) if args.now else datetime.now(timezone.utc),
     )
     result = evaluate(audit)
