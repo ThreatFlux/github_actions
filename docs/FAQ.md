@@ -67,7 +67,9 @@ See the [Configuration Reference](../README.md#configuration-reference) for deta
 
 ### How do I skip crates.io publishing?
 
-Don't set the `CRATES_IO_TOKEN` or `CARGO_REGISTRY_TOKEN` secret. The release workflow will skip the publish step if neither secret is available.
+Set the repository variable `RUST_TEMPLATE_PUBLISH_CRATES` to `false`. The release workflow then skips its "Publish to crates.io" job.
+
+Otherwise `release.yml` publishes every stable release through [crates.io trusted publishing](https://crates.io/docs/trusted-publishing), and a publish failure fails the release. No registry token secret is used. For each crate, add a trusted publisher on crates.io with your GitHub owner, repository, workflow `release.yml`, and environment `crates-io`. crates.io only accepts a trusted publisher for a crate that already exists, so publish a new crate's first version by hand. Prerelease versions (`X.Y.Z-...`) are never published.
 
 ### How do I use custom CI runners?
 
