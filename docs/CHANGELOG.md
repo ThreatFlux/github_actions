@@ -28,6 +28,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- `release` fails with an explicit error when `Cargo.toml` holds a version lower than the highest release tag, instead of bumping from the stale manifest and proposing versions at or below ones already tagged on every run
+- `release --dry-run` names the path the real run would take (commit and tag, commit only, tag the merged manifest version, or refresh the release pull request) instead of reporting every mode as "would release"
+
 ### Added
 
 - `--tag-style` option for the `release` command; annotated tag objects are now the default so downstream provenance checks (`git cat-file -t`) pass, with `lightweight` as the opt-out

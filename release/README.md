@@ -171,6 +171,14 @@ rewrite covers workspace member manifests, internal dependency version pins,
 and `Cargo.lock` entries for workspace packages. Merge commits are ignored.
 `bump: major|minor|patch` forces a release when no commit qualifies.
 
+The run fails before computing anything when the manifest version is lower
+than the highest tag (for example `Cargo.toml` at 0.5.4 next to a `v0.7.5`
+tag). Bumping from that manifest would propose a version at or below one that
+is already tagged, and because the range never moves past the highest tag,
+every later run would propose it again. Set the manifest version to the
+highest tag's version, or delete the tag if it was created by mistake, then
+re-run. Dry runs fail the same way.
+
 ## Inputs
 
 | Input | Default | Description |
