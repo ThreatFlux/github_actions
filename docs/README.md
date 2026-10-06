@@ -42,6 +42,7 @@ These files follow widely-adopted naming conventions from the Rust ecosystem and
 | [`ARCHITECTURE.md`](ARCHITECTURE.md) | Standard | Contributors | High-level codemap, component boundaries, design decisions |
 | [`CHANGELOG.md`](CHANGELOG.md) | Standard | Users | Version history following Keep a Changelog format |
 | [`RELEASING.md`](RELEASING.md) | Standard | Maintainers | Release runbook — automated and manual paths |
+| [`SECRETS-ROTATION.md`](SECRETS-ROTATION.md) | Situational | Maintainers | ThreatFlux org secret inventory, rotation cadence, and the automation App key runbook |
 | [`FAQ.md`](FAQ.md) | Standard | Users | Common questions answered in a searchable flat file |
 | [`TEMPLATE_BOOTSTRAP_CHECKLIST.md`](TEMPLATE_BOOTSTRAP_CHECKLIST.md) | Template-only | Template users | Post-generation setup checklist |
 

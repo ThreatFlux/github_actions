@@ -239,7 +239,7 @@ docker-push: ## Push Docker image to registry
 	@echo "$(GREEN)Docker image pushed!$(NC)"
 
 .PHONY: pre-commit
-pre-commit: release-ref-tests fmt-check lint test-doc ## Pre-commit checks
+pre-commit: script-tests fmt-check lint test-doc ## Pre-commit checks
 
 .PHONY: template-check
 template-check: ## Fail if template placeholders are still present
@@ -248,7 +248,7 @@ template-check: ## Fail if template placeholders are still present
 	@echo "$(GREEN)No unresolved template placeholders found!$(NC)"
 
 .PHONY: ci
-ci: template-check release-ref-tests fmt-check lint test test-features docs security ## Full CI checks
+ci: template-check script-tests fmt-check lint test test-features docs security ## Full CI checks
 
 .PHONY: ci-quick
 ci-quick: template-check fmt-check lint check ## Quick CI checks
@@ -259,6 +259,10 @@ all: ci coverage bench-check ## Full validation suite
 .PHONY: release-ref-tests
 release-ref-tests: ## Validate release source trust with isolated Git fixtures
 	@python3 -m unittest discover -s scripts -p 'test_release_ref.py' -v
+
+.PHONY: script-tests
+script-tests: ## Test every workflow helper script under scripts/ (release source, App health, key rotation)
+	@python3 -m unittest discover -s scripts -p 'test_*.py' -v
 
 .PHONY: release-check
 release-check: ## Check release readiness

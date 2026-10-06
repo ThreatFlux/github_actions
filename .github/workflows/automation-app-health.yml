@@ -1,0 +1,214 @@
+name: Automation App Health
+
+# Weekly proof that the threatflux-automation GitHub App still mints tokens and
+# reaches exactly the repositories it is installed on, plus an audit of the
+# organization secrets behind it. Findings go to a single tracking issue
+# (label secret-rotation) that closes itself once everything is healthy.
+# scripts/rotate-automation-app-key.sh dispatches this workflow to prove a
+# freshly rotated key works before the old one is deleted.
+# Runbook: docs/SECRETS-ROTATION.md.
+on:
+  schedule:
+    - cron: "17 7 * * 1"
+  workflow_dispatch:
+  # Same-repository pull requests that change the audit run it report-only
+  # (no issue writes), so a change is proven before it lands.
+  pull_request:
+    branches: [main]
+    paths:
+      - ".github/workflows/automation-app-health.yml"
+      - "scripts/automation_app_health.py"
+
+permissions: {}
+
+concurrency:
+  group: automation-app-health-${{ github.event_name == 'pull_request' && github.ref || 'main' }}
+  cancel-in-progress: false
+
+env:
+  # The repositories the App installation must reach, no more and no fewer.
+  # Keep in sync with the installation and with the selected repositories of
+  # the TF_AUTOMATION_APP_ID variable and TF_AUTOMATION_APP_PRIVATE_KEY secret.
+  EXPECTED_REPOSITORIES: >-
+    github_actions,ollama_rust_sdk,rust-cicd-template,threatflux-atlassian,threatflux-package-security,threatflux-unifi-sdk,vertex_rust_sdk
+  APP_KEY_SECRET: TF_AUTOMATION_APP_PRIVATE_KEY
+  KEY_MAX_AGE_DAYS: "90"
+  SECRET_MAX_AGE_DAYS: "180"
+  ISSUE_LABEL: secret-rotation
+  ISSUE_TITLE: Automation App health and secret rotation
+
+jobs:
+  audit:
+    name: App token and secret audit
+    runs-on: ${{ vars.RUST_TEMPLATE_RUNNER_UBUNTU || 'ubuntu-latest' }}
+    timeout-minutes: 10
+    if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
+    permissions:
+      contents: read # check out the evaluation script
+      issues: write # open, update, or close the tracking issue
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      # Metadata is enough to list the installation's repositories; the token
+      # carries nothing else. It has to span every installed repository, or
+      # GET /installation/repositories would only ever return this one. A
+      # failure here is the finding that matters most, so it is recorded
+      # rather than allowed to stop the run.
+      - name: Mint an App token
+        id: app-token
+        continue-on-error: true
+        uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3.2.0
+        with:
+          client-id: ${{ vars.TF_AUTOMATION_APP_ID }}
+          private-key: ${{ secrets.TF_AUTOMATION_APP_PRIVATE_KEY }}
+          owner: ${{ github.repository_owner }} # zizmor: ignore[github-app] metadata-only, must see every installed repository
+          permission-metadata: read
+
+      - name: List the installation's repositories
+        id: repos
+        if: steps.app-token.outcome == 'success'
+        continue-on-error: true
+        env:
+          GH_TOKEN: ${{ steps.app-token.outputs.token }}
+        run: |
+          set -euo pipefail
+          gh api --paginate /installation/repositories --jq '.repositories[].name' | sort > installation-repos.txt
+          echo "The installation reaches $(wc -l < installation-repos.txt | tr -d ' ') repositories:"
+          cat installation-repos.txt
+
+      # A separate token for the secret audit keeps the first one minimal. The
+      # App only holds organization "Secrets: read" once an owner grants it, so
+      # a failure to mint this token is reported, never fatal.
+      - name: Mint an App token for the organization secret audit
+        id: secrets-token
+        if: steps.app-token.outcome == 'success'
+        continue-on-error: true
+        uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3.2.0
+        with:
+          client-id: ${{ vars.TF_AUTOMATION_APP_ID }}
+          private-key: ${{ secrets.TF_AUTOMATION_APP_PRIVATE_KEY }}
+          # Not narrowed to this repository: the selected-repository list of
+          # the key secret is compared against the whole installation.
+          owner: ${{ github.repository_owner }} # zizmor: ignore[github-app] organization Secrets: read only
+          permission-organization-secrets: read
+
+      - name: Read organization secret metadata
+        id: secrets
+        if: steps.app-token.outcome == 'success'
+        env:
+          GH_TOKEN: ${{ steps.secrets-token.outputs.token }}
+          TOKEN_OUTCOME: ${{ steps.secrets-token.outcome }}
+          ORG: ${{ github.repository_owner }}
+        run: |
+          set -euo pipefail
+          if [[ "${TOKEN_OUTCOME}" != success ]]; then
+            echo "::warning title=Organization secret audit skipped::The App could not mint a token with organization Secrets: read. Grant that permission to the App and approve it for the ${ORG} installation; see docs/SECRETS-ROTATION.md."
+            echo "outcome=missing-permission" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          # Names and dates only: the API never returns secret values.
+          if ! gh api --paginate "/orgs/${ORG}/actions/secrets" \
+            --jq '.secrets[] | {name, created_at, updated_at, visibility}' > org-secrets.jsonl 2> secrets-error.txt; then
+            cat secrets-error.txt >&2
+            if grep -q 'HTTP 403' secrets-error.txt; then
+              echo "::warning title=Organization secret audit skipped::The App token was refused access to the organization's secrets (HTTP 403)."
+              echo "outcome=missing-permission" >> "$GITHUB_OUTPUT"
+            else
+              echo "outcome=failure" >> "$GITHUB_OUTPUT"
+            fi
+            exit 0
+          fi
+          echo "Read metadata for $(wc -l < org-secrets.jsonl | tr -d ' ') organization secrets."
+          if gh api --paginate "/orgs/${ORG}/actions/secrets/${APP_KEY_SECRET}/repositories" \
+            --jq '.repositories[].name' 2> key-repos-error.txt | sort > key-secret-repos.txt; then
+            echo "${APP_KEY_SECRET} is visible to $(wc -l < key-secret-repos.txt | tr -d ' ') repositories."
+          else
+            # Not a selected-visibility secret (or missing): the audit names that.
+            cat key-repos-error.txt >&2
+            rm -f key-secret-repos.txt
+          fi
+          echo "outcome=success" >> "$GITHUB_OUTPUT"
+
+      - name: Evaluate
+        id: evaluate
+        if: always()
+        env:
+          OWNER: ${{ github.repository_owner }}
+          MINT_OUTCOME: ${{ steps.app-token.outcome }}
+          REPOS_OUTCOME: ${{ steps.repos.outcome || 'skipped' }}
+          SECRETS_OUTCOME: ${{ steps.secrets.outputs.outcome || 'skipped' }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+          REPO_URL: ${{ github.server_url }}/${{ github.repository }}
+        run: |
+          set -euo pipefail
+          python3 scripts/automation_app_health.py \
+            --owner "${OWNER}" \
+            --expected-repos "${EXPECTED_REPOSITORIES}" \
+            --mint-outcome "${MINT_OUTCOME}" \
+            --repos-outcome "${REPOS_OUTCOME}" \
+            --repos-file installation-repos.txt \
+            --secrets-outcome "${SECRETS_OUTCOME}" \
+            --secrets-file org-secrets.jsonl \
+            --key-secret "${APP_KEY_SECRET}" \
+            --key-secret-repos-file key-secret-repos.txt \
+            --key-max-age-days "${KEY_MAX_AGE_DAYS}" \
+            --max-age-days "${SECRET_MAX_AGE_DAYS}" \
+            --obsolete "GIT_TOKEN=Classic personal access token that GitHub now rejects (401). Nothing may use it: replace any remaining reference with GITHUB_TOKEN or the threatflux-automation App, then delete the secret." \
+            --obsolete "CARGO_REGISTRY_TOKEN=crates.io rejects this token (403) and publishing moved to crates.io trusted publishing (OIDC). Delete the secret once every publishing repository's release.yml uses rust-lang/crates-io-auth-action." \
+            --run-url "${RUN_URL}" \
+            --repo-url "${REPO_URL}" \
+            --report health-report.md
+          cat health-report.md >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Open, update, or close the tracking issue
+        if: always() && steps.evaluate.outcome == 'success' && github.event_name != 'pull_request'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          STATUS: ${{ steps.evaluate.outputs.status }}
+          FINDINGS: ${{ steps.evaluate.outputs.findings }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          set -euo pipefail
+          # One issue for the life of the repository: the newest one carrying
+          # the label is reused, reopened, or closed.
+          existing="$(gh issue list --repo "${GITHUB_REPOSITORY}" --label "${ISSUE_LABEL}" --state all \
+            --limit 1 --json number,state --jq '.[0] | select(. != null) | "\(.number) \(.state)"')"
+          number="${existing%% *}"
+          state="${existing#* }"
+
+          if [[ "${STATUS}" == healthy ]]; then
+            if [[ -n "${existing}" && "${state}" == OPEN ]]; then
+              gh issue close "${number}" --repo "${GITHUB_REPOSITORY}" \
+                --comment "Healthy as of ${RUN_URL}: the App mints tokens, reaches exactly the expected repositories, and no secret needs attention. Closing."
+              echo "Closed #${number}." | tee -a "$GITHUB_STEP_SUMMARY"
+            else
+              echo "Healthy; no open tracking issue." | tee -a "$GITHUB_STEP_SUMMARY"
+            fi
+            exit 0
+          fi
+
+          gh label create "${ISSUE_LABEL}" --repo "${GITHUB_REPOSITORY}" --force --color B60205 \
+            --description "Tracked by automation-app-health.yml; see docs/SECRETS-ROTATION.md"
+          if [[ -z "${existing}" ]]; then
+            url="$(gh issue create --repo "${GITHUB_REPOSITORY}" --title "${ISSUE_TITLE}" \
+              --label "${ISSUE_LABEL}" --body-file health-report.md)"
+            echo "Opened ${url} (${STATUS}, ${FINDINGS} findings)." | tee -a "$GITHUB_STEP_SUMMARY"
+            exit 0
+          fi
+          gh issue edit "${number}" --repo "${GITHUB_REPOSITORY}" --title "${ISSUE_TITLE}" --body-file health-report.md
+          if [[ "${state}" != OPEN ]]; then
+            gh issue reopen "${number}" --repo "${GITHUB_REPOSITORY}" \
+              --comment "Reopened by ${RUN_URL}: ${FINDINGS} findings (${STATUS})."
+            echo "Reopened #${number} (${STATUS}, ${FINDINGS} findings)." | tee -a "$GITHUB_STEP_SUMMARY"
+          else
+            echo "Updated #${number} (${STATUS}, ${FINDINGS} findings)." | tee -a "$GITHUB_STEP_SUMMARY"
+          fi
+
+      - name: Fail when the App is broken
+        if: always() && steps.evaluate.outputs.status == 'broken'
+        run: |
+          echo "::error title=Automation App broken::The App cannot mint a token or reaches the wrong repositories; see the job summary."
+          exit 1
