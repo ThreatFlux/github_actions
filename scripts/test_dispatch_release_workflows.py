@@ -1,24 +1,29 @@
 """Prove reusable-auto-release.yml never dispatches tag pipelines an App-pushed tag already started."""
 
+import contextlib
+import io
 import os
 import re
 
-# B404: the script under test runs as a fixed argv list, never via a shell.
+# B404: only CalledProcessError is referenced; the script under test runs gh.
 import subprocess  # nosec B404
 import sys
 import tempfile
 import unittest
 from pathlib import Path
+from unittest import mock
 
-from dispatch_release_workflows import Release, parse_workflows, plan_dispatch
+from dispatch_release_workflows import Release, main, parse_workflows, plan_dispatch
 
-SCRIPT = Path(__file__).resolve().with_name("dispatch_release_workflows.py")
 WORKFLOW = Path(__file__).resolve().parent.parent / ".github" / "workflows" / "reusable-auto-release.yml"
 
 FAKE_GH = '''#!/usr/bin/env python3
 import os, sys
-with open(os.environ["FAKE_GH_LOG"], "a", encoding="utf-8") as log:
-    log.write(" ".join(sys.argv[1:]) + "\\n")
+try:
+    with open(os.environ["FAKE_GH_LOG"], "a", encoding="utf-8") as log:
+        log.write(" ".join(sys.argv[1:]) + "\\n")
+except OSError:
+    sys.exit(1)
 '''
 
 
@@ -40,29 +45,28 @@ class PlanTests(unittest.TestCase):
     def test_github_token_release_dispatches_every_workflow_on_the_tag(self) -> None:
         plan = plan_dispatch(release())
         self.assertEqual(plan.skip_reason, "")
-        self.assertEqual(plan.commands, (
-            ("gh", "workflow", "run", "release.yml", "--repo", "ThreatFlux/example", "--ref", "v1.2.3",
-             "-f", "version=1.2.3"),
-            ("gh", "workflow", "run", "docker.yml", "--repo", "ThreatFlux/example", "--ref", "v1.2.3"),
+        self.assertEqual(plan.runs, (
+            ("release.yml", "--repo", "ThreatFlux/example", "--ref", "v1.2.3", "-f", "version=1.2.3"),
+            ("docker.yml", "--repo", "ThreatFlux/example", "--ref", "v1.2.3"),
         ))
 
     def test_release_token_keeps_dispatching(self) -> None:
         plan = plan_dispatch(release(released_by="release-token"))
-        self.assertEqual(len(plan.commands), 2)
+        self.assertEqual(len(plan.runs), 2)
 
     def test_app_token_release_skips_and_says_why(self) -> None:
         plan = plan_dispatch(release(released_by="github-app"))
-        self.assertEqual(plan.commands, ())
+        self.assertEqual(plan.runs, ())
         self.assertIn("GitHub App token created v1.2.3", plan.skip_reason)
         self.assertIn("release.yml, docker.yml as well would run each twice", plan.skip_reason)
 
     def test_app_token_dispatches_when_the_caller_opts_in(self) -> None:
         plan = plan_dispatch(release(released_by="github-app", dispatch_for_app_release=True))
-        self.assertEqual([command[3] for command in plan.commands], ["release.yml", "docker.yml"])
+        self.assertEqual([run[0] for run in plan.runs], ["release.yml", "docker.yml"])
 
     def test_no_workflows_means_nothing_to_dispatch(self) -> None:
         plan = plan_dispatch(release(workflows=()))
-        self.assertEqual(plan.commands, ())
+        self.assertEqual(plan.runs, ())
         self.assertEqual(plan.skip_reason, "dispatch-workflows is empty")
 
     def test_unknown_released_by_is_refused(self) -> None:
@@ -76,6 +80,8 @@ class PlanTests(unittest.TestCase):
 
 
 class CommandLineTests(unittest.TestCase):
+    """Run main() in-process against a fake gh first on PATH."""
+
     def setUp(self) -> None:
         directory = tempfile.TemporaryDirectory()
         self.addCleanup(directory.cleanup)
@@ -89,40 +95,37 @@ class CommandLineTests(unittest.TestCase):
         self.output = root / "github_output"
         self.summary = root / "summary"
         self.env = {
-            **os.environ,
             "PATH": f"{bin_dir}{os.pathsep}{os.environ['PATH']}",
             "FAKE_GH_LOG": str(self.gh_log),
             "GITHUB_OUTPUT": str(self.output),
             "GITHUB_STEP_SUMMARY": str(self.summary),
-            "GITHUB_REPOSITORY": "ThreatFlux/example",
-            "TAG": "v1.2.3",
-            "VERSION": "1.2.3",
-            "DISPATCH_WORKFLOWS": "release.yml,docker.yml",
-            "VERSION_WORKFLOW": "release.yml",
-            "DISPATCH_FOR_APP_RELEASE": "false",
         }
 
-    def run_script(self, *args: str, **env: str) -> subprocess.CompletedProcess:
-        # B603: the interpreter running this test and the script under test, with fixed arguments.
-        return subprocess.run(  # nosec B603
-            [sys.executable, str(SCRIPT), *args], env={**self.env, **env},
-            capture_output=True, text=True, check=False, timeout=60,
-        )
+    def run_main(self, *extra: str, released_by: str = "github-token", tag: str = "v1.2.3",
+                 **env: str) -> str:
+        argv = [
+            "--repository", "ThreatFlux/example", "--released-by", released_by, "--tag", tag,
+            "--version", "1.2.3", "--workflows", "release.yml,docker.yml", "--version-workflow", "release.yml",
+            *extra,
+        ]
+        stdout = io.StringIO()
+        with mock.patch.dict(os.environ, {**self.env, **env}), contextlib.redirect_stdout(stdout):
+            self.assertEqual(main(argv), 0)
+        return stdout.getvalue()
 
     def gh_calls(self) -> list[str]:
         return self.gh_log.read_text(encoding="utf-8").splitlines() if self.gh_log.exists() else []
 
     def test_app_token_run_never_calls_gh(self) -> None:
-        result = self.run_script(RELEASED_BY="github-app")
-        self.assertEqual(result.returncode, 0, result.stderr)
+        stdout = self.run_main(released_by="github-app")
         self.assertEqual(self.gh_calls(), [])
-        self.assertIn("::notice title=Downstream dispatch skipped::", result.stdout)
+        self.assertIn("The GitHub App token created v1.2.3.", stdout)
+        self.assertIn("::notice title=Downstream dispatch skipped::", stdout)
         self.assertIn("dispatched=\n", self.output.read_text(encoding="utf-8"))
         self.assertIn("Downstream dispatch skipped", self.summary.read_text(encoding="utf-8"))
 
     def test_github_token_run_dispatches(self) -> None:
-        result = self.run_script(RELEASED_BY="github-token")
-        self.assertEqual(result.returncode, 0, result.stderr)
+        self.run_main(released_by="github-token")
         self.assertEqual(self.gh_calls(), [
             "workflow run release.yml --repo ThreatFlux/example --ref v1.2.3 -f version=1.2.3",
             "workflow run docker.yml --repo ThreatFlux/example --ref v1.2.3",
@@ -130,32 +133,33 @@ class CommandLineTests(unittest.TestCase):
         self.assertIn("dispatched=release.yml,docker.yml\n", self.output.read_text(encoding="utf-8"))
 
     def test_app_token_opt_in_dispatches(self) -> None:
-        result = self.run_script(RELEASED_BY="github-app", DISPATCH_FOR_APP_RELEASE="true")
-        self.assertEqual(result.returncode, 0, result.stderr)
+        self.run_main("--dispatch-for-app-release", "true", released_by="github-app")
         self.assertEqual(len(self.gh_calls()), 2)
 
     def test_plan_only_never_calls_gh(self) -> None:
         for source in ("github-token", "release-token", "github-app"):
             with self.subTest(source=source):
-                result = self.run_script("--plan-only", RELEASED_BY=source)
-                self.assertEqual(result.returncode, 0, result.stderr)
+                stdout = self.run_main("--plan-only", released_by=source)
                 self.assertEqual(self.gh_calls(), [])
-                self.assertIn("Dry run:", result.stdout)
+                self.assertIn("Dry run:", stdout)
                 self.assertFalse(self.output.exists())
 
     def test_plan_only_without_a_tag_reports_nothing_to_do(self) -> None:
-        result = self.run_script("--plan-only", RELEASED_BY="github-token", TAG="")
-        self.assertEqual(result.returncode, 0, result.stderr)
-        self.assertIn("no release would be cut", result.stdout)
+        stdout = self.run_main("--plan-only", tag="")
+        self.assertIn("no release would be cut", stdout)
 
     def test_real_run_without_a_tag_fails(self) -> None:
-        result = self.run_script(RELEASED_BY="github-token", TAG="")
-        self.assertNotEqual(result.returncode, 0)
+        with self.assertRaises(SystemExit):
+            self.run_main(tag="")
         self.assertEqual(self.gh_calls(), [])
 
+    def test_unknown_releaser_is_rejected(self) -> None:
+        with self.assertRaises(SystemExit), contextlib.redirect_stderr(io.StringIO()):
+            self.run_main(released_by="pat")
+
     def test_failed_dispatch_fails_the_step(self) -> None:
-        result = self.run_script(RELEASED_BY="github-token", FAKE_GH_LOG="/nonexistent/dir/gh.log")
-        self.assertNotEqual(result.returncode, 0)
+        with self.assertRaises(subprocess.CalledProcessError):
+            self.run_main(FAKE_GH_LOG="/nonexistent/dir/gh.log")
 
 
 class WorkflowWiringTests(unittest.TestCase):
@@ -181,7 +185,11 @@ class WorkflowWiringTests(unittest.TestCase):
         self.assertIn("steps.github-app-token.outcome == 'success' && 'github-app'", step)
         self.assertIn("env.HAS_RELEASE_TOKEN == 'true' && 'release-token' || 'github-token'", step)
         self.assertIn("DISPATCH_FOR_APP_RELEASE: ${{ inputs.dispatch-on-app-token }}", step)
-        self.assertIn("run: python3 .release-action/scripts/dispatch_release_workflows.py\n", step)
+        self.assertIn("python3 .release-action/scripts/dispatch_release_workflows.py\n", step)
+        self.assertNotIn("dispatch_release_workflows.py --plan-only", step)
+        for flag in ('--released-by "${RELEASED_BY}"', '--dispatch-for-app-release "${DISPATCH_FOR_APP_RELEASE}"',
+                     '--tag "${TAG}"', '--workflows "${DISPATCH_WORKFLOWS}"'):
+            self.assertIn(flag, step)
         self.assertNotIn("gh workflow run", step)
 
     def test_dry_run_only_plans(self) -> None:

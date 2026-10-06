@@ -16,9 +16,8 @@ dispatched:
   whose ``release-token`` is itself a PAT or App token, and whose workflows
   trigger on tags, should leave ``dispatch-workflows`` empty.
 
-The workflow passes everything through environment variables. ``--plan-only``
-prints the decision without running anything; the reusable workflow uses it
-for dry runs.
+``--plan-only`` prints the decision without running anything; the reusable
+workflow uses it for dry runs.
 """
 
 from __future__ import annotations
@@ -30,7 +29,11 @@ import os
 import subprocess  # nosec B404
 from dataclasses import dataclass
 
-RELEASERS = ("github-app", "release-token", "github-token")
+RELEASERS = {
+    "github-app": "the GitHub App token",
+    "release-token": "the release-token secret",
+    "github-token": "the default GITHUB_TOKEN",
+}
 
 
 @dataclass(frozen=True)
@@ -48,9 +51,9 @@ class Release:
 
 @dataclass(frozen=True)
 class Plan:
-    """The gh commands to run, or the reason none run."""
+    """The ``gh workflow run`` arguments to use, or the reason none run."""
 
-    commands: tuple[tuple[str, ...], ...]
+    runs: tuple[tuple[str, ...], ...]
     skip_reason: str = ""
 
 
@@ -67,7 +70,7 @@ def parse_workflows(value: str) -> tuple[str, ...]:
 
 
 def plan_dispatch(release: Release) -> Plan:
-    """Decide which ``gh workflow run`` commands the release needs."""
+    """Decide which ``gh workflow run`` invocations the release needs (arguments after ``run``)."""
     if release.released_by not in RELEASERS:
         raise ValueError(f"unknown releaser {release.released_by!r}; expected one of {', '.join(RELEASERS)}")
     if not release.workflows:
@@ -79,13 +82,13 @@ def plan_dispatch(release: Release) -> Plan:
             + ", ".join(release.workflows)
             + " as well would run each twice. Set dispatch-on-app-token: true for workflows without a tag trigger."
         ))
-    commands = []
+    runs = []
     for workflow in release.workflows:
-        command = ["gh", "workflow", "run", workflow, "--repo", release.repository, "--ref", release.tag]
+        run = [workflow, "--repo", release.repository, "--ref", release.tag]
         if workflow == release.version_workflow:
-            command += ["-f", f"version={release.version}"]
-        commands.append(tuple(command))
-    return Plan(tuple(commands))
+            run += ["-f", f"version={release.version}"]
+        runs.append(tuple(run))
+    return Plan(tuple(runs))
 
 
 def append(path: str, text: str) -> None:
@@ -94,54 +97,63 @@ def append(path: str, text: str) -> None:
             file.write(text)
 
 
-def main(argv: list[str] | None = None) -> int:
+def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description=__doc__.split("\n", 1)[0])
+    parser.add_argument("--repository", required=True, help="OWNER/REPO the workflows belong to")
+    parser.add_argument("--tag", default="", help="the release tag; empty when nothing was released")
+    parser.add_argument("--version", default="", help="the released version, passed to --version-workflow")
+    parser.add_argument("--workflows", default="", help="comma-separated workflow files (dispatch-workflows)")
+    parser.add_argument("--version-workflow", default="", help="the workflow that takes a version input")
+    parser.add_argument("--released-by", required=True, choices=tuple(RELEASERS))
+    parser.add_argument("--dispatch-for-app-release", default="false",
+                        help="dispatch-on-app-token: 'true' also dispatches after a GitHub App release")
     parser.add_argument("--plan-only", action="store_true", help="print the decision; run nothing")
-    args = parser.parse_args(argv)
+    return parser
 
-    env = os.environ
-    tag = env.get("TAG", "")
-    released_by = env.get("RELEASED_BY", "")
-    workflows = parse_workflows(env.get("DISPATCH_WORKFLOWS", ""))
-    if args.plan_only and not tag:
+
+def main(argv: list[str] | None = None) -> int:
+    args = build_parser().parse_args(argv)
+    if args.plan_only and not args.tag:
         print("Dry run: no release would be cut, so no workflow would be dispatched.")
         return 0
-    if not tag:
-        raise SystemExit("TAG is empty; refusing to dispatch workflows without a release tag")
+    if not args.tag:
+        raise SystemExit("--tag is empty; refusing to dispatch workflows without a release tag")
 
     plan = plan_dispatch(Release(
-        repository=env["GITHUB_REPOSITORY"],
-        tag=tag,
-        version=env.get("VERSION", ""),
-        workflows=workflows,
-        version_workflow=env.get("VERSION_WORKFLOW", "").strip(),
-        released_by=released_by,
-        dispatch_for_app_release=env.get("DISPATCH_FOR_APP_RELEASE", "false").strip().lower() == "true",
+        repository=args.repository,
+        tag=args.tag,
+        version=args.version,
+        workflows=parse_workflows(args.workflows),
+        version_workflow=args.version_workflow.strip(),
+        released_by=args.released_by,
+        dispatch_for_app_release=args.dispatch_for_app_release.strip().lower() == "true",
     ))
+    releaser = RELEASERS[args.released_by]
+    summary = os.environ.get("GITHUB_STEP_SUMMARY", "")
+    output = os.environ.get("GITHUB_OUTPUT", "")
     if args.plan_only:
-        print(f"Dry run: if the real run releases {tag}, it does so with the {released_by} token.")
-        prefix = "Dry run: would"
+        print(f"Dry run: if the real run releases {args.tag}, {releaser} creates it.")
     else:
-        print(f"Release {tag} was made with the {released_by} token.")
-        prefix = "Will"
+        print(f"{releaser[0].upper()}{releaser[1:]} created {args.tag}.")
+
     if plan.skip_reason:
         if args.plan_only:
             print(f"Dry run: would not dispatch: {plan.skip_reason}")
             return 0
         print(f"::notice title=Downstream dispatch skipped::Not dispatching: {plan.skip_reason}")
-        append(env.get("GITHUB_STEP_SUMMARY", ""), f"Downstream dispatch skipped: {plan.skip_reason}\n")
-        append(env.get("GITHUB_OUTPUT", ""), "dispatched=\n")
+        append(summary, f"Downstream dispatch skipped: {plan.skip_reason}\n")
+        append(output, "dispatched=\n")
         return 0
 
-    for command in plan.commands:
-        print(f"{prefix} run: {' '.join(command)}")
+    for run in plan.runs:
+        print(f"{'Dry run: would run' if args.plan_only else 'Running'}: gh workflow run {' '.join(run)}")
         if not args.plan_only:
-            # B603/B607: fixed gh subcommand from PATH; workflow names, repository, and tag are argv items.
-            subprocess.run(command, check=True)  # nosec B603 B607
-    dispatched = ",".join(command[3] for command in plan.commands)
+            # B603/B607: gh from PATH with a fixed subcommand; every other item is a single argv entry.
+            subprocess.run(["gh", "workflow", "run", *run], check=True)  # nosec B603 B607
     if not args.plan_only:
-        append(env.get("GITHUB_STEP_SUMMARY", ""), f"Dispatched on {tag}: {dispatched}\n")
-        append(env.get("GITHUB_OUTPUT", ""), f"dispatched={dispatched}\n")
+        dispatched = ",".join(run[0] for run in plan.runs)
+        append(summary, f"Dispatched on {args.tag}: {dispatched}\n")
+        append(output, f"dispatched={dispatched}\n")
     return 0
 
 

@@ -262,7 +262,7 @@ jobs:
           create-pr: ${{ inputs.create-pr }}
           release-branch: ${{ inputs.release-branch }}
       # scripts/dispatch_release_workflows.py (tested in this repository)
-      # decides from RELEASED_BY: an App-pushed tag already started the
+      # decides from --released-by: an App-pushed tag already started the
       # caller's tag workflows, so it skips and says why unless
       # dispatch-on-app-token is set; release-token and GITHUB_TOKEN releases
       # dispatch on the new tag.
@@ -281,7 +281,11 @@ jobs:
           VERSION: ${{ steps.release.outputs.version }}
           DISPATCH_WORKFLOWS: ${{ inputs.dispatch-workflows }}
           VERSION_WORKFLOW: ${{ inputs.dispatch-version-workflow }}
-        run: python3 .release-action/scripts/dispatch_release_workflows.py
+        run: >-
+          python3 .release-action/scripts/dispatch_release_workflows.py
+          --repository "${GITHUB_REPOSITORY}" --released-by "${RELEASED_BY}"
+          --dispatch-for-app-release "${DISPATCH_FOR_APP_RELEASE}" --tag "${TAG}" --version "${VERSION}"
+          --workflows "${DISPATCH_WORKFLOWS}" --version-workflow "${VERSION_WORKFLOW}"
 
       # Dry runs only log what the dispatch step would do; --plan-only never
       # runs gh.
@@ -295,4 +299,8 @@ jobs:
           VERSION: ${{ steps.release.outputs.version }}
           DISPATCH_WORKFLOWS: ${{ inputs.dispatch-workflows }}
           VERSION_WORKFLOW: ${{ inputs.dispatch-version-workflow }}
-        run: python3 .release-action/scripts/dispatch_release_workflows.py --plan-only
+        run: >-
+          python3 .release-action/scripts/dispatch_release_workflows.py --plan-only
+          --repository "${GITHUB_REPOSITORY}" --released-by "${RELEASED_BY}"
+          --dispatch-for-app-release "${DISPATCH_FOR_APP_RELEASE}" --tag "${TAG}" --version "${VERSION}"
+          --workflows "${DISPATCH_WORKFLOWS}" --version-workflow "${VERSION_WORKFLOW}"

@@ -169,8 +169,9 @@ ThreatFlux `threatflux-automation` App,
 `scripts/rotate-automation-app-key.sh` does the rotation.
 
 [`reusable-release-smoke.yml`](../.github/workflows/reusable-release-smoke.yml)
-dry-runs this workflow with the App and with `GITHUB_TOKEN` on every pull
-request that changes it. If App
+dry-runs this workflow whenever it changes: with `GITHUB_TOKEN` on pull
+requests, and also with the App once the change is on `main`, because the App
+key is never handed to pull-request code. If App
 configuration is absent or token creation fails, the workflow does not silently
 fall back from a partially configured App; validate the App ID, installation,
 and secret before enabling it in a protected release workflow.

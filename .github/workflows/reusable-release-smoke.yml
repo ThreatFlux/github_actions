@@ -6,8 +6,18 @@ name: Reusable Release Smoke
 # dry run writes nothing: no commit, branch, tag, Release, pull request, or
 # workflow dispatch. bump: patch forces a would-be release so the dispatch
 # plan step has a tag to reason about.
+#
+# Pull requests only get the GITHUB_TOKEN path: a pull request runs its own
+# copy of this file, so the job holding the org App private key runs only for
+# the reviewed default-branch version (pushes to main and manual dispatches).
 on:
   pull_request:
+    branches: [main]
+    paths:
+      - ".github/workflows/reusable-auto-release.yml"
+      - ".github/workflows/reusable-release-smoke.yml"
+      - "scripts/dispatch_release_workflows.py"
+  push:
     branches: [main]
     paths:
       - ".github/workflows/reusable-auto-release.yml"
@@ -20,8 +30,7 @@ permissions: {}
 jobs:
   github-app:
     name: Dry run with the GitHub App
-    # Fork pull requests cannot read the App key.
-    if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
+    if: github.event_name != 'pull_request'
     # The called workflow declares these for its release job; a dry run only
     # reads, and the App token it mints is what the plan reasons about.
     permissions:
@@ -54,11 +63,14 @@ jobs:
   verify:
     name: Verify dry runs released nothing
     needs: [github-app, github-token]
+    # The App job is skipped on pull requests; check whatever ran.
+    if: ${{ !cancelled() && needs.github-token.result == 'success' && needs.github-app.result != 'failure' }}
     runs-on: ${{ vars.RUST_TEMPLATE_RUNNER_UBUNTU || 'ubuntu-latest' }}
     timeout-minutes: 5
     steps:
       - name: Check outputs
         env:
+          APP_RAN: ${{ needs.github-app.result }}
           APP_RELEASED: ${{ needs.github-app.outputs.released }}
           APP_TAG: ${{ needs.github-app.outputs.tag }}
           TOKEN_RELEASED: ${{ needs.github-token.outputs.released }}
@@ -66,5 +78,8 @@ jobs:
         run: |
           set -euo pipefail
           echo "App path: released=${APP_RELEASED} tag=${APP_TAG}; GITHUB_TOKEN path: released=${TOKEN_RELEASED} tag=${TOKEN_TAG}"
-          [[ "${APP_RELEASED}" == false && "${TOKEN_RELEASED}" == false ]] || { echo "a dry run reported a release" >&2; exit 1; }
-          [[ -n "${APP_TAG}" && "${APP_TAG}" == "${TOKEN_TAG}" ]] || { echo "both paths must compute the same would-be tag" >&2; exit 1; }
+          [[ "${TOKEN_RELEASED}" == false && -n "${TOKEN_TAG}" ]] || { echo "the GITHUB_TOKEN dry run reported a release or no tag" >&2; exit 1; }
+          if [[ "${APP_RAN}" == success ]]; then
+            [[ "${APP_RELEASED}" == false && "${APP_TAG}" == "${TOKEN_TAG}" ]] \
+              || { echo "the App dry run reported a release or a different tag" >&2; exit 1; }
+          fi
