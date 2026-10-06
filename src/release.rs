@@ -13,7 +13,7 @@ use std::{
     path::{Path, PathBuf},
 };
 
-use anyhow::{Context, Result};
+use anyhow::{Context, Result, bail};
 use semver::Version;
 
 use crate::{
@@ -95,9 +95,34 @@ pub enum ReleaseOutcome {
     SkippedTagExists,
 }
 
+/// What a run does once its analysis finds a version to release, or on a dry
+/// run what it would have done. Recorded so a dry run can say which path the
+/// real run takes, not just which version it computed.
+#[derive(Debug, Clone, Eq, PartialEq)]
+pub enum ReleaseAction {
+    /// Commit the version bump to `branch`, tag that commit, and publish the
+    /// GitHub Release.
+    CommitAndRelease { branch: String },
+    /// Commit the version bump to `branch` and stop, leaving the tag to a later
+    /// [`ReleasePhase::Tag`] run.
+    CommitBump { branch: String },
+    /// Tag the version the manifest already holds on `branch` and publish its
+    /// GitHub Release, without bumping it. Only staged extra files, if any, are
+    /// committed first.
+    TagManifestVersion { branch: String },
+    /// Point `release_branch` at a version-bump commit on top of `base` and
+    /// open or update its pull request into `base`. Nothing is tagged until the
+    /// pull request merges.
+    ProposeReleasePullRequest { release_branch: String, base: String },
+}
+
 #[derive(Debug, Clone, Eq, PartialEq)]
 pub struct ReleaseReport {
     pub outcome: ReleaseOutcome,
+    /// The path the run took (or, on a dry run, would take); `None` when it
+    /// stopped before choosing one because nothing needed releasing or the tag
+    /// already exists.
+    pub action: Option<ReleaseAction>,
     pub current_version: String,
     pub next_version: Option<String>,
     pub bump: Option<BumpLevel>,
@@ -140,7 +165,9 @@ struct Analysis {
     head_sha: String,
     current_version: String,
     current: Version,
-    /// Version of the latest release tag, absent until the first release.
+    /// Name of the latest release tag and the version it carries, both absent
+    /// until the first release.
+    last_tag: Option<String>,
     last_released: Option<Version>,
     commits: Vec<ConventionalCommit>,
     truncated: bool,
@@ -154,6 +181,26 @@ impl Analysis {
     /// branch without a tag - or on a repository that has never released.
     fn manifest_unreleased(&self) -> bool {
         self.last_released.as_ref().is_none_or(|released| self.current > *released)
+    }
+
+    /// Refuse to release from a manifest older than the latest release tag.
+    ///
+    /// The commit range starts at the highest tag, but the next version is
+    /// bumped from the manifest. A manifest behind that tag therefore yields a
+    /// version at or below one already released: it either collides with an
+    /// existing tag or publishes a release older than the latest one, and as
+    /// the range never moves past the highest tag, every later run repeats it.
+    fn ensure_manifest_not_behind_latest_tag(&self) -> Result<()> {
+        match (&self.last_tag, &self.last_released) {
+            (Some(tag), Some(released)) if self.current < *released => bail!(
+                "Cargo.toml version {current} is lower than the latest release tag {tag}. \
+                 Releasing would bump from {current} and produce a version at or below one that is \
+                 already tagged. Set the manifest version to {released}, or delete {tag} if it was \
+                 created by mistake, then re-run.",
+                current = self.current_version,
+            ),
+            _ => Ok(()),
+        }
     }
 }
 
@@ -192,6 +239,7 @@ impl ReleasePublisher {
             validate_release_branch(&options.release_branch)?;
         }
         let analysis = self.analyze(options)?;
+        analysis.ensure_manifest_not_behind_latest_tag()?;
         if options.phase == ReleasePhase::Tag {
             return self.release_manifest_version(options, analysis);
         }
@@ -237,15 +285,17 @@ impl ReleasePublisher {
         let extra = extra_file_updates(&options.repo_root, &options.extra_files, &file_updates)?;
         file_updates.extend(extra);
 
-        self.prepare_and_publish(
-            options,
-            analysis,
-            next_version,
-            tag,
-            file_updates,
-            options.create_pr,
-            report,
-        )
+        let action = if options.create_pr {
+            ReleaseAction::ProposeReleasePullRequest {
+                release_branch: options.release_branch.clone(),
+                base: analysis.branch.clone(),
+            }
+        } else if options.phase == ReleasePhase::Bump {
+            ReleaseAction::CommitBump { branch: analysis.branch.clone() }
+        } else {
+            ReleaseAction::CommitAndRelease { branch: analysis.branch.clone() }
+        };
+        self.prepare_and_publish(options, analysis, next_version, tag, file_updates, action, report)
     }
 
     /// Tag the version the manifest already holds, without bumping it. The
@@ -275,7 +325,8 @@ impl ReleasePublisher {
         // tag lands on the existing head instead of an empty commit.
         let file_updates = extra_file_updates(&options.repo_root, &options.extra_files, &[])?;
 
-        self.prepare_and_publish(options, analysis, version, tag, file_updates, false, report)
+        let action = ReleaseAction::TagManifestVersion { branch: analysis.branch.clone() };
+        self.prepare_and_publish(options, analysis, version, tag, file_updates, action, report)
     }
 
     fn prepare_and_publish(
@@ -285,10 +336,12 @@ impl ReleasePublisher {
         next_version: Version,
         tag: String,
         file_updates: Vec<FileUpdate>,
-        via_pull_request: bool,
+        action: ReleaseAction,
         mut report: ReleaseReport,
     ) -> Result<ReleaseReport> {
         report.files_updated = file_updates.iter().map(|update| update.file.clone()).collect();
+        let via_pull_request = matches!(action, ReleaseAction::ProposeReleasePullRequest { .. });
+        report.action = Some(action);
 
         if options.dry_run {
             report.outcome = ReleaseOutcome::DryRun;
@@ -345,6 +398,7 @@ impl ReleasePublisher {
             head_sha,
             current_version,
             current,
+            last_tag: last_tag.map(|tag| tag.name),
             last_released,
             commits: conventional::classify_commits(&range.commits),
             truncated: range.truncated,
@@ -542,6 +596,7 @@ impl ReleasePublisher {
 fn initial_report(analysis: &Analysis, bump: Option<BumpLevel>) -> ReleaseReport {
     ReleaseReport {
         outcome: ReleaseOutcome::SkippedNoReleasableChanges,
+        action: None,
         current_version: analysis.current_version.clone(),
         next_version: None,
         bump,
