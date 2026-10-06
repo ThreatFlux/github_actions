@@ -519,6 +519,72 @@ matches whatever workflow ref you pinned. Its inputs, outputs, and the
 `required-workflows` / `dispatch-workflows` gate are documented in
 [release/README.md](release/README.md#reusable-workflow-inputs).
 
+### Dry runs
+
+`dry-run: true` runs the same analysis as a real release and stops before the
+first write. To offer it on manual runs only:
+
+```yaml
+on:
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        type: boolean
+        default: false
+jobs:
+  release:
+    uses: ThreatFlux/github_actions/.github/workflows/reusable-auto-release.yml@<sha>
+    with:
+      # null (any non-dispatch event) == true is false, so only an explicit
+      # manual dry run is dry.
+      dry-run: ${{ inputs.dry_run == true }}
+```
+
+What a dry run does, in either mode:
+
+- **The gate still applies.** The `check` job runs unchanged, so a dry run
+  only reaches the action when the `required-workflows` all passed for the
+  target commit (and, for `workflow_run` triggers, the triggering run
+  succeeded in this repository). A skipped gate means no analysis and no log
+  line.
+- **Reads only.** The action reads the default branch (when `base-branch` is
+  empty), the base branch head, the tag list, the commits since the highest
+  `<tag-prefix>X.Y.Z` tag (the commit list when there is none), and whether
+  the candidate tag already exists. It still needs a token for those reads.
+- **Writes nothing to the repository.** No blob, tree, or commit is created;
+  the base branch and the release branch do not move; no pull request is
+  opened or edited; no tag, major alias, or GitHub Release is created.
+  `Dispatch downstream release workflows` is skipped: it requires
+  `released == 'true'`, which a dry run never reports, and it also checks
+  `dry-run` directly.
+- **Local files only.** The would-be release notes are written to
+  `notes-file` in the runner workspace, and the outputs are written to
+  `$GITHUB_OUTPUT`.
+- **Outputs.** `released` is `false`; `version` and `tag` carry the would-be
+  version and tag (empty when nothing would be released); `release-url`,
+  `release-pr-number`, `release-pr-url`, and `release-branch` are empty.
+- **Log.** `Dry run: would release <tag> (<manifest version> -> <version>).`
+  followed by one `- would update <file>` line per file the release commit
+  would contain, or the reason nothing would happen
+  (`No release needed: ...` or `Skipped release: tag <tag> already exists ...`).
+
+What the computed version means depends on the mode:
+
+| Mode | Repository state | Version a dry run reports | What the real run would do |
+|---|---|---|---|
+| push (`create-pr: false`) | any | Manifest version bumped by the strongest conventional commit since the highest tag (or by `bump`) | Commit the manifest and lockfile rewrite to the base branch (fast-forward only), create the annotated tag (and the major alias when enabled), publish the GitHub Release, and run `dispatch-workflows` |
+| `create-pr: true` | Manifest version is higher than the highest tag, or there is no tag yet (a release pull request was merged) | The manifest version itself (`0.5.1 -> 0.5.1`, no `would update` lines), whatever the commits since the tag | Tag the existing base branch head with that version and publish its GitHub Release, without a new commit or pull request, then run `dispatch-workflows` |
+| `create-pr: true` | Any other state | Manifest version bumped as in push mode | Force-update `release-branch` with the version rewrite on top of the base branch head and open or update its pull request. No tag, Release, or dispatch until that pull request merges |
+
+In the last row the log still says `would release`; read it as "would propose
+in the release pull request". A dry run does not look up whether that pull
+request already exists, so it does not say whether it would be opened or
+updated.
+
+A manifest version lower than the highest tag is a misconfiguration: both
+modes bump from the manifest, so they propose versions at or below tags that
+already exist. Align `Cargo.toml` with the highest tag before releasing.
+
 ## Migrating to the Unified Action
 
 This repository used to ship two actions. It now ships one; `release/` is
