@@ -30,6 +30,7 @@ Set these repository variables or Makefile overrides:
 - `RUST_TEMPLATE_BINARY_PACKAGE`
 - `RUST_TEMPLATE_SBOM_MANIFEST_PATH`
 - `RUST_TEMPLATE_PUBLISH_PACKAGES`
+- `RUST_TEMPLATE_PUBLISH_CRATES` (repository variable only)
 
 Recommended values:
 
@@ -37,7 +38,7 @@ Recommended values:
 - `RUST_TEMPLATE_BINARY_PACKAGE`: the package that owns that binary
 - `RUST_TEMPLATE_SBOM_MANIFEST_PATH`: the manifest used for SBOM generation
 - `RUST_TEMPLATE_PUBLISH_PACKAGES`: publish order, space separated
-- `RUST_TEMPLATE_PUBLISH_CRATES`: set to `false` for projects that do not publish to crates.io (the default publishes through crates.io trusted publishing)
+- `RUST_TEMPLATE_PUBLISH_CRATES` (repository variable, read by `release.yml`): set to `false` for projects that do not publish to crates.io; unset publishes through crates.io trusted publishing
 
 Runner defaults:
 
