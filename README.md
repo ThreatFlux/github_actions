@@ -519,6 +519,80 @@ matches whatever workflow ref you pinned. Its inputs, outputs, and the
 `required-workflows` / `dispatch-workflows` gate are documented in
 [release/README.md](release/README.md#reusable-workflow-inputs).
 
+### Dry runs
+
+`dry-run: true` runs the same analysis as a real release and stops before
+anything is written to the repository. To offer it on manual runs only:
+
+```yaml
+on:
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        type: boolean
+        default: false
+jobs:
+  release:
+    uses: ThreatFlux/github_actions/.github/workflows/reusable-auto-release.yml@<sha>
+    with:
+      # null (any non-dispatch event) == true is false, so only an explicit
+      # manual dry run is dry.
+      dry-run: ${{ inputs.dry_run == true }}
+```
+
+What a dry run does, in either mode:
+
+- **The gate still applies.** The `check` job runs unchanged, so a dry run
+  only reaches the action when the `required-workflows` all passed for the
+  target commit (and, for `workflow_run` triggers, the triggering run
+  succeeded in this repository). A skipped gate means no analysis and no log
+  line.
+- **Reads only.** The action reads the default branch (when `base-branch` is
+  empty), the base branch head, the tag list, the commits since the highest
+  `<tag-prefix>X.Y.Z` tag (the commit list when there is none), and whether
+  the candidate tag already exists. It still needs a token for those reads.
+- **Writes nothing to the repository.** No blob, tree, or commit is created;
+  the base branch and the release branch do not move; no pull request is
+  opened or edited; no tag, major alias, or GitHub Release is created.
+  `Dispatch downstream release workflows` is skipped: it requires
+  `released == 'true'`, which a dry run never reports, and it also checks
+  `dry-run` directly.
+- **Local files only.** The would-be release notes are written to
+  `notes-file` in the runner workspace, and the outputs are written to
+  `$GITHUB_OUTPUT`.
+- **Outputs.** `released` is `false`; `version` and `tag` carry the would-be
+  version and tag (empty when nothing would be released); `release-url`,
+  `release-pr-number`, `release-pr-url`, and `release-branch` are empty.
+- **Log.** A headline naming what the real run would do and the versions
+  (`Dry run: would release <tag> (<manifest version> -> <version>).`, or
+  `would propose <tag> in the release pull request` in the last row below),
+  a `- next action:` line spelling out the commit, tag, release, or pull
+  request the real run would create, one `- would update <file>` line per
+  file the release commit would contain, and a closing line confirming
+  nothing was written to the repository. When nothing would happen, the log
+  gives the reason instead (`No release needed: ...` or
+  `Skipped release: tag <tag> already exists ...`).
+- **Failures.** A dry run fails exactly where the real run would, including
+  the manifest-behind-tag check below.
+
+What the computed version means depends on the mode:
+
+| Mode | Repository state | Version a dry run reports | What the real run would do |
+|---|---|---|---|
+| either | Manifest version is lower than the highest tag | None: the run fails with `Cargo.toml version <manifest> is lower than the latest release tag <tag>` | Nothing; it fails the same way |
+| push (`create-pr: false`) | Any other state | Manifest version bumped by the strongest conventional commit since the highest tag (or by `bump`) | Commit the manifest and lockfile rewrite to the base branch (fast-forward only), create the annotated tag (and the major alias when enabled), publish the GitHub Release, and run `dispatch-workflows` |
+| `create-pr: true` | Manifest version is higher than the highest tag, or there is no tag yet (a release pull request was merged) | The manifest version itself (`0.5.1 -> 0.5.1`, no `would update` lines), whatever the commits since the tag | Tag the existing base branch head with that version and publish its GitHub Release, without a new commit or pull request, then run `dispatch-workflows` |
+| `create-pr: true` | Manifest version equals the highest tag | Manifest version bumped as in push mode | Force-update `release-branch` with the version rewrite on top of the base branch head and open or update its pull request. No tag, Release, or dispatch until that pull request merges |
+
+A dry run does not look up whether the release pull request already exists,
+so in the last row it says "open or update" rather than which one.
+
+The first row fails closed because the range starts at the highest tag while
+the bump starts from the manifest: a manifest behind that tag would propose a
+version at or below one already tagged, and every later run would propose it
+again. Set `Cargo.toml` to the highest tag's version, or delete the tag if it
+was created by mistake, then re-run.
+
 ## Migrating to the Unified Action
 
 This repository used to ship two actions. It now ships one; `release/` is

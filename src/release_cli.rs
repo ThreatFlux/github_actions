@@ -10,8 +10,8 @@ use std::{
 use anyhow::{Context, Result};
 use clap::{Args, ValueEnum};
 use github_actions_maintainer::{
-    BumpLevel, GitHubClient, ReleaseOptions, ReleaseOutcome, ReleasePhase, ReleasePublisher,
-    ReleaseReport, TagStyle,
+    BumpLevel, GitHubClient, ReleaseAction, ReleaseOptions, ReleaseOutcome, ReleasePhase,
+    ReleasePublisher, ReleaseReport, TagStyle,
 };
 
 use crate::resolve_repository;
@@ -226,6 +226,70 @@ fn print_released(report: &ReleaseReport, notes_file: &Path) {
     println!("- release notes written to {}", notes_file.display());
 }
 
+/// What a dry run would do: the headline's verb phrase and the next-action
+/// sentence, which differ by mode even for the same version.
+fn dry_run_plan(report: &ReleaseReport) -> (String, Option<String>) {
+    let tag = report.tag.as_deref().unwrap_or_default();
+    let next = report.next_version.as_deref().unwrap_or_default();
+    match &report.action {
+        Some(ReleaseAction::ProposeReleasePullRequest { release_branch, base }) => (
+            format!("propose {tag} in the release pull request"),
+            Some(format!(
+                "point {release_branch} at a version-bump commit on top of {base} and open or update its pull request into {base}; nothing is tagged or released until it merges"
+            )),
+        ),
+        Some(ReleaseAction::TagManifestVersion { branch }) => {
+            let target = if report.files_updated.is_empty() {
+                format!("tag the head of {branch} as {tag}")
+            } else {
+                format!("commit the staged files to {branch}, tag that commit as {tag},")
+            };
+            (
+                format!("release {tag}"),
+                Some(format!(
+                    "{target} and publish its GitHub Release; the manifest already holds the untagged {next}, so nothing is bumped"
+                )),
+            )
+        }
+        Some(ReleaseAction::CommitBump { branch }) => (
+            format!("commit version {next}"),
+            Some(format!(
+                "commit the version bump to {branch} and stop; {tag} is created by a later --phase tag run"
+            )),
+        ),
+        Some(ReleaseAction::CommitAndRelease { branch }) => (
+            format!("release {tag}"),
+            Some(format!(
+                "commit the version bump to {branch}, tag that commit as {tag}, and publish its GitHub Release"
+            )),
+        ),
+        None => (format!("release {tag}"), None),
+    }
+}
+
+/// Describe a dry run: the version it computed, the path the real run would
+/// take with it, the files it would rewrite, and that nothing was written.
+fn dry_run_lines(report: &ReleaseReport, notes_file: &Path) -> Vec<String> {
+    let (would, next_action) = dry_run_plan(report);
+    let mut lines = vec![format!(
+        "Dry run: would {would} ({} -> {}).",
+        report.current_version,
+        report.next_version.as_deref().unwrap_or_default()
+    )];
+    if let Some(next_action) = next_action {
+        lines.push(format!("- next action: {next_action}"));
+    }
+    lines.extend(
+        report.files_updated.iter().map(|file| format!("- would update {}", file.display())),
+    );
+    lines.push(format!("- release notes written to {}", notes_file.display()));
+    lines.push(String::from(
+        "- nothing was written to the repository: no commit, branch, tag, pull request, or release",
+    ));
+    lines
+}
+
+/// Print the human-readable summary of a release run to the action log.
 fn print_release_report(report: &ReleaseReport, notes_file: &Path) {
     match report.outcome {
         ReleaseOutcome::Released => print_released(report, notes_file),
@@ -268,16 +332,9 @@ fn print_release_report(report: &ReleaseReport, notes_file: &Path) {
             println!("- release notes written to {}", notes_file.display());
         }
         ReleaseOutcome::DryRun => {
-            println!(
-                "Dry run: would release {} ({} -> {}).",
-                report.tag.as_deref().unwrap_or_default(),
-                report.current_version,
-                report.next_version.as_deref().unwrap_or_default()
-            );
-            for file in &report.files_updated {
-                println!("- would update {}", file.display());
+            for line in dry_run_lines(report, notes_file) {
+                println!("{line}");
             }
-            println!("- release notes written to {}", notes_file.display());
         }
         ReleaseOutcome::SkippedNoReleasableChanges => {
             println!(
@@ -301,6 +358,154 @@ fn print_release_report(report: &ReleaseReport, notes_file: &Path) {
     if report.commit_range_truncated {
         println!(
             "- note: the analyzed commit list was truncated; release notes may be incomplete."
+        );
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::path::{Path, PathBuf};
+
+    use github_actions_maintainer::{ReleaseAction, ReleaseOutcome, ReleaseReport};
+
+    use super::dry_run_lines;
+
+    /// A dry-run report for `current -> next` taking `action`.
+    fn dry_run_report(
+        current: &str,
+        next: &str,
+        action: ReleaseAction,
+        files: &[&str],
+    ) -> ReleaseReport {
+        ReleaseReport {
+            outcome: ReleaseOutcome::DryRun,
+            action: Some(action),
+            current_version: current.to_owned(),
+            next_version: Some(next.to_owned()),
+            bump: None,
+            tag: Some(format!("v{next}")),
+            major_alias: None,
+            commit_sha: None,
+            release_url: None,
+            pull_request_number: None,
+            pull_request_url: None,
+            release_branch: None,
+            notes: Some(String::from("## Release")),
+            commits_analyzed: 1,
+            commit_range_truncated: false,
+            files_updated: files.iter().map(PathBuf::from).collect(),
+        }
+    }
+
+    /// The dry-run lines for `report`, with the default notes path.
+    fn lines(report: &ReleaseReport) -> Vec<String> {
+        dry_run_lines(report, Path::new("release_notes.md"))
+    }
+
+    const NOTHING_WRITTEN: &str =
+        "- nothing was written to the repository: no commit, branch, tag, pull request, or release";
+
+    /// Push mode commits, tags, and releases in the same run.
+    #[test]
+    fn push_mode_dry_run_names_the_commit_tag_and_release() {
+        let report = dry_run_report(
+            "0.2.3",
+            "0.3.0",
+            ReleaseAction::CommitAndRelease { branch: String::from("main") },
+            &["Cargo.toml"],
+        );
+
+        assert_eq!(
+            lines(&report),
+            [
+                "Dry run: would release v0.3.0 (0.2.3 -> 0.3.0).",
+                "- next action: commit the version bump to main, tag that commit as v0.3.0, and publish its GitHub Release",
+                "- would update Cargo.toml",
+                "- release notes written to release_notes.md",
+                NOTHING_WRITTEN,
+            ]
+        );
+    }
+
+    /// Release-pull-request mode proposes the bump instead of releasing it.
+    #[test]
+    fn create_pr_dry_run_names_the_release_pull_request_not_a_release() {
+        let report = dry_run_report(
+            "0.5.1",
+            "0.5.2",
+            ReleaseAction::ProposeReleasePullRequest {
+                release_branch: String::from("automation/release"),
+                base: String::from("main"),
+            },
+            &["Cargo.toml", "Cargo.lock"],
+        );
+
+        assert_eq!(
+            lines(&report),
+            [
+                "Dry run: would propose v0.5.2 in the release pull request (0.5.1 -> 0.5.2).",
+                "- next action: point automation/release at a version-bump commit on top of main and open or update its pull request into main; nothing is tagged or released until it merges",
+                "- would update Cargo.toml",
+                "- would update Cargo.lock",
+                "- release notes written to release_notes.md",
+                NOTHING_WRITTEN,
+            ]
+        );
+    }
+
+    /// After a merged release pull request the run tags without bumping.
+    #[test]
+    fn create_pr_dry_run_after_a_merged_release_pull_request_names_the_tag() {
+        let report = dry_run_report(
+            "0.5.1",
+            "0.5.1",
+            ReleaseAction::TagManifestVersion { branch: String::from("main") },
+            &[],
+        );
+
+        assert_eq!(
+            lines(&report),
+            [
+                "Dry run: would release v0.5.1 (0.5.1 -> 0.5.1).",
+                "- next action: tag the head of main as v0.5.1 and publish its GitHub Release; the manifest already holds the untagged 0.5.1, so nothing is bumped",
+                "- release notes written to release_notes.md",
+                NOTHING_WRITTEN,
+            ]
+        );
+    }
+
+    /// Staged extra files are committed before the tag is created.
+    #[test]
+    fn tag_phase_dry_run_with_staged_files_commits_them_before_tagging() {
+        let report = dry_run_report(
+            "0.7.6",
+            "0.7.6",
+            ReleaseAction::TagManifestVersion { branch: String::from("main") },
+            &["runtime/Dockerfile"],
+        );
+
+        assert_eq!(
+            lines(&report)[1],
+            "- next action: commit the staged files to main, tag that commit as v0.7.6, and publish its GitHub Release; the manifest already holds the untagged 0.7.6, so nothing is bumped"
+        );
+    }
+
+    /// The bump phase commits and leaves the tag to the tag phase.
+    #[test]
+    fn bump_phase_dry_run_leaves_the_tag_to_the_next_phase() {
+        let report = dry_run_report(
+            "0.7.5",
+            "0.7.6",
+            ReleaseAction::CommitBump { branch: String::from("main") },
+            &["Cargo.toml"],
+        );
+
+        assert_eq!(
+            lines(&report)[..2],
+            [
+                "Dry run: would commit version 0.7.6 (0.7.5 -> 0.7.6).",
+                "- next action: commit the version bump to main and stop; v0.7.6 is created by a later --phase tag run",
+            ]
         );
     }
 }
