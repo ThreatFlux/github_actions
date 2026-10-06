@@ -6,13 +6,15 @@ use tempfile::{TempDir, tempdir};
 use super::{ReleaseOptions, ReleaseOutcome, ReleasePhase, ReleasePublisher, TagStyle};
 use crate::{GitHubClient, conventional::BumpLevel};
 
-// Extra-file staging and the phased release each have their own mock
-// scaffolding, so they live in sibling files to keep every module within the
-// repository's file-size lint budget.
+// Extra-file staging, the phased release, and the release-pull-request cycle
+// each have their own mock scaffolding, so they live in sibling files to keep
+// every module within the repository's file-size lint budget.
 #[path = "release_extra_files_tests.rs"]
 mod extra_files;
 #[path = "release_phase_tests.rs"]
 mod phases;
+#[path = "release_pr_flow_tests.rs"]
+mod pr_flow;
 
 const FEAT_AND_FIX: &str = r#"{"total_commits":2,"commits":[{"sha":"feataaaaaaa","commit":{"message":"feat: add thing"},"parents":[{}]},{"sha":"fixbbbbbbbb","commit":{"message":"fix: repair thing"},"parents":[{}]}]}"#;
 const CHORE_ONLY: &str = r#"{"total_commits":1,"commits":[{"sha":"choreaaaaaa","commit":{"message":"chore: tidy"},"parents":[{}]}]}"#;
