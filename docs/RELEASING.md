@@ -85,7 +85,7 @@ The `crates-io` environment only admits `v*` tags, so a real `release.yml` run m
 
 ### Rehearsal
 
-`gh workflow run release.yml -f version=<Cargo.toml version> -f source_ref=main -f dry_run=true` builds every target, generates the SBOM, and runs `cargo publish --dry-run`. It creates no tag or GitHub Release, uploads nothing, skips the `crates-io` environment, and never authenticates to crates.io.
+`gh workflow run release.yml -f version=<Cargo.toml version> -f source_ref=main -f dry_run=true` builds every target, generates the SBOM, and runs `cargo publish --dry-run`. It creates no tag or GitHub Release and attaches no release assets (the build and SBOM workflow artifacts are still kept for 5 days for inspection), skips the `crates-io` environment, and never authenticates to crates.io.
 
 ### Rollback
 

@@ -25,7 +25,7 @@ on:
       dry_run:
         description: >-
           Rehearse the release from source_ref (or the dispatch ref): build, SBOM, and cargo publish --dry-run, without creating a tag or
-          GitHub Release, uploading assets, or publishing. version must match the source's Cargo.toml. Prerelease versions are never
+          GitHub Release, attaching release assets, or publishing. Build and SBOM workflow artifacts are kept for inspection. version must match the source's Cargo.toml. Prerelease versions are never
           published to crates.io, so their rehearsal skips the crates.io jobs as a real run does.
         required: false
         type: boolean
