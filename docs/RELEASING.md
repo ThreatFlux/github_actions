@@ -61,7 +61,7 @@ The `v*` tag triggers `release.yml`:
 |------|----------|
 | Cross-compile | Linux x86_64, Linux aarch64, macOS universal, Windows x86_64 |
 | Package | `.tar.gz` (Unix) and `.zip` (Windows) with binary + LICENSE + README |
-| Publish | crates.io (if `CRATES_IO_TOKEN` secret is set) |
+| Publish | crates.io through [trusted publishing](https://crates.io/docs/trusted-publishing) (OIDC); a publish failure fails the run |
 | GitHub Release | Checksums + packaged assets attached |
 
 The `docker.yml` workflow also triggers on the tag, producing:
@@ -76,10 +76,16 @@ The `docker.yml` workflow also triggers on the tag, producing:
 
 ### Required Permissions
 
-| Secret | Holder | Purpose |
-|--------|--------|---------|
+| Credential | Holder | Purpose |
+|------------|--------|---------|
 | `GITHUB_TOKEN` | Automatic | Release assets, GHCR push |
-| `CRATES_IO_TOKEN` | Repo admin | crates.io publish |
+| crates.io trusted publisher (owner `ThreatFlux`, repository `github_actions`, workflow `release.yml`, environment `crates-io`) | crates.io crate owners | The publish job exchanges its OIDC token (`id-token: write`) for a short-lived crates.io token through `rust-lang/crates-io-auth-action`; no registry token secret exists |
+
+The `crates-io` environment only admits `v*` tags, so a real `release.yml` run must be dispatched on the tag (`gh workflow run release.yml --ref vX.Y.Z -f version=X.Y.Z`), which is what `auto-release.yml` does.
+
+### Rehearsal
+
+`gh workflow run release.yml -f version=<Cargo.toml version> -f source_ref=main -f dry_run=true` builds every target, generates the SBOM, and runs `cargo publish --dry-run`. It creates no tag or GitHub Release, uploads nothing, skips the `crates-io` environment, and never authenticates to crates.io.
 
 ### Rollback
 
