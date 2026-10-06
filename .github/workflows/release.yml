@@ -26,7 +26,7 @@ on:
         description: >-
           Rehearse the release from source_ref (or the dispatch ref): build, SBOM, and cargo publish --dry-run, without creating a tag or
           GitHub Release, uploading assets, or publishing. version must match the source's Cargo.toml. Prerelease versions are never
-          published to crates.io, so their rehearsal skips the publish job as a real run does.
+          published to crates.io, so their rehearsal skips the crates.io jobs as a real run does.
         required: false
         type: boolean
         default: false
@@ -412,24 +412,26 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
-  # crates.io trusted publishing: rust-lang/crates-io-auth-action trades this
-  # job's OIDC token for a short-lived crates.io token. The crate's trusted
-  # publisher matches owner ThreatFlux, repository github_actions, workflow
-  # release.yml, and environment crates-io, so only real runs enter that
-  # environment (an empty name runs the job without one). No registry token
-  # secret is read, and any publish failure fails the run. Projects that do
-  # not ship crates opt out with the repository variable
-  # RUST_TEMPLATE_PUBLISH_CRATES=false; prereleases are never published.
-  publish:
-    name: Publish to crates.io
+  # crates.io publishing runs in two jobs. verify-crates packages and builds
+  # every crate with no OIDC permission, so no build script or dependency can
+  # request the workflow's identity token. publish then holds id-token: write
+  # only to trade that token for a short-lived crates.io token
+  # (rust-lang/crates-io-auth-action) and upload with --no-verify, which
+  # compiles nothing. The crate's trusted publisher matches owner ThreatFlux,
+  # repository github_actions, workflow release.yml, and environment
+  # crates-io; dry runs never reach that job. No registry token secret is
+  # read, and any publish failure fails the run. Projects that do not ship
+  # crates opt out with the repository variable RUST_TEMPLATE_PUBLISH_CRATES=false;
+  # prereleases are never published.
+  verify-crates:
+    name: Verify crates for crates.io
     needs: [prepare, build]
     runs-on: ${{ vars.RUST_TEMPLATE_RUNNER_UBUNTU || 'ubuntu-latest' }}
     if: ${{ !contains(needs.prepare.outputs.version, '-') && vars.RUST_TEMPLATE_PUBLISH_CRATES != 'false' }}
-    environment:
-      name: ${{ !(github.event_name == 'workflow_dispatch' && inputs.dry_run) && 'crates-io' || '' }}
     permissions:
       contents: read
-      id-token: write # exchanged for a crates.io token by crates-io-auth-action
+    outputs:
+      pending: ${{ steps.packages.outputs.pending }}
     env:
       VERSION: ${{ needs.prepare.outputs.version }}
       CRATES_IO_USER_AGENT: ThreatFlux release (https://github.com/${{ github.repository }})
@@ -479,12 +481,11 @@ jobs:
           } >> "$GITHUB_OUTPUT"
           echo "packages to publish: ${pending:-none}"
 
-      # Package and verify before authenticating, so the short-lived trusted
-      # publishing token only has to cover the uploads. One cargo invocation
-      # covers every package, so a crate that depends on a newly versioned
-      # sibling verifies against it (cargo stages the set locally) instead of
-      # failing to resolve a version that is not uploaded yet. A dry run
-      # rehearses every package; a real run verifies the ones still to publish.
+      # One cargo invocation covers every package, so a crate that depends on
+      # a newly versioned sibling verifies against it (cargo stages the set
+      # locally) instead of failing to resolve a version that is not uploaded
+      # yet. A dry run rehearses every package; a real run verifies the ones
+      # still to publish.
       - name: Package and verify for crates.io
         if: env.DRY_RUN == 'true' || steps.packages.outputs.pending != ''
         env:
@@ -504,18 +505,41 @@ jobs:
             echo "Dry run: nothing was published; a real run authenticates with crates.io trusted publishing"
           fi
 
+  publish:
+    name: Publish to crates.io
+    needs: [prepare, verify-crates]
+    runs-on: ${{ vars.RUST_TEMPLATE_RUNNER_UBUNTU || 'ubuntu-latest' }}
+    if: ${{ !(github.event_name == 'workflow_dispatch' && inputs.dry_run) && needs.verify-crates.outputs.pending != '' }}
+    environment:
+      name: crates-io
+    permissions:
+      contents: read
+      id-token: write # exchanged for a crates.io token by crates-io-auth-action
+    env:
+      VERSION: ${{ needs.prepare.outputs.version }}
+      CRATES_IO_USER_AGENT: ThreatFlux release (https://github.com/${{ github.repository }})
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ needs.prepare.outputs.release_revision }}
+          persist-credentials: false
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@7e38f4b43b4db5c8dd498af069a4f6196df1d067 # v1
+        with:
+          toolchain: ${{ env.RUST_VERSION }}
+
       - name: Authenticate with crates.io (trusted publishing)
         id: crates-io
-        if: env.DRY_RUN != 'true' && steps.packages.outputs.pending != ''
         uses: rust-lang/crates-io-auth-action@c6f97d42243bad5fab37ca0427f495c86d5b1a18 # v1.0.5
 
-      # --no-verify: the step above already built every package from this
-      # exact checkout.
+      # --no-verify compiles nothing: verify-crates already built every
+      # package from this exact revision without OIDC access.
       - name: Publish to crates.io
-        if: env.DRY_RUN != 'true' && steps.packages.outputs.pending != ''
         env:
           CARGO_REGISTRY_TOKEN: ${{ steps.crates-io.outputs.token }}
-          PENDING: ${{ steps.packages.outputs.pending }}
+          PENDING: ${{ needs.verify-crates.outputs.pending }}
         run: |
           set -euo pipefail
           version_visible() {
