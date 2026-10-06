@@ -90,6 +90,8 @@ Prerequisites: `gh` signed in as an organization owner with the `admin:org` scop
 
 If the health run fails, the script stops before step 4 and keeps the `.pem`. The old key still works, so nothing is broken: fix the cause (usually the secret's repository list) and run the script again.
 
+**Who can read the key:** an organization secret reaches every workflow in its selected repositories, on any branch. Anyone who can push a branch to one of the 7 repositories can therefore run a workflow that reads `TF_AUTOMATION_APP_PRIVATE_KEY`, and no trigger or `if:` in a workflow file changes that, because the branch's own copy of the file is what runs. Keep write access to those repositories limited to people trusted with the App. A stronger boundary would hold the key as an environment secret behind a deployment policy that only admits `main`, at the cost of one copy of the secret per repository.
+
 **Suspected compromise:** generate a new key, run the script, delete the compromised key at once, and review the App's recent activity: the organization audit log entries for the App, and the recent tags, releases, and pull requests by `threatflux-automation[bot]` in the installation repositories.
 
 ## Health check
