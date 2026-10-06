@@ -171,13 +171,23 @@ jobs:
           RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
         run: |
           set -euo pipefail
-          # One issue for the life of the repository, identified by the marker
-          # comment this workflow writes into its body (the label alone could
-          # match an unrelated issue). The newest such issue is reused,
-          # reopened, or closed; other labelled issues are never touched.
-          existing="$(gh issue list --repo "${GITHUB_REPOSITORY}" --label "${ISSUE_LABEL}" --state all \
-            --limit 100 --json number,state,body \
-            --jq '[.[] | select(.body | contains("<!-- automation-app-health -->"))] | .[0] | select(. != null) | "\(.number) \(.state)"')"
+          # One issue for the life of the repository, identified by the label
+          # and the marker comment this workflow writes into its body (the
+          # label alone could match an unrelated issue). The newest such issue
+          # is reused, reopened, or closed; other issues are never touched.
+          # gh issue list --label goes through issue search, which misses an
+          # issue for a minute or two after it is created, so the newest issues
+          # are also listed directly: back-to-back runs (a key rotation right
+          # after a scheduled run) must not open a duplicate.
+          tracker='[.[] | select(any(.labels[]; .name == env.ISSUE_LABEL))
+            | select(.body | contains("<!-- automation-app-health -->"))] | .[0] | select(. != null)
+            | "\(.number) \(.state)"'
+          existing="$(gh issue list --repo "${GITHUB_REPOSITORY}" --state all --limit 100 \
+            --json number,state,body,labels --jq "${tracker}")"
+          if [[ -z "${existing}" ]]; then
+            existing="$(gh issue list --repo "${GITHUB_REPOSITORY}" --label "${ISSUE_LABEL}" --state all --limit 100 \
+              --json number,state,body,labels --jq "${tracker}")"
+          fi
           number="${existing%% *}"
           state="${existing#* }"
 
