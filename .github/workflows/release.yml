@@ -329,7 +329,9 @@ jobs:
           for changelog in CHANGELOG.md docs/CHANGELOG.md; do
             if [ -f "$changelog" ]; then
               section="$(awk -v heading="## [$VERSION]" 'index($0, heading) == 1 { found = 1; next } found && /^## \[/ { exit } found { print }' "$changelog")"
-              break
+              if [[ -n "${section//[[:space:]]/}" ]]; then
+                break
+              fi
             fi
           done
           printf '%s\n' "$section" >> release_notes.md
