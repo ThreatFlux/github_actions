@@ -14,7 +14,7 @@ NOW = datetime(2026, 10, 6, 12, 0, tzinfo=timezone.utc)
 EXPECTED = frozenset({"github_actions", "ollama_rust_sdk", "rust-cicd-template"})
 
 
-def secret(name: str, updated: str) -> dict:
+def inventory_entry(name: str, updated: str) -> dict:
     return {"name": name, "created_at": updated, "updated_at": updated, "visibility": "all"}
 
 
@@ -27,8 +27,8 @@ def audit(**overrides) -> Audit:
         "installation_repos": EXPECTED,
         "secrets_outcome": "success",
         "secrets": (
-            secret("TF_AUTOMATION_APP_PRIVATE_KEY", "2026-09-01T00:00:00Z"),
-            secret("CODECOV_TOKEN", "2026-06-01T00:00:00Z"),
+            inventory_entry("TF_AUTOMATION_APP_PRIVATE_KEY", "2026-09-01T00:00:00Z"),
+            inventory_entry("CODECOV_TOKEN", "2026-06-01T00:00:00Z"),
         ),
         "key_secret": "TF_AUTOMATION_APP_PRIVATE_KEY",  # nosec B105: a secret name, not a value
         "key_secret_repos": EXPECTED,
@@ -72,7 +72,7 @@ class EvaluateTests(unittest.TestCase):
 
     def test_key_older_than_ninety_days_needs_rotation(self) -> None:
         status, findings, rows = evaluate(audit(secrets=(
-            secret("TF_AUTOMATION_APP_PRIVATE_KEY", "2026-07-01T00:00:00Z"),
+            inventory_entry("TF_AUTOMATION_APP_PRIVATE_KEY", "2026-07-01T00:00:00Z"),
         )))
         self.assertEqual(status, "attention")
         self.assertIn("App private key `TF_AUTOMATION_APP_PRIVATE_KEY` is due for rotation", findings[0].title)
@@ -80,10 +80,10 @@ class EvaluateTests(unittest.TestCase):
         self.assertEqual(rows[0].age_days, 97)
 
     def test_other_secrets_use_the_longer_limit(self) -> None:
-        fresh_enough = secret("CODECOV_TOKEN", "2026-05-01T00:00:00Z")
-        stale = secret("DOCKERHUB_TOKEN", "2025-02-01T05:24:57Z")
+        fresh_enough = inventory_entry("CODECOV_TOKEN", "2026-05-01T00:00:00Z")
+        stale = inventory_entry("DOCKERHUB_TOKEN", "2025-02-01T05:24:57Z")
         status, findings, _ = evaluate(audit(secrets=(
-            secret("TF_AUTOMATION_APP_PRIVATE_KEY", "2026-09-01T00:00:00Z"), fresh_enough, stale,
+            inventory_entry("TF_AUTOMATION_APP_PRIVATE_KEY", "2026-09-01T00:00:00Z"), fresh_enough, stale,
         )))
         self.assertEqual(status, "attention")
         self.assertEqual([finding.title for finding in findings],
@@ -91,8 +91,8 @@ class EvaluateTests(unittest.TestCase):
 
     def test_obsolete_secret_is_flagged_even_when_recent(self) -> None:
         status, findings, rows = evaluate(audit(secrets=(
-            secret("TF_AUTOMATION_APP_PRIVATE_KEY", "2026-09-01T00:00:00Z"),
-            secret("GIT_TOKEN", "2026-10-01T00:00:00Z"),
+            inventory_entry("TF_AUTOMATION_APP_PRIVATE_KEY", "2026-09-01T00:00:00Z"),
+            inventory_entry("GIT_TOKEN", "2026-10-01T00:00:00Z"),
         )))
         self.assertEqual(status, "attention")
         self.assertEqual(findings[0].title, "Obsolete secret `GIT_TOKEN` still exists")
@@ -104,7 +104,7 @@ class EvaluateTests(unittest.TestCase):
         self.assertEqual(status, "attention")
         self.assertIn("lacks organization \"Secrets: read\"", findings[0].title)
         self.assertEqual(rows, [])
-        report = render_report(audit(secrets_outcome="missing-permission"), status, findings, rows, "")
+        report = render_report(audit(secrets_outcome="missing-permission"), (status, findings, rows))
         self.assertIn("skipped: App lacks organization Secrets: read", report)
 
     def test_key_secret_repository_drift_is_flagged(self) -> None:
@@ -113,7 +113,7 @@ class EvaluateTests(unittest.TestCase):
         self.assertIn("installed but cannot read the key: `github_actions`", findings[0].detail)
 
     def test_key_secret_missing_from_the_organization(self) -> None:
-        status, findings, _ = evaluate(audit(secrets=(secret("CODECOV_TOKEN", "2026-09-01T00:00:00Z"),)))
+        status, findings, _ = evaluate(audit(secrets=(inventory_entry("CODECOV_TOKEN", "2026-09-01T00:00:00Z"),)))
         self.assertEqual(status, "attention")
         self.assertIn("is not an organization secret", findings[0].title)
 
@@ -149,24 +149,25 @@ class CommandLineTests(unittest.TestCase):
                 "--expected-repos", "github_actions,ollama_rust_sdk,rust-cicd-template",
                 "--now", "2026-10-06T12:00:00Z",
                 "--obsolete", "GIT_TOKEN=Dead classic PAT.",
+                "--key-secret", "TF_AUTOMATION_APP_PRIVATE_KEY",
                 "--report", str(report),
                 "--github-output", output,
                 "--repo-url", "https://github.com/ThreatFlux/github_actions",
                 *extra,
             ])
         self.assertIn("status=", stdout.getvalue())
-        values = dict(line.split("=", 1) for line in Path(output).read_text().splitlines())
-        return values, report.read_text()
+        values = dict(line.split("=", 1) for line in Path(output).read_text(encoding="utf-8").splitlines())
+        return values, report.read_text(encoding="utf-8")
 
     def test_command_line_writes_status_and_report(self) -> None:
         repos = self.write("repos.txt", "github_actions\nollama_rust_sdk\nrust-cicd-template\n")
-        secrets = self.write("secrets.jsonl", "\n".join(json.dumps(item) for item in (
-            secret("TF_AUTOMATION_APP_PRIVATE_KEY", "2026-10-06T02:15:15Z"),
-            secret("GIT_TOKEN", "2025-03-31T00:14:47Z"),
+        inventory = self.write("inventory.jsonl", "\n".join(json.dumps(item) for item in (
+            inventory_entry("TF_AUTOMATION_APP_PRIVATE_KEY", "2026-10-06T02:15:15Z"),
+            inventory_entry("GIT_TOKEN", "2025-03-31T00:14:47Z"),
         )))
         values, report = self.run_main(
             "--mint-outcome", "success", "--repos-outcome", "success", "--repos-file", repos,
-            "--secrets-outcome", "success", "--secrets-file", secrets, "--key-secret-repos-file", repos,
+            "--secrets-outcome", "success", "--secrets-file", inventory, "--key-secret-repos-file", repos,
         )
         self.assertEqual(values, {"status": "attention", "findings": "1", "errors": "0"})
         self.assertIn("<!-- automation-app-health -->", report)

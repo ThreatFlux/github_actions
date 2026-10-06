@@ -25,8 +25,6 @@ from pathlib import Path
 ERROR = "error"
 WARNING = "warning"
 
-# B105: the name of the organization secret holding the key, never its value.
-DEFAULT_KEY_SECRET = "TF_AUTOMATION_APP_PRIVATE_KEY"  # nosec B105
 DEFAULT_KEY_MAX_AGE_DAYS = 90
 DEFAULT_MAX_AGE_DAYS = 180
 REPORT_MARKER = "<!-- automation-app-health -->"
@@ -177,7 +175,6 @@ def secret_findings(audit: Audit, rows: list[SecretAge]) -> list[Finding]:
                         "Listing the organization's Actions secrets failed unexpectedly; see the run log.")]
 
     findings = []
-    names = {row.name for row in rows}
     for row in rows:
         if row.obsolete_reason:
             findings.append(Finding(WARNING, f"Obsolete secret `{row.name}` still exists", row.obsolete_reason))
@@ -188,26 +185,31 @@ def secret_findings(audit: Audit, rows: list[SecretAge]) -> list[Finding]:
                 f"Last updated {row.updated_at[:10]} ({row.age_days} days ago); the limit is"
                 f" {row.limit_days} days. See {RUNBOOK}.",
             ))
+    return findings + key_access_findings(audit, {row.name for row in rows})
+
+
+def key_access_findings(audit: Audit, names: set[str]) -> list[Finding]:
+    """Check the App key is an org secret shared with exactly the installation's repositories."""
     if audit.key_secret not in names:
-        findings.append(Finding(
+        return [Finding(
             WARNING, f"`{audit.key_secret}` is not an organization secret",
             "The App minted a token, so the key comes from somewhere else (a repository secret?)."
             f" Store it as the organization secret {audit.key_secret} with selected repositories.",
-        ))
-    elif audit.key_secret_repos is not None and audit.installation_repos is not None \
-            and audit.key_secret_repos != audit.installation_repos:
-        only_secret = sorted(audit.key_secret_repos - audit.installation_repos)
-        only_install = sorted(audit.installation_repos - audit.key_secret_repos)
-        parts = []
-        if only_install:
-            parts.append("installed but cannot read the key: " + ", ".join(f"`{n}`" for n in only_install))
-        if only_secret:
-            parts.append("can read the key but are not installed: " + ", ".join(f"`{n}`" for n in only_secret))
-        findings.append(Finding(
-            WARNING, f"`{audit.key_secret}` repository access differs from the installation",
-            "Repositories " + "; ".join(parts) + ".",
-        ))
-    return findings
+        )]
+    if audit.key_secret_repos is None or audit.installation_repos is None \
+            or audit.key_secret_repos == audit.installation_repos:
+        return []
+    only_secret = sorted(audit.key_secret_repos - audit.installation_repos)
+    only_install = sorted(audit.installation_repos - audit.key_secret_repos)
+    parts = []
+    if only_install:
+        parts.append("installed but cannot read the key: " + ", ".join(f"`{n}`" for n in only_install))
+    if only_secret:
+        parts.append("can read the key but are not installed: " + ", ".join(f"`{n}`" for n in only_secret))
+    return [Finding(
+        WARNING, f"`{audit.key_secret}` repository access differs from the installation",
+        "Repositories " + "; ".join(parts) + ".",
+    )]
 
 
 def evaluate(audit: Audit) -> tuple[str, list[Finding], list[SecretAge]]:
@@ -233,8 +235,10 @@ def evaluate(audit: Audit) -> tuple[str, list[Finding], list[SecretAge]]:
     return status, findings, rows
 
 
-def render_report(audit: Audit, status: str, findings: list[Finding], rows: list[SecretAge],
-                  run_url: str, repo_url: str = "") -> str:
+def render_report(audit: Audit, result: tuple[str, list[Finding], list[SecretAge]],
+                  run_url: str = "", repo_url: str = "") -> str:
+    """Render the Markdown report for the job summary and the tracking issue."""
+    status, findings, rows = result
     lines = [REPORT_MARKER, f"## Automation App health: {status}", ""]
     checked = audit.now.strftime("%Y-%m-%d %H:%M UTC")
     lines.append(f"Checked {checked}" + (f" by [this run]({run_url})." if run_url else "."))
@@ -295,7 +299,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--repos-file")
     parser.add_argument("--secrets-outcome", default="skipped", choices=SECRETS_OUTCOMES)
     parser.add_argument("--secrets-file")
-    parser.add_argument("--key-secret", default=DEFAULT_KEY_SECRET)
+    parser.add_argument("--key-secret", required=True, help="name of the org secret holding the App private key")
     parser.add_argument("--key-secret-repos-file")
     parser.add_argument("--key-max-age-days", type=int, default=DEFAULT_KEY_MAX_AGE_DAYS)
     parser.add_argument("--max-age-days", type=int, default=DEFAULT_MAX_AGE_DAYS)
@@ -332,8 +336,9 @@ def main(argv: list[str] | None = None) -> int:
         obsolete=parse_obsolete(args.obsolete),
         now=parse_timestamp(args.now) if args.now else datetime.now(timezone.utc),
     )
-    status, findings, rows = evaluate(audit)
-    report = render_report(audit, status, findings, rows, args.run_url, args.repo_url)
+    result = evaluate(audit)
+    status, findings, _ = result
+    report = render_report(audit, result, args.run_url, args.repo_url)
     Path(args.report).write_text(report, encoding="utf-8")
 
     errors = sum(1 for finding in findings if finding.severity == ERROR)
