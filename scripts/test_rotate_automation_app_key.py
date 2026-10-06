@@ -180,6 +180,7 @@ class RotateKeyTests(unittest.TestCase):
                 self.assertTrue(path.exists())
 
     def test_repository_secret_overriding_the_org_secret_is_refused(self) -> None:
+        """A same-name repository secret would keep the old key in use, so the script stops before changing anything."""
         result = self.rotate("--yes", str(self.pem), FAKE_SHADOW_REPO="ollama_rust_sdk")
         self.assertNotEqual(result.returncode, 0)
         self.assertIn("overrides the organization secret in: ollama_rust_sdk", result.stderr)

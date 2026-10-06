@@ -58,6 +58,7 @@ class Plan:
 
 
 def parse_workflows(value: str) -> tuple[str, ...]:
+    """Split dispatch-workflows into workflow names, refusing anything gh would read as an option."""
     workflows = []
     for item in value.split(","):
         workflow = item.strip()
@@ -92,12 +93,14 @@ def plan_dispatch(release: Release) -> Plan:
 
 
 def append(path: str, text: str) -> None:
+    """Append text to a GitHub Actions file command (GITHUB_OUTPUT, GITHUB_STEP_SUMMARY) when it is set."""
     if path:
         with open(path, "a", encoding="utf-8") as file:
             file.write(text)
 
 
 def build_parser() -> argparse.ArgumentParser:
+    """Describe the command line the reusable workflow passes in."""
     parser = argparse.ArgumentParser(description=__doc__.split("\n", 1)[0])
     parser.add_argument("--repository", required=True, help="OWNER/REPO the workflows belong to")
     parser.add_argument("--tag", default="", help="the release tag; empty when nothing was released")
@@ -112,6 +115,7 @@ def build_parser() -> argparse.ArgumentParser:
 
 
 def main(argv: list[str] | None = None) -> int:
+    """Print the dispatch decision and, unless --plan-only, run gh workflow run for each planned workflow."""
     args = build_parser().parse_args(argv)
     if args.plan_only and not args.tag:
         print("Dry run: no release would be cut, so no workflow would be dispatched.")
