@@ -521,8 +521,8 @@ matches whatever workflow ref you pinned. Its inputs, outputs, and the
 
 ### Dry runs
 
-`dry-run: true` runs the same analysis as a real release and stops before the
-first write. To offer it on manual runs only:
+`dry-run: true` runs the same analysis as a real release and stops before
+anything is written to the repository. To offer it on manual runs only:
 
 ```yaml
 on:
