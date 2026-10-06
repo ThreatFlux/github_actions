@@ -141,6 +141,22 @@ fi
 [[ "${repos}" =~ ^[A-Za-z0-9._,-]+$ ]] || die "unexpected repository list '${repos}'"
 log "Secret ${SECRET_NAME} stays shared with: ${repos}"
 
+# A repository secret with the same name overrides the organization secret.
+# It would keep the old key in use, and keep health runs green with it, so
+# deleting the old key afterwards would break that repository.
+shadowed=""
+IFS=, read -ra repo_list <<<"${repos}"
+for repo in "${repo_list[@]}"; do
+    names="$(gh api --paginate "/repos/${ORG}/${repo}/actions/secrets" --jq '.secrets[].name')" \
+        || die "could not list ${ORG}/${repo} repository secrets to rule out a ${SECRET_NAME} that overrides the org secret"
+    if grep -qx -- "${SECRET_NAME}" <<<"${names}"; then
+        shadowed="${shadowed:+${shadowed}, }${repo}"
+    fi
+done
+[[ -z "${shadowed}" ]] \
+    || die "a repository secret named ${SECRET_NAME} overrides the organization secret in: ${shadowed}; delete it first"
+log "No repository secret overrides ${SECRET_NAME}"
+
 settings_url="${WEB_URL}/organizations/${ORG}/settings/apps/${app_slug:-threatflux-automation}"
 
 if [[ "${dry_run}" == true ]]; then

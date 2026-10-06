@@ -3,6 +3,15 @@ name: Reusable Auto Release
 # Callable release workflow. It owns the common CI gate and optional
 # workflow-dispatch chaining so consuming repositories only declare their
 # triggers and repository-specific pipeline names.
+#
+# Which token cuts the release decides whether dispatch-workflows run:
+# - GitHub App (github-app-id + github-app-private-key): the tag push is an
+#   ordinary push, so the caller's `on: push: tags` workflows start by
+#   themselves and nothing is dispatched (set dispatch-on-app-token for
+#   workflows without a tag trigger). Release pull requests the App opens
+#   start the caller's pull_request CI the same way.
+# - release-token or the default GITHUB_TOKEN: dispatch-workflows are
+#   dispatched on the new tag, because a GITHUB_TOKEN tag starts nothing.
 
 on:
   workflow_call:
@@ -59,14 +68,26 @@ on:
         required: false
         default: ""
         type: string
+      dispatch-on-app-token:
+        description: >-
+          Also run dispatch-workflows when the GitHub App token cut the release. Leave false (the default) when those workflows trigger on
+          `push: tags`: a tag the App pushes starts them by itself, so dispatching them again would run each one twice. Set true only for
+          dispatch-workflows that have no tag trigger. The release-token and GITHUB_TOKEN paths always dispatch.
+        required: false
+        default: false
+        type: boolean
       github-app-id:
-        description: Optional GitHub App installation ID source. Pair with github-app-private-key to authenticate release commits and PRs as the App.
+        description: >-
+          Optional GitHub App ID (or client ID). Pair with github-app-private-key to cut releases, push the release branch, and open release
+          pull requests as the App, so the tag and the pull request start the caller's workflows.
         required: false
         default: ""
         type: string
     secrets:
       release-token:
-        description: Optional GitHub App or PAT token; falls back to GITHUB_TOKEN. Required if the created tag must trigger tag pipelines natively.
+        description: >-
+          Optional token used when no GitHub App is configured; falls back to GITHUB_TOKEN. dispatch-workflows are still dispatched on this
+          path, so if this token's tag push already triggers those workflows, leave dispatch-workflows empty.
         required: false
       github-app-private-key:
         description: Private key for the GitHub App identified by github-app-id. Store it as an organization or repository secret.
@@ -172,6 +193,7 @@ jobs:
       # presence of the App key is surfaced here, where `secrets` is allowed,
       # and the steps below branch on this value instead.
       HAS_GITHUB_APP_PRIVATE_KEY: ${{ secrets.github-app-private-key != '' }}
+      HAS_RELEASE_TOKEN: ${{ secrets.release-token != '' }}
     outputs:
       released: ${{ steps.release.outputs.released }}
       version: ${{ steps.release.outputs.version }}
@@ -199,15 +221,21 @@ jobs:
           path: .release-action
           persist-credentials: false
 
+      # The token is limited to this repository and to what the run needs:
+      # contents for the release commit, tag, and Release; pull requests only
+      # in create-pr mode; actions only when it will dispatch workflows.
       - name: Create GitHub App installation token
         id: github-app-token
         if: inputs.github-app-id != '' && env.HAS_GITHUB_APP_PRIVATE_KEY == 'true'
         uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3.2.0
         with:
-          app-id: ${{ inputs.github-app-id }}
+          client-id: ${{ inputs.github-app-id }}
           private-key: ${{ secrets.github-app-private-key }}
           owner: ${{ github.repository_owner }}
           repositories: ${{ github.event.repository.name }}
+          permission-contents: write
+          permission-pull-requests: ${{ inputs.create-pr && 'write' || '' }}
+          permission-actions: ${{ inputs.dispatch-on-app-token && 'write' || '' }}
 
       - name: Validate GitHub App configuration
         if: (inputs.github-app-id == '') != (env.HAS_GITHUB_APP_PRIVATE_KEY == 'false')
@@ -215,6 +243,11 @@ jobs:
           echo "github-app-id and github-app-private-key must be configured together" >&2
           exit 1
 
+      # Every write (the release commit, the release-branch update, the
+      # release pull request, the tag, and the GitHub Release) uses this one
+      # token. With the App token the release pull request and the tag are
+      # ordinary events that start the caller's workflows; GITHUB_TOKEN's
+      # would not.
       - name: Release
         id: release
         uses: ./.release-action
@@ -228,6 +261,12 @@ jobs:
           dry-run: ${{ inputs.dry-run }}
           create-pr: ${{ inputs.create-pr }}
           release-branch: ${{ inputs.release-branch }}
+      # scripts/dispatch_release_workflows.py (tested in this repository)
+      # decides from --released-by: an App-pushed tag already started the
+      # caller's tag workflows, so it skips and says why unless
+      # dispatch-on-app-token is set; release-token and GITHUB_TOKEN releases
+      # dispatch on the new tag.
+      #
       # A dry run never reports released=true, so this step cannot fire for
       # one; the explicit dry-run check keeps that true even if a runtime that
       # mishandles the flag is ever pinned.
@@ -235,19 +274,33 @@ jobs:
         if: steps.release.outputs.released == 'true' && !inputs.dry-run && inputs.dispatch-workflows != ''
         env:
           GH_TOKEN: ${{ steps.github-app-token.outputs.token || secrets.release-token || github.token }}
+          RELEASED_BY: >-
+            ${{ steps.github-app-token.outcome == 'success' && 'github-app' || env.HAS_RELEASE_TOKEN == 'true' && 'release-token' || 'github-token' }}
+          DISPATCH_FOR_APP_RELEASE: ${{ inputs.dispatch-on-app-token }}
           TAG: ${{ steps.release.outputs.tag }}
           VERSION: ${{ steps.release.outputs.version }}
           DISPATCH_WORKFLOWS: ${{ inputs.dispatch-workflows }}
           VERSION_WORKFLOW: ${{ inputs.dispatch-version-workflow }}
-        run: |
-          set -euo pipefail
-          IFS=',' read -ra workflows <<< "$DISPATCH_WORKFLOWS"
-          for workflow in "${workflows[@]}"; do
-            workflow="$(xargs <<< "$workflow")"
-            [[ -n "$workflow" ]] || continue
-            if [[ "$workflow" == "$VERSION_WORKFLOW" ]]; then
-              gh workflow run "$workflow" --repo "$GITHUB_REPOSITORY" --ref "$TAG" -f version="$VERSION"
-            else
-              gh workflow run "$workflow" --repo "$GITHUB_REPOSITORY" --ref "$TAG"
-            fi
-          done
+        run: >-
+          python3 .release-action/scripts/dispatch_release_workflows.py
+          --repository "${GITHUB_REPOSITORY}" --released-by "${RELEASED_BY}"
+          --dispatch-for-app-release "${DISPATCH_FOR_APP_RELEASE}" --tag "${TAG}" --version "${VERSION}"
+          --workflows "${DISPATCH_WORKFLOWS}" --version-workflow "${VERSION_WORKFLOW}"
+
+      # Dry runs only log what the dispatch step would do; --plan-only never
+      # runs gh.
+      - name: Show the downstream dispatch plan (dry run)
+        if: inputs.dry-run && inputs.dispatch-workflows != ''
+        env:
+          RELEASED_BY: >-
+            ${{ steps.github-app-token.outcome == 'success' && 'github-app' || env.HAS_RELEASE_TOKEN == 'true' && 'release-token' || 'github-token' }}
+          DISPATCH_FOR_APP_RELEASE: ${{ inputs.dispatch-on-app-token }}
+          TAG: ${{ steps.release.outputs.tag }}
+          VERSION: ${{ steps.release.outputs.version }}
+          DISPATCH_WORKFLOWS: ${{ inputs.dispatch-workflows }}
+          VERSION_WORKFLOW: ${{ inputs.dispatch-version-workflow }}
+        run: >-
+          python3 .release-action/scripts/dispatch_release_workflows.py --plan-only
+          --repository "${GITHUB_REPOSITORY}" --released-by "${RELEASED_BY}"
+          --dispatch-for-app-release "${DISPATCH_FOR_APP_RELEASE}" --tag "${TAG}" --version "${VERSION}"
+          --workflows "${DISPATCH_WORKFLOWS}" --version-workflow "${VERSION_WORKFLOW}"

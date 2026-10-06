@@ -1,0 +1,85 @@
+name: Reusable Release Smoke
+
+# Dry-runs reusable-auto-release.yml the way a consumer calls it, once with the
+# threatflux-automation GitHub App and once with GITHUB_TOKEN, so changes to
+# its token handling and dispatch decision run for real before they ship. A
+# dry run writes nothing: no commit, branch, tag, Release, pull request, or
+# workflow dispatch. bump: patch forces a would-be release so the dispatch
+# plan step has a tag to reason about.
+#
+# Pull requests only get the GITHUB_TOKEN path: a pull request runs its own
+# copy of this file, so the job holding the org App private key runs only for
+# the reviewed default-branch version (pushes to main and manual dispatches).
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - ".github/workflows/reusable-auto-release.yml"
+      - ".github/workflows/reusable-release-smoke.yml"
+      - "scripts/dispatch_release_workflows.py"
+  push:
+    branches: [main]
+    paths:
+      - ".github/workflows/reusable-auto-release.yml"
+      - ".github/workflows/reusable-release-smoke.yml"
+      - "scripts/dispatch_release_workflows.py"
+  workflow_dispatch:
+
+permissions: {}
+
+jobs:
+  github-app:
+    name: Dry run with the GitHub App
+    if: github.event_name != 'pull_request'
+    # The called workflow declares these for its release job; a dry run only
+    # reads, and the App token it mints is what the plan reasons about.
+    permissions:
+      actions: write
+      contents: write
+      pull-requests: write
+    uses: ./.github/workflows/reusable-auto-release.yml
+    with:
+      bump: patch
+      dry-run: true
+      dispatch-workflows: release.yml,docker.yml
+      dispatch-version-workflow: release.yml
+      github-app-id: ${{ vars.TF_AUTOMATION_APP_ID }}
+    secrets:
+      github-app-private-key: ${{ secrets.TF_AUTOMATION_APP_PRIVATE_KEY }}
+
+  github-token:
+    name: Dry run with GITHUB_TOKEN
+    permissions:
+      actions: write
+      contents: write
+      pull-requests: write
+    uses: ./.github/workflows/reusable-auto-release.yml
+    with:
+      bump: patch
+      dry-run: true
+      dispatch-workflows: release.yml,docker.yml
+      dispatch-version-workflow: release.yml
+
+  verify:
+    name: Verify dry runs released nothing
+    needs: [github-app, github-token]
+    # The App job is skipped on pull requests; check whatever ran.
+    if: ${{ !cancelled() && needs.github-token.result == 'success' && needs.github-app.result != 'failure' }}
+    runs-on: ${{ vars.RUST_TEMPLATE_RUNNER_UBUNTU || 'ubuntu-latest' }}
+    timeout-minutes: 5
+    steps:
+      - name: Check outputs
+        env:
+          APP_RAN: ${{ needs.github-app.result }}
+          APP_RELEASED: ${{ needs.github-app.outputs.released }}
+          APP_TAG: ${{ needs.github-app.outputs.tag }}
+          TOKEN_RELEASED: ${{ needs.github-token.outputs.released }}
+          TOKEN_TAG: ${{ needs.github-token.outputs.tag }}
+        run: |
+          set -euo pipefail
+          echo "App path: released=${APP_RELEASED} tag=${APP_TAG}; GITHUB_TOKEN path: released=${TOKEN_RELEASED} tag=${TOKEN_TAG}"
+          [[ "${TOKEN_RELEASED}" == false && -n "${TOKEN_TAG}" ]] || { echo "the GITHUB_TOKEN dry run reported a release or no tag" >&2; exit 1; }
+          if [[ "${APP_RAN}" == success ]]; then
+            [[ "${APP_RELEASED}" == false && "${APP_TAG}" == "${TOKEN_TAG}" ]] \
+              || { echo "the App dry run reported a release or a different tag" >&2; exit 1; }
+          fi

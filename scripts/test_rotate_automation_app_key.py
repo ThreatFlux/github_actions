@@ -38,7 +38,10 @@ if args[:2] == ["run", "list"]:
 if args[:2] == ["run", "watch"]:
     sys.exit(int(os.environ.get("FAKE_WATCH_EXIT", "0")))
 if args[0] == "api":
-    if "/variables/TF_AUTOMATION_APP_ID" in joined:
+    if joined.endswith("/actions/secrets --jq .secrets[].name"):
+        repo = joined.split("/repos/ThreatFlux/", 1)[1].split("/", 1)[0]
+        print("TF_AUTOMATION_APP_PRIVATE_KEY" if repo == os.environ.get("FAKE_SHADOW_REPO") else "CODECOV_TOKEN")
+    elif "/variables/TF_AUTOMATION_APP_ID" in joined:
         print(os.environ["FAKE_APP_ID"])
     elif joined.endswith("/repositories --jq .repositories[].name"):
         print("\n".join(os.environ["FAKE_REPOS"].split(",")))
@@ -175,6 +178,14 @@ class RotateKeyTests(unittest.TestCase):
                 self.assertNotEqual(result.returncode, 0)
                 self.assertNotIn("secret set", self.gh_log())
                 self.assertTrue(path.exists())
+
+    def test_repository_secret_overriding_the_org_secret_is_refused(self) -> None:
+        """A same-name repository secret would keep the old key in use, so the script stops before changing anything."""
+        result = self.rotate("--yes", str(self.pem), FAKE_SHADOW_REPO="ollama_rust_sdk")
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("overrides the organization secret in: ollama_rust_sdk", result.stderr)
+        self.assertNotIn("secret set", self.gh_log())
+        self.assertTrue(self.pem.exists())
 
     def test_without_confirmation_a_non_interactive_run_refuses(self) -> None:
         result = self.rotate(str(self.pem))
