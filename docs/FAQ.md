@@ -67,9 +67,38 @@ See the [Configuration Reference](../README.md#configuration-reference) for deta
 
 ### How do I skip crates.io publishing?
 
-Set the repository variable `RUST_TEMPLATE_PUBLISH_CRATES` to `false`. The release workflow then skips its "Publish to crates.io" job.
+Set the repository variable `RUST_TEMPLATE_PUBLISH_CRATES` to `false`. The release workflow then skips its crates.io jobs.
 
-Otherwise `release.yml` publishes every stable release through [crates.io trusted publishing](https://crates.io/docs/trusted-publishing), and a publish failure fails the release. No registry token secret is used. For each crate, add a trusted publisher on crates.io with your GitHub owner, repository, workflow `release.yml`, and environment `crates-io`. crates.io only accepts a trusted publisher for a crate that already exists, so publish a new crate's first version by hand. Prerelease versions (`X.Y.Z-...`) are never published.
+Otherwise `release.yml` publishes every stable release through [crates.io trusted publishing](https://crates.io/docs/trusted-publishing), and a publish failure fails the release. No registry token secret is used. Prerelease versions (`X.Y.Z-...`) are never published. Set publishing up as described in the next answer before the first release.
+
+### How do I set up crates.io trusted publishing?
+
+A generated repository copies this template's files, not its settings, so do all four steps once per repository (and step 2 onward per crate):
+
+1. **Create the `crates-io` environment and limit it to release tags.** The publish job runs in the `crates-io` environment, and the trusted publisher you add in step 3 only accepts OIDC tokens issued for that environment. GitHub creates an environment that a workflow references on first use, but without any protection rules, so create it first. In **Settings → Environments → New environment**, name it `crates-io`. Under **Deployment branches and tags**, choose **Selected branches and tags** and add a single **tag** rule `v*`, with no branch rule. Or, with `gh`:
+
+   ```bash
+   gh api -X PUT repos/OWNER/REPO/environments/crates-io \
+     -F 'deployment_branch_policy[protected_branches]=false' \
+     -F 'deployment_branch_policy[custom_branch_policies]=true'
+   gh api -X POST repos/OWNER/REPO/environments/crates-io/deployment-branch-policies \
+     -f name='v*' -f type=tag
+   ```
+
+   Only workflow runs on a `v*` tag can then enter the environment. `auto-release.yml` dispatches `release.yml` on the new tag, so releases keep working, while a run started from a branch cannot obtain a token crates.io accepts.
+2. **Publish each new crate's first version by hand.** crates.io accepts a trusted publisher only for a crate that already exists, so trusted publishing cannot create a crate. On crates.io, create an API token with the `publish-new` scope, limited to that crate's exact name and a short expiry. From a clean checkout of the commit to release, hand the token to Cargo for this one shell only (not `cargo login`, which saves it to `~/.cargo/credentials.toml`), publish, and forget it:
+
+   ```bash
+   read -rs CARGO_REGISTRY_TOKEN && export CARGO_REGISTRY_TOKEN   # paste the token; it is not echoed or saved in shell history
+   cargo publish --locked                                        # workspace: cargo publish --locked -p <crate>, in dependency order
+   unset CARGO_REGISTRY_TOKEN
+   ```
+
+   Then delete the token on crates.io. Never store it as a GitHub secret. `release.yml` skips a version crates.io already serves, so publishing the current version by hand does not make the next release fail.
+3. **Add the trusted publisher.** In the crate's settings on crates.io, add a GitHub trusted publisher with your owner, your repository, workflow `release.yml`, and environment `crates-io`. The environment must match, or crates.io refuses the token exchange.
+4. **Require trusted publishing.** Once a release has published through the trusted publisher, turn on **Require trusted publishing** in the crate's crates.io settings. API tokens can then no longer publish it.
+
+Until steps 1 to 3 are done for every crate, set `RUST_TEMPLATE_PUBLISH_CRATES=false` so releases do not fail on the publish job.
 
 ### How do I use custom CI runners?
 

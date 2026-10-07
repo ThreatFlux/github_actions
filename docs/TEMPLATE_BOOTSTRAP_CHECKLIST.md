@@ -16,6 +16,19 @@ Run this checklist immediately after generating a new repository from the templa
 5. Update `SECURITY.md` advisory links if the repository is not under ThreatFlux.
 6. Run `make template-check`.
 
+## crates.io Publishing
+
+Skip this section if the project does not publish crates; set the repository variable `RUST_TEMPLATE_PUBLISH_CRATES` to `false` instead.
+
+Generated repositories copy files, not settings, so `release.yml`'s publishing prerequisites must be created by hand before the first release. Full steps are in [FAQ: How do I set up crates.io trusted publishing?](FAQ.md#how-do-i-set-up-cratesio-trusted-publishing):
+
+1. Create the `crates-io` environment (**Settings → Environments**) with deployment branches and tags set to **Selected branches and tags** and a single tag rule `v*`. GitHub would otherwise create the environment on first use with no protection, so a run from any branch could obtain a token crates.io accepts.
+2. Publish each new crate's first version by hand with a short-lived crates.io token limited to the `publish-new` scope and that crate's name, passed to `cargo publish` through the `CARGO_REGISTRY_TOKEN` environment variable of one shell (not `cargo login`), then delete the token. crates.io cannot add a trusted publisher to a crate that does not exist yet.
+3. Add a trusted publisher to each crate on crates.io: your owner and repository, workflow `release.yml`, environment `crates-io`.
+4. After the first release has published through it, turn on **Require trusted publishing** for each crate.
+
+Keep `RUST_TEMPLATE_PUBLISH_CRATES=false` until steps 1 to 3 are done, so releases do not fail on the publish job.
+
 ## Single-Crate Projects
 
 1. Confirm `BINARY_NAME` in `Makefile`.
