@@ -86,7 +86,15 @@ A generated repository copies this template's files, not its settings, so do all
    ```
 
    Only workflow runs on a `v*` tag can then enter the environment. `auto-release.yml` dispatches `release.yml` on the new tag, so releases keep working, while a run started from a branch cannot obtain a token crates.io accepts.
-2. **Publish each new crate's first version by hand.** crates.io accepts a trusted publisher only for a crate that already exists, so trusted publishing cannot create a crate. On crates.io, create an API token with the `publish-new` scope, limited to that crate's exact name and a short expiry. Then run `cargo publish --locked` from a clean checkout of the commit to release (for a workspace, `cargo publish --locked -p <crate>` in dependency order), and delete the token right afterwards. Never store this token as a GitHub secret. `release.yml` skips a version crates.io already serves, so publishing the current version by hand does not make the next release fail.
+2. **Publish each new crate's first version by hand.** crates.io accepts a trusted publisher only for a crate that already exists, so trusted publishing cannot create a crate. On crates.io, create an API token with the `publish-new` scope, limited to that crate's exact name and a short expiry. From a clean checkout of the commit to release, hand the token to Cargo for this one shell only (not `cargo login`, which saves it to `~/.cargo/credentials.toml`), publish, and forget it:
+
+   ```bash
+   read -rs CARGO_REGISTRY_TOKEN && export CARGO_REGISTRY_TOKEN   # paste the token; it is not echoed or saved in shell history
+   cargo publish --locked                                        # workspace: cargo publish --locked -p <crate>, in dependency order
+   unset CARGO_REGISTRY_TOKEN
+   ```
+
+   Then delete the token on crates.io. Never store it as a GitHub secret. `release.yml` skips a version crates.io already serves, so publishing the current version by hand does not make the next release fail.
 3. **Add the trusted publisher.** In the crate's settings on crates.io, add a GitHub trusted publisher with your owner, your repository, workflow `release.yml`, and environment `crates-io`. The environment must match, or crates.io refuses the token exchange.
 4. **Require trusted publishing.** Once a release has published through the trusted publisher, turn on **Require trusted publishing** in the crate's crates.io settings. API tokens can then no longer publish it.
 
