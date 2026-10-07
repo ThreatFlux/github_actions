@@ -89,13 +89,26 @@ A generated repository copies this template's files, not its settings, so do all
 2. **Publish each new crate's first version by hand.** crates.io accepts a trusted publisher only for a crate that already exists, so trusted publishing cannot create a crate. On crates.io, create an API token with the `publish-new` scope, limited to the exact names of the crates you are publishing and a short expiry. Work from a clean checkout of the commit to release, and keep the token out of every step that compiles code. A verifying `cargo publish` builds the packaged crate, which runs the build scripts of the crate and its dependencies, and any of them could read a token in the environment and claim the still-unregistered name first. So verify without the token, then hand it to Cargo for one upload that compiles nothing, the same split `release.yml` makes between its `verify-crates` and `publish` jobs:
 
    ```bash
-   cargo publish --dry-run --locked                              # verify: packages and builds the crate; no token is set yet
-   read -rs CARGO_REGISTRY_TOKEN && export CARGO_REGISTRY_TOKEN   # paste the token; it is not echoed or saved in shell history
-   cargo publish --locked --no-verify                            # upload only: no build script runs while the token is set
-   unset CARGO_REGISTRY_TOKEN
+   (
+     set -e
+     unset CARGO_REGISTRY_TOKEN
+     cargo publish --dry-run --locked
+     printf 'crates.io token: ' >&2
+     read -rs CARGO_REGISTRY_TOKEN
+     echo >&2
+     export CARGO_REGISTRY_TOKEN
+     cargo publish --locked --no-verify
+   )
    ```
 
-   For a workspace, pass `-p <crate>` once per crate to both `cargo publish` commands. Cargo verifies and uploads them together in dependency order. Do not change the checkout between the two commands: Cargo refuses to publish uncommitted changes, so the upload contains what the dry run verified. The token stays in that one shell rather than going through `cargo login`, which saves it to `~/.cargo/credentials.toml`. Delete it on crates.io afterwards, and never store it as a GitHub secret. `release.yml` skips a version crates.io already serves, so publishing the current version by hand does not make the next release fail.
+   The block runs as one subshell, in Bash or Zsh:
+   - It unsets any `CARGO_REGISTRY_TOKEN` the shell already exports, so the dry run's build scripts see no token at all.
+   - `set -e` stops it if the dry run fails, before the token is asked for, so a crate that failed verification is never uploaded.
+   - The shell reads the whole block before running it, so pasted lines cannot end up as the token. Paste the token at the prompt; it is not echoed or saved in shell history.
+   - `--no-verify` uploads without compiling, so no build script runs while the token is set.
+   - The token exists only inside the subshell and is gone when the block ends, even after a failure. It never goes through `cargo login`, which would save it to `~/.cargo/credentials.toml`.
+
+   For a workspace, pass `-p <crate>` once per crate to both `cargo publish` commands; Cargo verifies and uploads them together in dependency order. Do not change the checkout between the two commands. Cargo refuses to publish uncommitted changes, so the upload contains what the dry run verified. The split keeps the token away from build scripts, but it does not undo anything an earlier build already did as your user. If you do not trust the dependency tree, run the dry run in a throwaway container, just as `release.yml` verifies on a separate runner. Delete the token on crates.io afterwards, and never store it as a GitHub secret. `release.yml` skips a version crates.io already serves, so publishing the current version by hand does not make the next release fail.
 3. **Add the trusted publisher.** In the crate's settings on crates.io, add a GitHub trusted publisher with your owner, your repository, workflow `release.yml`, and environment `crates-io`. The environment must match, or crates.io refuses the token exchange.
 4. **Require trusted publishing.** Once a release has published through the trusted publisher, turn on **Require trusted publishing** in the crate's crates.io settings. API tokens can then no longer publish it.
 
