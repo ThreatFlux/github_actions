@@ -1,0 +1,37 @@
+# Repositories the threatflux-automation GitHub App serves, one per line.
+#
+# This list is the single source of truth for three settings that must stay
+# identical:
+#   - the repositories the App installation on ThreatFlux can access;
+#   - the selected repositories of the TF_AUTOMATION_APP_PRIVATE_KEY
+#     organization secret;
+#   - the selected repositories of the TF_AUTOMATION_APP_ID organization
+#     variable.
+# automation-app-health.yml fails when any of them differs from this list, in
+# either direction, and scripts/rotate-automation-app-key.sh shares the secret
+# (and, with --sync-repos, the variable) with exactly these repositories.
+# Change the list in the same pull request that adds or removes a repository,
+# then update the three settings to match. Runbook: docs/SECRETS-ROTATION.md.
+#
+# Repository names only (no owner). Blank lines and comments are ignored.
+
+FluxEncrypt
+FluxPrompt
+anthropic_rust_sdk
+file-scanner
+gguf
+github_actions
+ollama_rust_sdk
+openai_rust_sdk
+rust-cicd-template
+threatflux-atlassian
+threatflux-binary-analysis
+threatflux-cache
+threatflux-hashing
+threatflux-package-security
+threatflux-string-analysis
+threatflux-threat-detection
+threatflux-unifi-sdk
+vertex_rust_sdk
+virustotal-rs
+yrlint
