@@ -32,6 +32,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - `release` fails with an explicit error when `Cargo.toml` holds a version lower than the highest release tag, instead of bumping from the stale manifest and proposing versions at or below ones already tagged on every run
 - `release --dry-run` names the path the real run would take (commit and tag, commit only, tag the merged manifest version, or refresh the release pull request) instead of reporting every mode as "would release"
+- `release.yml` writes the Windows archive's `.sha256` file with an LF line ending, like the Unix archives' files. Every `github-actions-maintainer-windows-amd64.zip.sha256` asset published so far (0.4.2 to 0.7.8) ends in CRLF, so `shasum -a 256 -c` and macOS `sha256sum -c` report the archive as missing; check one with `tr -d '\r' < github-actions-maintainer-windows-amd64.zip.sha256 | shasum -a 256 -c` (the hash itself is correct)
 
 ### Added
 
