@@ -72,13 +72,14 @@ The `docker.yml` workflow also triggers on the tag, producing:
 | Scan | Trivy vulnerability scan |
 | Sign | Cosign image signature |
 | SBOM | CycloneDX image SBOM |
-| Push | `ghcr.io/threatflux/<image>:<tag>` |
+| Push | `ghcr.io/threatflux/<image>:<tag>`; also `docker.io/<namespace>/<image>:<tag>`, signed the same way, only when Docker Hub publishing is turned on ([FAQ](FAQ.md#how-do-i-publish-to-docker-hub)) |
 
 ### Required Permissions
 
 | Credential | Holder | Purpose |
 |------------|--------|---------|
 | `GITHUB_TOKEN` | Automatic | Release assets, GHCR push |
+| `DOCKERHUB_USERNAME`, `DOCKERHUB_TOKEN` (optional) | Docker Hub namespace owners | Docker Hub login and push, used only when the `RUST_TEMPLATE_PUBLISH_DOCKERHUB` variable is `true`. The variable is unset by default, so nothing is pushed to Docker Hub |
 | crates.io trusted publisher (owner `ThreatFlux`, repository `github_actions`, workflow `release.yml`, environment `crates-io`) | crates.io crate owners | The publish job exchanges its OIDC token (`id-token: write`) for a short-lived crates.io token through `rust-lang/crates-io-auth-action`; no registry token secret exists |
 
 The `crates-io` environment only admits `v*` tags, so a real `release.yml` run must be dispatched on the tag (`gh workflow run release.yml --ref vX.Y.Z -f version=X.Y.Z`), which is what `auto-release.yml` does. That restriction is a repository setting, not a file, so a repository generated from this template has to create the environment itself; see [FAQ: How do I set up crates.io trusted publishing?](FAQ.md#how-do-i-set-up-cratesio-trusted-publishing).
