@@ -358,11 +358,12 @@ def key_access_findings(audit: Audit) -> list[Finding]:
         return []  # secret_findings already explains why the audit did not run
     entry = secret_entry(audit)
     if entry is None:
+        # Same as for the App ID variable: only this repository can mint.
         return [Finding(
-            WARNING, f"`{audit.key_secret}` is not an organization secret",
-            "The App minted a token, so the key comes from somewhere else (a repository secret?)."
-            f" Store it as the organization secret {audit.key_secret} with selected repositories"
-            f" ({ROTATE_SCRIPT}).",
+            ERROR, f"`{audit.key_secret}` is not an organization secret",
+            "The App minted a token here, so the key comes from somewhere else (a repository secret?);"
+            f" the other listed repositories cannot read it. Store it as the organization secret"
+            f" {audit.key_secret} shared with exactly the repositories in {audit.repos_file} ({ROTATE_SCRIPT}).",
         )]
     fix = (f"`{ROTATE_SCRIPT} --sync-repos` at the next rotation, or the secret's repository access in the"
            " organization's Actions secrets settings")
@@ -382,10 +383,13 @@ def variable_findings(audit: Audit) -> list[Finding]:
             f" organization owner, does. See {RUNBOOK}.",
         )]
     if audit.variable_outcome == "not-found":
+        # This run minted with a repository-level copy, but the other listed
+        # repositories have no App ID at all, so the invariant is broken.
         return [Finding(
-            WARNING, f"`{name}` is not an organization variable",
-            "The App minted a token, so the App ID comes from somewhere else (a repository variable?)."
-            f" Store it as the organization variable {name} with selected repositories.",
+            ERROR, f"`{name}` is not an organization variable",
+            "The App minted a token here, so the App ID comes from somewhere else (a repository variable?);"
+            f" the other listed repositories cannot read it. Store it as the organization variable {name}"
+            f" shared with exactly the repositories in {audit.repos_file}.",
         )]
     if audit.variable_outcome != "success":
         detail = ("Reading the organization variable failed unexpectedly; see the run log."

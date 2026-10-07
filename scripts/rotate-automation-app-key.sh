@@ -175,12 +175,18 @@ expected="$(read_repo_list "${repos_file}")"
 expected_count="$(list_lines "${expected}" | wc -l | tr -d ' ')"
 log "Repository list ${repos_file}: ${expected_count} repositories"
 
+# A failed lookup or listing stops the script here (errexit), before anything
+# is compared or changed, so an API error is never mistaken for drift.
 secret_visibility="$(org_visibility secrets "${SECRET_NAME}")"
 secret_repos=""
-[[ "${secret_visibility}" != selected ]] || secret_repos="$(org_repos secrets "${SECRET_NAME}")"
+if [[ "${secret_visibility}" == selected ]]; then
+    secret_repos="$(org_repos secrets "${SECRET_NAME}")"
+fi
 variable_visibility="$(org_visibility variables "${APP_ID_VARIABLE}")"
 variable_repos=""
-[[ "${variable_visibility}" != selected ]] || variable_repos="$(org_repos variables "${APP_ID_VARIABLE}")"
+if [[ "${variable_visibility}" == selected ]]; then
+    variable_repos="$(org_repos variables "${APP_ID_VARIABLE}")"
+fi
 
 secret_drift=false
 variable_drift=false

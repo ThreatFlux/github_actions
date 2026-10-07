@@ -144,8 +144,8 @@ From then on every rotation updates both. If the script cannot write them, it pr
 | --- | --- | --- |
 | Mint a token | `metadata: read` | **broken**: the key or App ID is wrong, or the secret is not shared with `github_actions`; the run fails |
 | List the installation's repositories and compare them with `.github/automation-app-repos.txt` | `metadata: read` | **broken**: a repository was added to or removed from the installation without the list (or the other way round); the run fails |
-| Compare the `TF_AUTOMATION_APP_PRIVATE_KEY` secret's selected repositories with the list | `organization_secrets: read` | **broken**: a listed repository cannot read the key, an unlisted one can, or the secret is not `selected`; the run fails |
-| Compare the `TF_AUTOMATION_APP_ID` variable's selected repositories with the list | `organization_actions_variables: read` | **broken** on any difference, as for the secret. **attention** while the App lacks the permission (see below) |
+| Compare the `TF_AUTOMATION_APP_PRIVATE_KEY` secret's selected repositories with the list | `organization_secrets: read` | **broken**: a listed repository cannot read the key, an unlisted one can, or the secret is not a `selected` organization secret; the run fails |
+| Compare the `TF_AUTOMATION_APP_ID` variable's selected repositories with the list | `organization_actions_variables: read` | **broken** on any difference or when it is not an organization variable, as for the secret. **attention** while the App lacks the permission (see below) |
 | List the organization's secrets (names, dates, and visibility only) | `organization_secrets: read` | **attention**: the App private key is older than 90 days (from its [rotation record](#key-age-tracking) when one matches), another credential is older than 180 days (name-only secrets such as `DOCKERHUB_USERNAME` are exempt), or `GIT_TOKEN` or `CARGO_REGISTRY_TOKEN` still exists |
 | Fingerprint the stored key and compare it with the rotation record | none (reads the secret it already holds) | **attention** when the record names a different key or is malformed; a missing record is only a note |
 

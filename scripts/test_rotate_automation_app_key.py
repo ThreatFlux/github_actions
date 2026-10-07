@@ -49,11 +49,15 @@ def visibility(variable):
     value = os.environ.get(variable, "selected")
     if value == "missing":
         sys.exit("gh: Not Found (HTTP 404)")
+    if value == "error":
+        sys.exit("gh: Bad credentials (HTTP 401)")
     print(value)
 if args[0] == "api":
     if joined.endswith("/actions/secrets --jq .secrets[].name"):
         repo = joined.split("/repos/ThreatFlux/", 1)[1].split("/", 1)[0]
         print("TF_AUTOMATION_APP_PRIVATE_KEY" if repo == os.environ.get("FAKE_SHADOW_REPO") else "CODECOV_TOKEN")
+    elif joined.endswith("/repositories --jq .repositories[].name") and os.environ.get("FAKE_LIST_FAILS"):
+        sys.exit("gh: Server Error (HTTP 502)")
     elif joined.endswith("/variables/TF_AUTOMATION_APP_ID/repositories --jq .repositories[].name"):
         print("\n".join(os.environ.get("FAKE_VAR_REPOS", os.environ["FAKE_REPOS"]).split(",")))
     elif joined.endswith("/secrets/TF_AUTOMATION_APP_PRIVATE_KEY/repositories --jq .repositories[].name"):
@@ -220,6 +224,16 @@ class RotateKeyTests(unittest.TestCase):
                 self.assertIn("rerun with --sync-repos", result.stderr)
                 self.assertNotIn("secret set", self.gh_log())
                 self.assertNotIn("variable set", self.gh_log())
+                self.assertTrue(self.pem.exists())
+
+    def test_failed_lookups_stop_before_any_comparison_or_change(self) -> None:
+        """An API error must never pass for drift, least of all with --sync-repos."""
+        for env in ({"FAKE_LIST_FAILS": "1"}, {"FAKE_SECRET_VISIBILITY": "error"}):
+            with self.subTest(env=env):
+                result = self.rotate("--yes", "--sync-repos", str(self.pem), **env)
+                self.assertNotEqual(result.returncode, 0)
+                self.assertNotIn("not shared with", result.stderr)
+                self.assertNotIn("set", self.gh_log().replace("--visibility", ""))
                 self.assertTrue(self.pem.exists())
 
     def test_sync_repos_shares_secret_and_variable_with_exactly_the_list(self) -> None:

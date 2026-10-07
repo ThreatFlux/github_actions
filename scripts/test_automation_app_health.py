@@ -155,14 +155,14 @@ class RepositoryInvariantTests(unittest.TestCase):
         self.assertIn("| `TF_AUTOMATION_APP_ID` repositories | skipped: App lacks organization Variables: read |",
                       report)
 
-    def test_variable_that_is_not_an_organization_variable(self) -> None:
+    def test_variable_that_is_not_an_organization_variable_is_broken(self) -> None:
         status, findings, _ = evaluate(audit(variable_outcome="not-found", variable_repos=None))
-        self.assertEqual(status, "attention")
+        self.assertEqual(status, "broken")
         self.assertEqual(findings[0].title, "`TF_AUTOMATION_APP_ID` is not an organization variable")
 
-    def test_key_secret_missing_from_the_organization(self) -> None:
+    def test_key_secret_missing_from_the_organization_is_broken(self) -> None:
         status, findings, _ = evaluate(audit(secrets=(inventory_entry("CODECOV_TOKEN", "2026-09-01T00:00:00Z"),)))
-        self.assertEqual(status, "attention")
+        self.assertEqual(status, "broken")
         self.assertIn(f"`{KEY}` is not an organization secret", titles(findings))
 
 
