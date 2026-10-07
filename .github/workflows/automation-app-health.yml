@@ -227,6 +227,10 @@ jobs:
           REPO_URL: ${{ github.server_url }}/${{ github.repository }}
         run: |
           set -euo pipefail
+          # --obsolete names a secret that is being retired and should be
+          # deleted; --deleted names one that was deleted (on 2026-10-07 for
+          # the six below) and must not come back. docs/SECRETS-ROTATION.md
+          # lists both.
           python3 scripts/automation_app_health.py \
             --owner "${OWNER}" \
             --expected-repos-file "${REPOS_FILE}" \
@@ -248,10 +252,14 @@ jobs:
             --key-max-age-days "${KEY_MAX_AGE_DAYS}" \
             --max-age-days "${SECRET_MAX_AGE_DAYS}" \
             --obsolete "GIT_TOKEN=Classic personal access token that GitHub now rejects (401). Nothing may use it: replace the remaining references (lifeflux workflows) with GITHUB_TOKEN or a GitHub App token, then delete the secret." \
+            --obsolete "CODECOV_TOKEN=Being retired, so do not rotate it: Codecov uploads move to OIDC (use_oidc: true on codecov/codecov-action, with id-token: write). Move the workflows that still read it to OIDC, then delete the secret and regenerate the upload token in Codecov." \
             --not-credential DOCKERHUB_USERNAME \
-            --not-credential CODACY_USERNAME \
-            --not-credential CODACY_ORGANIZATION_PROVIDER \
-            --obsolete "CARGO_REGISTRY_TOKEN=crates.io rejects this token (403), and every ThreatFlux release.yml now publishes through crates.io trusted publishing (rust-lang/crates-io-auth-action), so no workflow reads it. Delete the secret." \
+            --deleted CARGO_REGISTRY_TOKEN \
+            --deleted CODACY_API_TOKEN \
+            --deleted CODACY_ORGANIZATION_PROVIDER \
+            --deleted CODACY_USERNAME \
+            --deleted PUB_DEV_CREDENTIALS \
+            --deleted SAFETY_API_KEY \
             --run-url "${RUN_URL}" \
             --repo-url "${REPO_URL}" \
             --report health-report.md

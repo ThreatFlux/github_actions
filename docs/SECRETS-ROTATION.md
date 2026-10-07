@@ -7,38 +7,47 @@
   whenever a secret is added, rotated, or deleted.
 -->
 
-ThreatFlux keeps CI credentials as **GitHub organization Actions secrets**. Org owners hold them, and a secret is visible only to the repositories its visibility allows. Wherever a platform supports it, a short-lived OIDC credential replaces a stored secret:
+ThreatFlux keeps CI credentials as **GitHub organization Actions secrets**. Org owners (@wroersma and @vtriple as of 2026-10-07) hold them, and a secret is visible only to the repositories its visibility allows. Wherever a platform supports it, a short-lived OIDC credential replaces a stored secret:
 
 | Purpose | Credential | Stored secret needed |
 | --- | --- | --- |
-| crates.io publishing | [Trusted publishing](https://crates.io/docs/trusted-publishing): `rust-lang/crates-io-auth-action` exchanges the job's OIDC token for a short-lived crates.io token (job needs `id-token: write` and the `crates-io` environment) | None |
+| crates.io publishing | [Trusted publishing](https://crates.io/docs/trusted-publishing): `rust-lang/crates-io-auth-action` exchanges the job's OIDC token for a short-lived crates.io token (job needs `id-token: write` and the `crates-io` environment). All 20 crates published from ThreatFlux repositories have **Require trusted publishing** on, so crates.io refuses API tokens for them | None |
 | GHCR images | The workflow's `GITHUB_TOKEN` with `packages: write` | None |
 | Container signing | Keyless cosign (Sigstore Fulcio certificate from the job's OIDC token) | None |
-| Codecov uploads | `codecov/codecov-action` with OIDC (`id-token: write`) where a repository has moved to it | None |
+| Codecov uploads | `codecov/codecov-action` with `use_oidc: true` (job needs `id-token: write`); lifeflux `quality.yml` is the last workflow still [moving to it](#retiring-git_token-and-codecov_token) | None |
 | Cross-repository automation (release PRs, tags that trigger workflows) | `threatflux-automation` GitHub App installation token from `actions/create-github-app-token` | The App private key, one secret |
 
 The [Automation App Health](../.github/workflows/automation-app-health.yml) workflow checks all of this every week; see [Health check](#health-check).
 
 ## Inventory
 
-Names and dates come from `gh api /orgs/ThreatFlux/actions/secrets` (as of 2026-10-06). The "Used by" column lists the default-branch workflows that reference each secret across every non-archived ThreatFlux repository on that date. A secret with visibility `all` can be read by any repository, so this column shows usage, not reach.
+Names and dates come from `gh api /orgs/ThreatFlux/actions/secrets` (as of 2026-10-07). The "Used by" column lists the default-branch workflows that reference each secret across every non-archived ThreatFlux repository on that date. A secret with visibility `all` can be read by any repository, so this column shows usage, not reach. A cadence counts from the "Last updated" date, except for the App key, which counts from its [rotation record](#key-age-tracking).
 
 | Secret | Visibility | Last updated | Purpose (issuer) | Used by | Cadence | Status |
 | --- | --- | --- | --- | --- | --- | --- |
-| `TF_AUTOMATION_APP_PRIVATE_KEY` | selected (20 repos) | 2026-10-06 | Private key of the `threatflux-automation` GitHub App (App ID in the `TF_AUTOMATION_APP_ID` org variable) | The 20 repositories in [`.github/automation-app-repos.txt`](../.github/automation-app-repos.txt), mostly through their `auto-release.yml` (and `reusable-auto-release.yml`); also `automation-app-health.yml` and `reusable-release-smoke.yml` here, anthropic_rust_sdk `release.yml`, and ollama_rust_sdk `dependencies.yml` | 90 days, counted from its [rotation record](#key-age-tracking) | Active |
-| `CARGO_REGISTRY_TOKEN` | all | 2025-08-14 | crates.io API token | None. Every ThreatFlux `release.yml` that publishes crates (all 20 repositories in the list) authenticates through `rust-lang/crates-io-auth-action` | n/a | **Obsolete, delete now.** crates.io rejects it (403) |
-| `GIT_TOKEN` | all | 2025-03-31 | Classic personal access token | lifeflux `auto-release.yml`, `ci.yml`, `quality.yml`, `security.yml` (fetches private dependencies). YaraFlux, the other former user, is archived | n/a | **Obsolete, delete.** GitHub rejects it (401), so those lifeflux workflows already fail where they need it |
-| `ANTHROPIC_API_KEY` | private | 2025-06-19 | Anthropic API key (Anthropic console) | anthropic_rust_sdk `ci.yml` (that repository is public, so `private` visibility already hides the key from it) | 180 days | Rotate; review whether it is still needed |
-| `CODACY_API_TOKEN` | all | 2025-08-20 | Codacy API token (Codacy account settings) | No workflow references it | 180 days | Unused; confirm with the Codacy owner, then delete |
-| `CODACY_ORGANIZATION_PROVIDER` | all | 2025-08-20 | Codacy organization provider (`gh`), not a credential | No workflow references it | n/a | Unused; delete with `CODACY_API_TOKEN` |
-| `CODACY_USERNAME` | all | 2025-08-20 | Codacy organization name, not a credential | No workflow references it | n/a | Unused; delete with `CODACY_API_TOKEN` |
-| `CODECOV_TOKEN` | all | 2025-03-10 | Codecov upload token (Codecov organization settings) | `ci.yml` in ollama_rust_sdk and threatflux-atlassian; lifeflux `quality.yml`. The other repositories upload with Codecov OIDC | 180 days | Rotate, or move the remaining three workflows to OIDC and delete |
-| `DOCKERHUB_TOKEN` | all | 2025-02-01 | Docker Hub access token for the `threatflux` namespace (Docker Hub account settings) | `docker.yml` in github_actions, lifeflux, openai_rust_sdk, rust-cicd-template, threatflux-unifi-sdk (template repositories only log in when `RUST_TEMPLATE_PUBLISH_DOCKERHUB=true`) | 180 days | Rotate |
+| `TF_AUTOMATION_APP_PRIVATE_KEY` | selected (20 repos) | 2026-10-06 | Private key of the `threatflux-automation` GitHub App (App ID in the `TF_AUTOMATION_APP_ID` org variable) | The 20 repositories in [`.github/automation-app-repos.txt`](../.github/automation-app-repos.txt), mostly through their `auto-release.yml` (and `reusable-auto-release.yml`); also `automation-app-health.yml` and `reusable-release-smoke.yml` here, anthropic_rust_sdk `release.yml`, and ollama_rust_sdk `dependencies.yml` | 90 days, counted from its [rotation record](#key-age-tracking) | Active. The record dates the stored key to 2026-10-06, so it is due by 2027-01-04 |
+| `GIT_TOKEN` | all | 2025-03-31 | Classic personal access token | lifeflux `auto-release.yml`, `ci.yml`, `quality.yml`, `security.yml` (fetches private dependencies). YaraFlux, the other former user, is archived | n/a | **Retiring.** GitHub rejects it (401), so those lifeflux workflows already fail where they need it. See [Retiring `GIT_TOKEN` and `CODECOV_TOKEN`](#retiring-git_token-and-codecov_token) |
+| `CODECOV_TOKEN` | all | 2025-03-10 | Codecov upload token (Codecov organization settings) | lifeflux `quality.yml` only. ollama_rust_sdk and threatflux-atlassian moved their `ci.yml` to Codecov OIDC on 2026-10-07 (ThreatFlux/ollama_rust_sdk#96, ThreatFlux/threatflux-atlassian#112), and the other repositories already uploaded with OIDC | None: do not rotate | **Retiring.** Delete it once no workflow reads it. See [Retiring `GIT_TOKEN` and `CODECOV_TOKEN`](#retiring-git_token-and-codecov_token) |
+| `ANTHROPIC_API_KEY` | private | 2025-06-19 | Anthropic API key (Anthropic console) | anthropic_rust_sdk `ci.yml` (that repository is public, so `private` visibility already hides the key from it) | 180 days | **Rotate**, overdue since 2025-12-16; review whether it is still needed |
+| `DOCKERHUB_TOKEN` | all | 2025-02-01 | Docker Hub access token for the `threatflux` namespace (Docker Hub account settings) | `docker.yml` in github_actions, lifeflux, openai_rust_sdk, rust-cicd-template, threatflux-unifi-sdk (template repositories only log in when `RUST_TEMPLATE_PUBLISH_DOCKERHUB=true`) | 180 days | **Rotate**, overdue since 2025-07-31 |
 | `DOCKERHUB_USERNAME` | all | 2025-02-01 | Docker Hub account name, not a credential | Same as `DOCKERHUB_TOKEN` | With the token | Keep with the token |
-| `GITLEAKS_LICENSE` | all | 2025-08-21 | Gitleaks action license key | `security.yml` in lifeflux, openai_rust_sdk | On renewal, at most 180 days | Rotate |
-| `PUB_DEV_CREDENTIALS` | all | 2025-03-10 | pub.dev publishing credentials | No workflow references it | n/a | Unused; delete (pub.dev also supports OIDC publishing from GitHub Actions) |
-| `SAFETY_API_KEY` | all | 2025-02-13 | Safety CLI API key | No workflow references it | n/a | Unused; delete |
-| `THREATFLUX_REGISTRY_PASSWORD` | all | 2026-01-04 | Password for the ThreatFlux container registry | No workflow references it | 180 days | Unused in Actions; confirm with its owner, then delete or move to `selected` |
+| `GITLEAKS_LICENSE` | all | 2025-08-21 | Gitleaks action license key | `security.yml` in lifeflux, openai_rust_sdk | On renewal, at most 180 days | **Rotate**, overdue since 2026-02-17 |
+| `THREATFLUX_REGISTRY_PASSWORD` | all | 2026-01-04 | Password for the ThreatFlux container registry | No workflow references it | 180 days | Unused in Actions. **Rotate** (overdue since 2026-07-03), or confirm with its owner and then delete it or move it to `selected` |
+
+### Deleted secrets
+
+These organization secrets were deleted on 2026-10-07, once nothing used them. The [health check](#health-check) reports them as still deleted, and raises a finding if any of them is created again.
+
+| Secret | Was | Why it went |
+| --- | --- | --- |
+| `CARGO_REGISTRY_TOKEN` | crates.io API token | crates.io rejected it (403), and no workflow read it: every `release.yml` that publishes crates authenticates through `rust-lang/crates-io-auth-action`. See [crates.io trusted publishing](#cratesio-trusted-publishing) |
+| `CODACY_API_TOKEN` | Codacy API token (Codacy account settings) | No workflow referenced it |
+| `CODACY_ORGANIZATION_PROVIDER` | Codacy organization provider (`gh`), not a credential | No workflow referenced it; deleted with `CODACY_API_TOKEN` |
+| `CODACY_USERNAME` | Codacy organization name, not a credential | No workflow referenced it; deleted with `CODACY_API_TOKEN` |
+| `PUB_DEV_CREDENTIALS` | pub.dev publishing credentials | No workflow referenced it. pub.dev supports OIDC publishing from GitHub Actions if a package ever needs it |
+| `SAFETY_API_KEY` | Safety CLI API key | No workflow referenced it |
+
+Deleting a GitHub secret does not revoke the credential at its issuer. If the Codacy API token, the pub.dev credentials, or the Safety API key still work, revoke them in the issuer's settings too.
 
 Organization variables that belong to the App (values are not secret, but their repository access is audited like the key's):
 
@@ -59,14 +68,24 @@ gh search code --owner ThreatFlux 'secrets.NAME' --json repository,path --jq '.[
 
 Code search can lag behind recent pushes; for an exact answer, read each repository's `.github/workflows` on its default branch.
 
-## Deleting the obsolete secrets
+## crates.io trusted publishing
 
-`CARGO_REGISTRY_TOKEN` and `GIT_TOKEN` no longer authenticate, so deleting them cannot break anything that works today.
+Every crate published from a ThreatFlux repository publishes through trusted publishing, and has **Require trusted publishing** turned on in its crates.io settings, so no API token can publish it. As of 2026-10-07 that is all 20 of them: `fluxencrypt`, `fluxencrypt-async`, `fluxencrypt-cli`, `fluxprompt`, `gguf-rs-lib`, `github-actions-maintainer`, `ollama_rust_sdk`, `openai_rust_sdk`, `threatflux-anthropic-sdk`, `threatflux-atlassian-cli`, `threatflux-atlassian-sdk`, `threatflux-binary-analysis`, `threatflux-cache`, `threatflux-hashing`, `threatflux-package-security`, `threatflux-string-analysis`, `threatflux-threat-detection`, `threatflux-unifi-sdk`, `threatflux-vertex-rust-sdk`, and `virustotal-rs`. That is why `CARGO_REGISTRY_TOKEN` could be deleted. To check the setting, read each crate's `trustpub_only` flag:
 
-1. **`CARGO_REGISTRY_TOKEN`**: nothing reads it any more. Every publishing repository's `release.yml` authenticates through `rust-lang/crates-io-auth-action`, and the October 2026 releases (for example `github-actions-maintainer` 0.7.7) published that way. Delete it with `gh secret delete CARGO_REGISTRY_TOKEN --org ThreatFlux`, and turn on **Require trusted publishing** in each crate's crates.io settings (already on for `github-actions-maintainer`, `threatflux-vertex-rust-sdk`, `threatflux-unifi-sdk`, `threatflux-package-security`, and `ollama_rust_sdk`) so no token can publish them again.
-2. **`GIT_TOKEN`**: replace the remaining references in lifeflux (`auto-release.yml`, `ci.yml`, `quality.yml`, `security.yml`) with `GITHUB_TOKEN` or a GitHub App installation token, then run `gh secret delete GIT_TOKEN --org ThreatFlux`. Revoke the personal access token too, if it still exists in its owner's developer settings.
+```bash
+curl -fsS -A 'ThreatFlux secrets audit' https://crates.io/api/v1/crates/NAME | jq '.crate.trustpub_only'
+```
 
-Until both are gone, every Automation App Health run lists them as findings.
+A new crate's first version still has to be published by hand, because crates.io cannot add a trusted publisher to a crate that does not exist yet; [TEMPLATE_BOOTSTRAP_CHECKLIST.md](TEMPLATE_BOOTSTRAP_CHECKLIST.md) describes that publish, which uses a short-lived token that is deleted afterwards. Turn on **Require trusted publishing** as soon as the trusted publisher is added.
+
+## Retiring `GIT_TOKEN` and `CODECOV_TOKEN`
+
+Neither secret should be rotated. Both are being retired:
+
+1. **`GIT_TOKEN`** no longer authenticates, so deleting it cannot break anything that works today. Replace the remaining references in lifeflux (`auto-release.yml`, `ci.yml`, `quality.yml`, `security.yml`) with `GITHUB_TOKEN` or a GitHub App installation token, then run `gh secret delete GIT_TOKEN --org ThreatFlux`. Revoke the personal access token too, if it still exists in its owner's developer settings.
+2. **`CODECOV_TOKEN`** still works. Move each workflow that reads it to OIDC: give the coverage job `id-token: write` and pass `use_oidc: true` to `codecov/codecov-action` instead of `token:`. ThreatFlux/ollama_rust_sdk#96 and ThreatFlux/threatflux-atlassian#112 did this for their `ci.yml` on 2026-10-07; lifeflux `quality.yml` is the last one. When no workflow reads it, run `gh secret delete CODECOV_TOKEN --org ThreatFlux` and regenerate the global upload token in Codecov's organization settings, so the old value stops working.
+
+Until each is gone, every Automation App Health run lists it as an obsolete secret. Once deleted, add it to the `--deleted` list in [`automation-app-health.yml`](../.github/workflows/automation-app-health.yml), and move its row to [Deleted secrets](#deleted-secrets).
 
 ## Rotation procedures
 
@@ -75,13 +94,12 @@ Rotate on the cadence above, immediately if a value may have leaked, and wheneve
 | Secret | Issue a new value at | Prove it works |
 | --- | --- | --- |
 | `TF_AUTOMATION_APP_PRIVATE_KEY` | The App's settings page; follow the [App key runbook](#app-key-runbook) | The script dispatches Automation App Health |
-| `CODECOV_TOKEN` | Codecov, organization settings, global upload token | Rerun the CI workflow of a repository that uploads coverage |
 | `DOCKERHUB_TOKEN` | Docker Hub, Account settings, Personal access tokens (read and write, scoped to `threatflux`) | Dispatch a `docker.yml` that publishes to Docker Hub |
 | `GITLEAKS_LICENSE` | The Gitleaks license portal | Rerun `security.yml` in lifeflux or openai_rust_sdk |
 | `ANTHROPIC_API_KEY` | The Anthropic console, API keys | Rerun the anthropic_rust_sdk tests that use it |
 | `THREATFLUX_REGISTRY_PASSWORD` | The ThreatFlux registry's user settings | Log in with `docker login` before deleting the old password |
 
-Secrets that are only names (`*_USERNAME`, `CODACY_ORGANIZATION_PROVIDER`) need no rotation.
+`DOCKERHUB_USERNAME` only holds a name and needs no rotation. `GIT_TOKEN` and `CODECOV_TOKEN` are [being retired](#retiring-git_token-and-codecov_token) instead of rotated.
 
 ## App key runbook
 
@@ -127,7 +145,7 @@ The 90-day key limit needs the date the key was stored. The secret's own `update
 
 The health check reads both through the workflow's `vars` context, so it needs no extra App permission, and it fingerprints the key in `TF_AUTOMATION_APP_PRIVATE_KEY` itself. Only when the two fingerprints match does the key's age count from the record. Otherwise it falls back to the secret's `updated_at` and says so in the report: as a note when there is no record yet, and as a warning when the record describes another key (the secret was replaced without the script) or is incomplete or malformed.
 
-The key in use when this was introduced predates the script's record. Create the record once, with the fingerprint the health report shows under "App private key" and the date the key was generated:
+The key in use when this was introduced predated the script's record, so its record was created by hand on 2026-10-07, dating the key to 2026-10-06. If a key ever lacks a record again, create one with the fingerprint the health report shows under "App private key" and the date the key was generated:
 
 ```bash
 gh variable set TF_AUTOMATION_APP_KEY_FINGERPRINT --org ThreatFlux --visibility selected --repos github_actions --body 'SHA256:<fingerprint from the health report>'
@@ -146,7 +164,7 @@ From then on every rotation updates both. If the script cannot write them, it pr
 | List the installation's repositories and compare them with `.github/automation-app-repos.txt` | `metadata: read` | **broken**: a repository was added to or removed from the installation without the list (or the other way round); the run fails |
 | Compare the `TF_AUTOMATION_APP_PRIVATE_KEY` secret's selected repositories with the list | `organization_secrets: read` | **broken**: a listed repository cannot read the key, an unlisted one can, or the secret is not a `selected` organization secret; the run fails |
 | Compare the `TF_AUTOMATION_APP_ID` variable's selected repositories with the list | `organization_actions_variables: read` | **broken** on any difference or when it is not an organization variable, as for the secret. **attention** while the App lacks the permission (see below) |
-| List the organization's secrets (names, dates, and visibility only) | `organization_secrets: read` | **attention**: the App private key is older than 90 days (from its [rotation record](#key-age-tracking) when one matches), another credential is older than 180 days (name-only secrets such as `DOCKERHUB_USERNAME` are exempt), or `GIT_TOKEN` or `CARGO_REGISTRY_TOKEN` still exists |
+| List the organization's secrets (names, dates, and visibility only) | `organization_secrets: read` | **attention**: the App private key is older than 90 days (from its [rotation record](#key-age-tracking) when one matches), another credential is older than 180 days (name-only secrets such as `DOCKERHUB_USERNAME` are exempt), a secret being retired (`GIT_TOKEN`, `CODECOV_TOKEN`) still exists, or one of the [deleted secrets](#deleted-secrets) exists again. The report's "Deleted secrets" row shows how many of them are still deleted |
 | Fingerprint the stored key and compare it with the rotation record | none (reads the secret it already holds) | **attention** when the record names a different key or is malformed; a missing record is only a note |
 
 Together the three comparisons assert that the installation, the key secret, and the App ID variable reach the same repositories, the ones in the list.
