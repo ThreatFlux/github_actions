@@ -127,6 +127,30 @@ The workflows read these variables at runtime and fall back to GitHub-hosted run
 
 Delete the workflow file from `.github/workflows/`. If you remove `auto-release.yml`, you'll need to tag releases manually — see [RELEASING.md](RELEASING.md).
 
+### How do I publish to Docker Hub?
+
+`docker.yml` publishes to GHCR (`ghcr.io/<owner>/<repo>`), which is the primary registry: its images are signed with cosign (keyless) and get an SBOM. Docker Hub publishing is off by default. It stays off unless the repository or organization variable `RUST_TEMPLATE_PUBLISH_DOCKERHUB` is exactly `true`. While it is off, the Docker Hub steps are skipped, so no step that runs reads the Docker Hub secrets and no `docker.io` tag is generated. Images already on Docker Hub are left as they are.
+
+To turn it back on:
+
+1. **Create a Docker Hub access token that can push only where it needs to.** Prefer an organization access token (Docker Team or Business plan): in Docker Home, select the organization, then **Identity & auth → Access tokens → Generate access token**. Set an expiration date, add only the repositories this workflow pushes to (`<namespace>/<repo>`, the lowercased GitHub repository name; `<namespace>` defaults to `threatflux` and can be changed with the `RUST_TEMPLATE_DOCKERHUB_NAMESPACE` variable), and give each one the image push permission (read and write; push includes pull), not delete. A personal access token (**Account settings → Personal access tokens**) cannot be limited to repositories; if you have to use one, choose **Read & Write**, never a scope that includes delete.
+2. **Store the credentials as GitHub secrets.** Set `DOCKERHUB_TOKEN` to the token and `DOCKERHUB_USERNAME` to the name it logs in with (the organization name for an organization access token, otherwise the Docker Hub user). Use organization secrets limited to the repositories that publish, or repository secrets:
+
+   ```bash
+   gh secret set DOCKERHUB_USERNAME --repo OWNER/REPO
+   gh secret set DOCKERHUB_TOKEN --repo OWNER/REPO   # paste the token at the prompt
+   ```
+
+3. **Turn the switch on.** `gh variable set RUST_TEMPLATE_PUBLISH_DOCKERHUB --body true --repo OWNER/REPO` (or as an organization variable for every repository that sees it). Delete the variable, or set it to anything other than `true`, to turn Docker Hub publishing off again.
+
+From the next run that pushes (a push to `main`, a version tag, the weekly schedule or a manual dispatch), `docker.yml` logs in to Docker Hub and pushes the same multi-arch digest to `docker.io/<namespace>/<repo>`, with the same tags it gives GHCR. For `main` and version tags, the `Sign Container` job then signs the Docker Hub copy as well, with the same keyless identity as the GHCR one. Pull requests never push. If the variable is `true` but either secret is missing, the run logs a warning and publishes to GHCR only. In this repository, `auto-release.yml` adds the release version tags to an already published image, and it does that on GHCR only. Verify a Docker Hub image the same way as a GHCR one:
+
+```bash
+cosign verify docker.io/threatflux/<repo>:latest \
+  --certificate-identity-regexp '^https://github\.com/ThreatFlux/<repo>/\.github/workflows/docker\.yml@refs/(heads/main|tags/v.+)$' \
+  --certificate-oidc-issuer https://token.actions.githubusercontent.com
+```
+
 ### The Docker build fails — what's wrong?
 
 Common causes:

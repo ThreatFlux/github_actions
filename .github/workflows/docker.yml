@@ -50,6 +50,10 @@ jobs:
     outputs:
       digest: ${{ steps.build.outputs.digest }}
       image_name: ${{ steps.lowercase.outputs.image_name }}
+      # A flag, not the docker.io reference: GitHub drops a job output that
+      # contains a secret value, and the reference can contain the Docker Hub
+      # user name. The sign job rebuilds the reference from the same inputs.
+      dockerhub_enabled: ${{ steps.images.outputs.dockerhub_enabled }}
     steps:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -76,18 +80,41 @@ jobs:
           fi
           echo "version=${TOOLCHAIN_VERSION}" >> "$GITHUB_OUTPUT"
 
-      - name: Compose image list
-        id: images
+      # Docker Hub publishing is opt-in (docs/FAQ.md, "How do I publish to
+      # Docker Hub?"). It needs the repository or organization variable
+      # RUST_TEMPLATE_PUBLISH_DOCKERHUB set to exactly `true` plus the
+      # DOCKERHUB_USERNAME and DOCKERHUB_TOKEN secrets. While the variable is
+      # unset or anything else, this step is skipped, so no step that runs
+      # reads those secrets and no docker.io tag is generated.
+      - name: Check Docker Hub credentials
+        id: dockerhub
+        if: github.event_name != 'pull_request' && env.PUBLISH_DOCKERHUB == 'true'
+        env:
+          DOCKERHUB_USERNAME: ${{ secrets.DOCKERHUB_USERNAME }}
+          DOCKERHUB_TOKEN: ${{ secrets.DOCKERHUB_TOKEN }}
         run: |
-          GHCR_IMAGE="${REGISTRY}/${{ steps.lowercase.outputs.image_name }}"
-          DOCKERHUB_IMAGE="${DOCKERHUB_REGISTRY}/${DOCKERHUB_NAMESPACE}/${{ steps.dockerhub_repo.outputs.name }}"
+          if [[ -n "${DOCKERHUB_USERNAME}" && -n "${DOCKERHUB_TOKEN}" ]]; then
+            echo "enabled=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "::warning::RUST_TEMPLATE_PUBLISH_DOCKERHUB is true, but DOCKERHUB_USERNAME or DOCKERHUB_TOKEN is not set; publishing to ${REGISTRY} only"
+            echo "enabled=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Resolve image targets
+        id: images
+        env:
+          IMAGE_NAME: ${{ steps.lowercase.outputs.image_name }}
+          DOCKERHUB_REPO: ${{ steps.dockerhub_repo.outputs.name }}
+          DOCKERHUB_ENABLED: ${{ steps.dockerhub.outputs.enabled == 'true' }}
+        run: |
           {
             echo "images<<EOF"
-            echo "${GHCR_IMAGE}"
-            if [[ "${PUBLISH_DOCKERHUB}" == "true" ]]; then
-              echo "${DOCKERHUB_IMAGE}"
+            echo "${REGISTRY}/${IMAGE_NAME}"
+            if [[ "${DOCKERHUB_ENABLED}" == "true" ]]; then
+              echo "${DOCKERHUB_REGISTRY}/${DOCKERHUB_NAMESPACE}/${DOCKERHUB_REPO}"
             fi
             echo "EOF"
+            echo "dockerhub_enabled=${DOCKERHUB_ENABLED}"
           } >> "$GITHUB_OUTPUT"
 
       - name: Select build platforms
@@ -112,7 +139,7 @@ jobs:
           password: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Log in to Docker Hub
-        if: github.event_name != 'pull_request' && env.PUBLISH_DOCKERHUB == 'true'
+        if: steps.images.outputs.dockerhub_enabled == 'true'
         uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4.6.0
         with:
           registry: ${{ env.DOCKERHUB_REGISTRY }}
@@ -309,6 +336,26 @@ jobs:
         run: cosign sign --yes ${{ env.REGISTRY }}/${{ needs.build.outputs.image_name }}@${{ needs.build.outputs.digest }}
         env:
           COSIGN_EXPERIMENTAL: 1
+
+      # The build pushed one multi-arch index to both registries, so the Docker
+      # Hub copy has the same digest. Sign it in this job too, with the same
+      # keyless identity, so Docker Hub images are not left unsigned.
+      - name: Log in to Docker Hub
+        if: needs.build.outputs.dockerhub_enabled == 'true'
+        uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4.6.0
+        with:
+          registry: ${{ env.DOCKERHUB_REGISTRY }}
+          username: ${{ secrets.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+
+      - name: Sign Docker Hub image
+        if: needs.build.outputs.dockerhub_enabled == 'true'
+        env:
+          DIGEST: ${{ needs.build.outputs.digest }}
+        run: |
+          set -euo pipefail
+          repo_name="${GITHUB_REPOSITORY#*/}"
+          cosign sign --yes "${DOCKERHUB_REGISTRY}/${DOCKERHUB_NAMESPACE}/${repo_name,,}@${DIGEST}"
 
   # Auto Release commits the version bump, then waits here: the image for the
   # released version has to exist, be scanned, and be signed before the tag
