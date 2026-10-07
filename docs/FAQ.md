@@ -138,7 +138,7 @@ Common causes:
 ### How do I add code coverage badges?
 
 1. Enable Codecov or Coveralls for your repository.
-2. Add the secret (`CODECOV_TOKEN`) to your repo.
+2. For Codecov, upload with OIDC instead of a token: give the coverage job `id-token: write` and pass `use_oidc: true` to `codecov/codecov-action`. ThreatFlux is retiring the `CODECOV_TOKEN` secret (see [SECRETS-ROTATION.md](SECRETS-ROTATION.md)).
 3. Add the badge to your README:
    ```markdown
    [![codecov](https://codecov.io/gh/ThreatFlux/PROJECT_NAME/branch/main/graph/badge.svg)](https://codecov.io/gh/ThreatFlux/PROJECT_NAME)

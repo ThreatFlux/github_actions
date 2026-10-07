@@ -254,6 +254,35 @@ class SecretAuditTests(unittest.TestCase):
         self.assertEqual(findings[0].detail, "Dead classic PAT.")
         self.assertEqual(rows[0].status, "obsolete: delete")
 
+    def test_deleted_secrets_that_stay_deleted_are_resolved(self) -> None:
+        deleted = frozenset({"CARGO_REGISTRY_TOKEN", "SAFETY_API_KEY"})
+        result = evaluate(audit(deleted=deleted))
+        status, findings, rows = result
+        self.assertEqual(status, "healthy")
+        self.assertEqual(findings, [])
+        self.assertNotIn("CARGO_REGISTRY_TOKEN", [row.name for row in rows])
+        self.assertIn("| Deleted secrets | 2 still deleted |", render_report(audit(deleted=deleted), result))
+
+    def test_deleted_secret_that_exists_again_is_flagged_even_when_recent(self) -> None:
+        deleted = frozenset({"CARGO_REGISTRY_TOKEN", "SAFETY_API_KEY"})
+        recreated = audit(deleted=deleted, secrets=(
+            inventory_entry(KEY, "2026-09-01T00:00:00Z"),
+            inventory_entry("CARGO_REGISTRY_TOKEN", "2026-10-05T00:00:00Z"),
+        ))
+        result = evaluate(recreated)
+        status, findings, rows = result
+        self.assertEqual(status, "attention")
+        self.assertEqual(titles(findings), ["Deleted secret `CARGO_REGISTRY_TOKEN` exists again"])
+        self.assertIn("gh secret delete CARGO_REGISTRY_TOKEN --org ThreatFlux", findings[0].detail)
+        self.assertEqual(rows[0].status, "obsolete: delete")
+        self.assertIn("| Deleted secrets | **`CARGO_REGISTRY_TOKEN` exists again** |", render_report(recreated, result))
+
+    def test_deleted_secrets_are_not_checked_without_the_secret_audit(self) -> None:
+        skipped = audit(deleted=frozenset({"SAFETY_API_KEY"}), secrets_outcome="missing-permission", secrets=(),
+                        key_secret_repos=None)
+        report = render_report(skipped, evaluate(skipped))
+        self.assertIn("| Deleted secrets | skipped: organization secret audit did not run |", report)
+
     def test_missing_permission_is_reported_not_silent(self) -> None:
         status, findings, rows = evaluate(audit(secrets_outcome="missing-permission", secrets=(),
                                                 key_secret_repos=None))
@@ -351,7 +380,8 @@ class CommandLineTests(unittest.TestCase):
 
     def test_command_line_writes_status_and_report(self) -> None:
         values, report = self.full_run("--recorded-fingerprint", FINGERPRINT,
-                                       "--recorded-rotated-at", "2026-10-06")
+                                       "--recorded-rotated-at", "2026-10-06",
+                                       "--deleted", "CARGO_REGISTRY_TOKEN", "--deleted", "SAFETY_API_KEY")
         self.assertEqual(values, {"status": "attention", "findings": "1", "errors": "0", "notes": "0"})
         self.assertIn("<!-- automation-app-health -->", report)
         self.assertIn("| Installation repositories | 3 of 3 listed |", report)
@@ -360,6 +390,7 @@ class CommandLineTests(unittest.TestCase):
         self.assertIn("| App private key age | 0 days, from its rotation record (limit 90) |", report)
         self.assertIn(f"| Stored key | `{FINGERPRINT}` |", report)
         self.assertIn("| `GIT_TOKEN` | 2025-03-31 | 554 | 180 | obsolete: delete |", report)
+        self.assertIn("| Deleted secrets | 2 still deleted |", report)
         self.assertIn("3 repositories from `", report)
         self.assertIn("(https://github.com/ThreatFlux/github_actions/blob/main/docs/SECRETS-ROTATION.md)", report)
 

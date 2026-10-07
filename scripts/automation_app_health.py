@@ -12,7 +12,8 @@ secrets. This script judges them against .github/automation-app-repos.txt:
   or the App ID variable reaches other repositories than the checked-in list.
   The workflow fails.
 - ``attention``: the App works, but a person has to act: a secret is due for
-  rotation, an obsolete secret still exists, or a check could not run.
+  rotation, an obsolete secret still exists, a deleted secret was created
+  again, or a check could not run.
 - ``healthy``: nothing to report, so the tracking issue is closed.
 
 Notes (for example "no key rotation record yet") are reported but never change
@@ -112,6 +113,7 @@ class Audit:
     obsolete: dict[str, str]
     now: datetime
     not_credentials: frozenset[str] = frozenset()
+    deleted: frozenset[str] = frozenset()
     repos_file: str = REPOS_FILE
     app_id_variable: str = "TF_AUTOMATION_APP_ID"
     variable_outcome: str = "skipped"
@@ -294,9 +296,24 @@ def inventory_rows(audit: Audit, key: KeyAge) -> list[SecretAge]:
             limit = audit.key_max_age_days
             if key.age_days is not None:
                 age_days = key.age_days
-        rows.append(SecretAge(name, updated_at, age_days, limit, audit.obsolete.get(name, ""),
+        obsolete_reason = audit.obsolete.get(name, "")
+        if name in audit.deleted:
+            obsolete_reason = (f"It was deleted once nothing used it, so it must not exist. Find out who created"
+                               f" it again and why, then delete it: `gh secret delete {name} --org {audit.owner}`."
+                               f" See {RUNBOOK}.")
+        rows.append(SecretAge(name, updated_at, age_days, limit, obsolete_reason,
                               credential=name not in audit.not_credentials))
     return rows
+
+
+def deleted_result(audit: Audit, rows: list[SecretAge]) -> str:
+    """The report's check row for the secrets that were deleted and must stay deleted."""
+    if audit.secrets_outcome != "success":
+        return "skipped: organization secret audit did not run"
+    back = {row.name for row in rows} & audit.deleted
+    if back:
+        return f"**{code_list(back)} {'exists' if len(back) == 1 else 'exist'} again**"
+    return f"{len(audit.deleted)} still deleted"
 
 
 def drift_detail(missing: list[str], unlisted: list[str], missing_text: str, unlisted_text: str) -> str:
@@ -415,7 +432,9 @@ def inventory_findings(audit: Audit, rows: list[SecretAge]) -> list[Finding]:
 
     findings = []
     for row in rows:
-        if row.obsolete_reason:
+        if row.name in audit.deleted:
+            findings.append(Finding(WARNING, f"Deleted secret `{row.name}` exists again", row.obsolete_reason))
+        elif row.obsolete_reason:
             findings.append(Finding(WARNING, f"Obsolete secret `{row.name}` still exists", row.obsolete_reason))
         elif row.overdue and row.name != audit.key_secret:
             findings.append(Finding(
@@ -570,6 +589,8 @@ def render_report(audit: Audit, result: tuple[str, list[Finding], list[SecretAge
              "", "| Check | Result |", "| --- | --- |"]
     lines += check_rows(audit, key)
     lines.append(f"| Organization secret audit | {secret_result} |")
+    if audit.deleted and audit.mint_outcome == "success":
+        lines.append(f"| Deleted secrets | {deleted_result(audit, rows)} |")
     lines += findings_lines(findings) + key_lines(audit) + repository_lines(audit)
     lines += inventory_table_lines(audit, rows, key)
     lines += ["", f"Runbook: {runbook}."]
@@ -609,6 +630,8 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--obsolete", action="append", default=[], metavar="NAME=REASON")
     parser.add_argument("--not-credential", action="append", default=[], metavar="NAME",
                         help="a secret that only holds a name (e.g. a username), so it never needs rotation")
+    parser.add_argument("--deleted", action="append", default=[], metavar="NAME",
+                        help="a secret that was deleted and must stay deleted; it is a finding if it exists again")
     parser.add_argument("--now", help="ISO 8601 timestamp; defaults to the current time")
     parser.add_argument("--run-url", default="")
     parser.add_argument("--repo-url", default="", help="links the runbook, e.g. https://github.com/OWNER/REPO")
@@ -649,6 +672,7 @@ def build_audit(args: argparse.Namespace) -> Audit:
         max_age_days=args.max_age_days,
         obsolete=parse_obsolete(args.obsolete),
         not_credentials=frozenset(args.not_credential),
+        deleted=frozenset(args.deleted),
         now=parse_timestamp(args.now) if args.now else datetime.now(timezone.utc),
         repos_file=args.expected_repos_file,
         app_id_variable=args.app_id_variable,
