@@ -200,6 +200,62 @@ def age_in_days(audit: Audit, since: str) -> int:
     return (audit.now - parse_timestamp(since)).days
 
 
+FALLBACK_TEXT = ("Its age counts from the secret's last update instead, which also changes whenever the"
+                 " secret's repository access changes.")
+
+
+def fallback_key_age(audit: Audit) -> KeyAge:
+    """The key's age from the secret's ``updated_at``, when the secret audit ran."""
+    entry = secret_entry(audit) if audit.secrets_outcome == "success" else None
+    updated = (entry or {}).get("updated_at") or (entry or {}).get("created_at") or ""
+    if not updated:
+        return KeyAge(BASIS_UNKNOWN, "", None)
+    return KeyAge(BASIS_UPDATED, updated, age_in_days(audit, updated))
+
+
+def record_problem(audit: Audit) -> Finding | None:
+    """Why the rotation record cannot date the stored key, or None when it can."""
+    recorded_fp = audit.recorded_fingerprint.strip()
+    recorded_at = audit.recorded_rotated_at.strip()
+    if not recorded_fp and not recorded_at:
+        return Finding(
+            NOTE, "The App private key has no rotation record",
+            f"`{FINGERPRINT_VARIABLE}` and `{ROTATED_AT_VARIABLE}` are not set (or not visible to"
+            f" `{audit.health_repo}`). {FALLBACK_TEXT} Record the stored key once with"
+            f" {record_commands(audit)}; {ROTATE_SCRIPT} keeps both current from then on.",
+        )
+    if not recorded_fp or not recorded_at:
+        missing = FINGERPRINT_VARIABLE if not recorded_fp else ROTATED_AT_VARIABLE
+        return Finding(
+            WARNING, "The App private key rotation record is incomplete",
+            f"`{missing}` is not set. {FALLBACK_TEXT} Set both: {record_commands(audit)}.",
+        )
+    try:
+        rotated = parse_timestamp(recorded_at)
+    except ValueError:
+        return Finding(
+            WARNING, f"`{ROTATED_AT_VARIABLE}` is not a date",
+            f"It holds `{recorded_at}`; expected `YYYY-MM-DD` or an ISO 8601 UTC timestamp. {FALLBACK_TEXT}",
+        )
+    if rotated > audit.now:
+        return Finding(WARNING, f"`{ROTATED_AT_VARIABLE}` is in the future",
+                       f"It holds `{recorded_at}`. {FALLBACK_TEXT}")
+    if not audit.key_fingerprint.strip():
+        return Finding(
+            NOTE, "The App private key rotation record was not verified",
+            f"The run could not fingerprint the key stored in `{audit.key_secret}`, so it cannot tell whether"
+            f" the record describes that key. {FALLBACK_TEXT}",
+        )
+    if normalize_fingerprint(recorded_fp) != normalize_fingerprint(audit.key_fingerprint):
+        return Finding(
+            WARNING, "The App private key rotation record describes a different key",
+            f"`{FINGERPRINT_VARIABLE}` names `{recorded_fp}`, but `{audit.key_secret}` holds"
+            f" `{audit.key_fingerprint}`: the secret was replaced without {ROTATE_SCRIPT}. {FALLBACK_TEXT}"
+            f" Record the stored key with {record_commands(audit)}.",
+        )
+    return None
+
+
 def key_age(audit: Audit) -> tuple[KeyAge, list[Finding]]:
     """Date the stored key from its rotation record, or from the secret's last update.
 
@@ -209,54 +265,11 @@ def key_age(audit: Audit) -> tuple[KeyAge, list[Finding]]:
     the secret's repository access changes, so it can make the key look newer
     than it is.
     """
-    entry = secret_entry(audit) if audit.secrets_outcome == "success" else None
-    updated = (entry or {}).get("updated_at") or (entry or {}).get("created_at") or ""
-    fallback = (KeyAge(BASIS_UPDATED, updated, age_in_days(audit, updated)) if updated
-                else KeyAge(BASIS_UNKNOWN, "", None))
-    fallback_text = ("Its age counts from the secret's last update instead, which also changes whenever the"
-                     " secret's repository access changes.")
-    recorded_fp = audit.recorded_fingerprint.strip()
-    recorded_at = audit.recorded_rotated_at.strip()
-
-    if not recorded_fp and not recorded_at:
-        return fallback, [Finding(
-            NOTE, "The App private key has no rotation record",
-            f"`{FINGERPRINT_VARIABLE}` and `{ROTATED_AT_VARIABLE}` are not set (or not visible to"
-            f" `{audit.health_repo}`). {fallback_text} Record the stored key once with"
-            f" {record_commands(audit)}; {ROTATE_SCRIPT} keeps both current from then on.",
-        )]
-    if not recorded_fp or not recorded_at:
-        missing = FINGERPRINT_VARIABLE if not recorded_fp else ROTATED_AT_VARIABLE
-        return fallback, [Finding(
-            WARNING, "The App private key rotation record is incomplete",
-            f"`{missing}` is not set. {fallback_text} Set both: {record_commands(audit)}.",
-        )]
-    try:
-        rotated = parse_timestamp(recorded_at)
-    except ValueError:
-        return fallback, [Finding(
-            WARNING, f"`{ROTATED_AT_VARIABLE}` is not a date",
-            f"It holds `{recorded_at}`; expected `YYYY-MM-DD` or an ISO 8601 UTC timestamp. {fallback_text}",
-        )]
-    if rotated > audit.now:
-        return fallback, [Finding(
-            WARNING, f"`{ROTATED_AT_VARIABLE}` is in the future",
-            f"It holds `{recorded_at}`. {fallback_text}",
-        )]
-    if not audit.key_fingerprint.strip():
-        return fallback, [Finding(
-            NOTE, "The App private key rotation record was not verified",
-            f"The run could not fingerprint the key stored in `{audit.key_secret}`, so it cannot tell whether"
-            f" the record describes that key. {fallback_text}",
-        )]
-    if normalize_fingerprint(recorded_fp) != normalize_fingerprint(audit.key_fingerprint):
-        return fallback, [Finding(
-            WARNING, "The App private key rotation record describes a different key",
-            f"`{FINGERPRINT_VARIABLE}` names `{recorded_fp}`, but `{audit.key_secret}` holds"
-            f" `{audit.key_fingerprint}`: the secret was replaced without {ROTATE_SCRIPT}. {fallback_text}"
-            f" Record the stored key with {record_commands(audit)}.",
-        )]
-    return KeyAge(BASIS_RECORD, recorded_at, (audit.now - rotated).days), []
+    problem = record_problem(audit)
+    if problem is not None:
+        return fallback_key_age(audit), [problem]
+    rotated_at = audit.recorded_rotated_at.strip()
+    return KeyAge(BASIS_RECORD, rotated_at, age_in_days(audit, rotated_at)), []
 
 
 def key_rotation_findings(audit: Audit, key: KeyAge) -> list[Finding]:
@@ -485,26 +498,10 @@ def check_rows(audit: Audit, key: KeyAge) -> list[str]:
     return rows
 
 
-def render_report(audit: Audit, result: tuple[str, list[Finding], list[SecretAge]],
-                  run_url: str = "", repo_url: str = "") -> str:
-    """Render the Markdown report for the job summary and the tracking issue."""
-    status, findings, rows = result
-    key, _ = key_age(audit)
-    lines = [REPORT_MARKER, f"## Automation App health: {status}", ""]
-    checked = audit.now.strftime("%Y-%m-%d %H:%M UTC")
-    lines.append(f"Checked {checked}" + (f" by [this run]({run_url})." if run_url else "."))
-    lines += ["", "| Check | Result |", "| --- | --- |"]
-    lines += check_rows(audit, key)
-    secret_result = {
-        "success": f"{len(rows)} secrets audited",
-        "missing-permission": "skipped: App lacks organization Secrets: read",
-        "failure": "**failed**",
-    }.get(audit.secrets_outcome, "skipped")
-    lines.append(f"| Organization secret audit | {secret_result} |")
-
+def findings_lines(findings: list[Finding]) -> list[str]:
     problems = [finding for finding in findings if finding.severity != NOTE]
     notes = [finding for finding in findings if finding.severity == NOTE]
-    lines += ["", "### Findings", ""]
+    lines = ["", "### Findings", ""]
     if problems:
         lines += [f"- **{finding.severity}**: {finding.title}. {finding.detail}" for finding in problems]
     else:
@@ -512,38 +509,65 @@ def render_report(audit: Audit, result: tuple[str, list[Finding], list[SecretAge
     if notes:
         lines += ["", "### Notes", ""]
         lines += [f"- {finding.title}. {finding.detail}" for finding in notes]
+    return lines
 
-    if audit.mint_outcome == "success":
-        lines += ["", "### App private key", "", "| | |", "| --- | --- |"]
-        lines.append(f"| Stored key | `{audit.key_fingerprint}` |" if audit.key_fingerprint
-                     else "| Stored key | fingerprint unavailable |")
-        if audit.recorded_fingerprint or audit.recorded_rotated_at:
-            lines.append(f"| Rotation record | `{audit.recorded_fingerprint or 'unset'}`, rotated"
-                         f" {audit.recorded_rotated_at or 'unset'} |")
-        else:
-            lines.append("| Rotation record | none |")
-        lines += ["", "The App's settings list the fingerprint of each of its private keys. Only the stored key is"
-                      " in use, so any other key can be deleted."]
 
-    lines += ["", "### Expected repositories", ""]
-    lines.append(f"{len(audit.expected_repos)} repositories from `{audit.repos_file}`: "
-                 + (code_list(audit.expected_repos) or "none") + ".")
+def key_lines(audit: Audit) -> list[str]:
+    if audit.mint_outcome != "success":
+        return []
+    stored = f"`{audit.key_fingerprint}`" if audit.key_fingerprint else "fingerprint unavailable"
+    record = "none"
+    if audit.recorded_fingerprint or audit.recorded_rotated_at:
+        record = (f"`{audit.recorded_fingerprint or 'unset'}`, rotated"
+                  f" {audit.recorded_rotated_at or 'unset'}")
+    return ["", "### App private key", "", "| | |", "| --- | --- |",
+            f"| Stored key | {stored} |", f"| Rotation record | {record} |", "",
+            "The App's settings list the fingerprint of each of its private keys. Only the stored key is"
+            " in use, so any other key can be deleted."]
+
+
+def repository_lines(audit: Audit) -> list[str]:
+    lines = ["", "### Expected repositories", "",
+             f"{len(audit.expected_repos)} repositories from `{audit.repos_file}`: "
+             + (code_list(audit.expected_repos) or "none") + "."]
     if audit.installation_repos is not None and audit.installation_repos != audit.expected_repos:
         lines += ["", "Installation repositories: " + (code_list(audit.installation_repos) or "none") + "."]
+    return lines
 
-    if rows:
-        lines += ["", "### Organization secrets", "",
-                  "| Secret | Last updated | Age (days) | Limit (days) | Status |",
-                  "| --- | --- | ---: | ---: | --- |"]
-        for row in rows:
-            lines.append(f"| `{row.name}` | {row.updated_at[:10]} | {row.age_days} | {row.limit_days}"
-                         f" | {row.status} |")
-        if key.basis == BASIS_RECORD:
-            lines += ["", f"The age of `{audit.key_secret}` counts from its rotation record"
-                          f" ({key.since[:10]}), not from its last update."]
-        lines += ["", "Only names and dates are read; GitHub never returns secret values."]
 
+def secret_table_lines(audit: Audit, rows: list[SecretAge], key: KeyAge) -> list[str]:
+    if not rows:
+        return []
+    lines = ["", "### Organization secrets", "",
+             "| Secret | Last updated | Age (days) | Limit (days) | Status |",
+             "| --- | --- | ---: | ---: | --- |"]
+    lines += [f"| `{row.name}` | {row.updated_at[:10]} | {row.age_days} | {row.limit_days} | {row.status} |"
+              for row in rows]
+    if key.basis == BASIS_RECORD:
+        lines += ["", f"The age of `{audit.key_secret}` counts from its rotation record"
+                      f" ({key.since[:10]}), not from its last update."]
+    return lines + ["", "Only names and dates are read; GitHub never returns secret values."]
+
+
+def render_report(audit: Audit, result: tuple[str, list[Finding], list[SecretAge]],
+                  run_url: str = "", repo_url: str = "") -> str:
+    """Render the Markdown report for the job summary and the tracking issue."""
+    status, findings, rows = result
+    key, _ = key_age(audit)
+    checked = audit.now.strftime("%Y-%m-%d %H:%M UTC")
+    secret_result = {
+        "success": f"{len(rows)} secrets audited",
+        "missing-permission": "skipped: App lacks organization Secrets: read",
+        "failure": "**failed**",
+    }.get(audit.secrets_outcome, "skipped")
     runbook = f"[{RUNBOOK}]({repo_url}/blob/main/{RUNBOOK})" if repo_url else RUNBOOK
+    lines = [REPORT_MARKER, f"## Automation App health: {status}", "",
+             f"Checked {checked}" + (f" by [this run]({run_url})." if run_url else "."),
+             "", "| Check | Result |", "| --- | --- |"]
+    lines += check_rows(audit, key)
+    lines.append(f"| Organization secret audit | {secret_result} |")
+    lines += findings_lines(findings) + key_lines(audit) + repository_lines(audit)
+    lines += secret_table_lines(audit, rows, key)
     lines += ["", f"Runbook: {runbook}."]
     return "\n".join(lines) + "\n"
 
@@ -589,32 +613,34 @@ def build_parser() -> argparse.ArgumentParser:
     return parser
 
 
-def main(argv: list[str] | None = None) -> int:
-    args = build_parser().parse_args(argv)
+def optional_names(path: str | None) -> frozenset[str] | None:
+    text = read_optional(path)
+    return parse_names(text) if text is not None else None
+
+
+def build_audit(args: argparse.Namespace) -> Audit:
+    """Read the files the workflow wrote; a missing file means that fact is unknown."""
     expected_text = read_optional(args.expected_repos_file)
     if expected_text is None:
         raise SystemExit(f"error: {args.expected_repos_file} does not exist")
     expected = parse_names(expected_text)
     if not expected:
         raise SystemExit(f"error: {args.expected_repos_file} lists no repository")
-    repos_text = read_optional(args.repos_file)
+    installation_repos = optional_names(args.repos_file)
     secrets_text = read_optional(args.secrets_file)
-    key_repos_text = read_optional(args.key_secret_repos_file)
-    variable_repos_text = read_optional(args.variable_repos_file)
     secrets_outcome = args.secrets_outcome
     if secrets_outcome == "success" and secrets_text is None:
         secrets_outcome = "failure"
-
-    audit = Audit(
+    return Audit(
         owner=args.owner,
         expected_repos=expected,
         mint_outcome=args.mint_outcome,
-        repos_outcome=args.repos_outcome if repos_text is not None else "failure",
-        installation_repos=parse_names(repos_text) if repos_text is not None else None,
+        repos_outcome=args.repos_outcome if installation_repos is not None else "failure",
+        installation_repos=installation_repos,
         secrets_outcome=secrets_outcome,
         secrets=tuple(parse_json_stream(secrets_text)) if secrets_outcome == "success" and secrets_text else (),
         key_secret=args.key_secret,
-        key_secret_repos=parse_names(key_repos_text) if key_repos_text is not None else None,
+        key_secret_repos=optional_names(args.key_secret_repos_file),
         key_max_age_days=args.key_max_age_days,
         max_age_days=args.max_age_days,
         obsolete=parse_obsolete(args.obsolete),
@@ -624,16 +650,20 @@ def main(argv: list[str] | None = None) -> int:
         app_id_variable=args.app_id_variable,
         variable_outcome=args.variable_outcome,
         variable_visibility=args.variable_visibility.strip(),
-        variable_repos=parse_names(variable_repos_text) if variable_repos_text is not None else None,
+        variable_repos=optional_names(args.variable_repos_file),
         key_fingerprint=args.key_fingerprint.strip(),
         recorded_fingerprint=args.recorded_fingerprint.strip(),
         recorded_rotated_at=args.recorded_rotated_at.strip(),
         health_repo=args.health_repo,
     )
+
+
+def main(argv: list[str] | None = None) -> int:
+    args = build_parser().parse_args(argv)
+    audit = build_audit(args)
     result = evaluate(audit)
     status, findings, _ = result
-    report = render_report(audit, result, args.run_url, args.repo_url)
-    Path(args.report).write_text(report, encoding="utf-8")
+    Path(args.report).write_text(render_report(audit, result, args.run_url, args.repo_url), encoding="utf-8")
 
     errors = sum(1 for finding in findings if finding.severity == ERROR)
     problems = sum(1 for finding in findings if finding.severity != NOTE)

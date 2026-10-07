@@ -208,7 +208,9 @@ class RotateKeyTests(unittest.TestCase):
                                                   " not listed: lifeflux"),
             ({"FAKE_VAR_REPOS": "ollama_rust_sdk"}, "TF_AUTOMATION_APP_ID is not shared with listed repositories:"
                                                     " github_actions"),
-            ({"FAKE_SECRET_VISIBILITY": "all"}, "TF_AUTOMATION_APP_PRIVATE_KEY is visible to all repositories"),
+            # B105: a secret's visibility setting, not a password.
+            ({"FAKE_SECRET_VISIBILITY": "all"},  # nosec B105
+             "TF_AUTOMATION_APP_PRIVATE_KEY is visible to all repositories"),
             ({"FAKE_VAR_VISIBILITY": "private"}, "TF_AUTOMATION_APP_ID is visible to private repositories"),
         ):
             with self.subTest(env=env):
