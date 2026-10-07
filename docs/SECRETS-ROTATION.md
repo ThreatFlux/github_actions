@@ -14,7 +14,7 @@ ThreatFlux keeps CI credentials as **GitHub organization Actions secrets**. Org 
 | crates.io publishing | [Trusted publishing](https://crates.io/docs/trusted-publishing): `rust-lang/crates-io-auth-action` exchanges the job's OIDC token for a short-lived crates.io token (job needs `id-token: write` and the `crates-io` environment). All 20 crates published from ThreatFlux repositories have **Require trusted publishing** on, so crates.io refuses API tokens for them | None |
 | GHCR images | The workflow's `GITHUB_TOKEN` with `packages: write` | None |
 | Container signing | Keyless cosign (Sigstore Fulcio certificate from the job's OIDC token) | None |
-| Codecov uploads | `codecov/codecov-action` with `use_oidc: true` (job needs `id-token: write`); lifeflux `quality.yml` is the last workflow still [moving to it](#retiring-git_token-and-codecov_token) | None |
+| Codecov uploads | `codecov/codecov-action` with `use_oidc: true` (job needs `id-token: write`). Every default-branch workflow that uploads coverage does this, so the old `CODECOV_TOKEN` secret is [being retired](#retiring-git_token-and-codecov_token) | None |
 | Cross-repository automation (release PRs, tags that trigger workflows) | `threatflux-automation` GitHub App installation token from `actions/create-github-app-token` | The App private key, one secret |
 
 The [Automation App Health](../.github/workflows/automation-app-health.yml) workflow checks all of this every week; see [Health check](#health-check).
@@ -26,8 +26,8 @@ Names and dates come from `gh api /orgs/ThreatFlux/actions/secrets` (as of 2026-
 | Secret | Visibility | Last updated | Purpose (issuer) | Used by | Cadence | Status |
 | --- | --- | --- | --- | --- | --- | --- |
 | `TF_AUTOMATION_APP_PRIVATE_KEY` | selected (20 repos) | 2026-10-06 | Private key of the `threatflux-automation` GitHub App (App ID in the `TF_AUTOMATION_APP_ID` org variable) | The 20 repositories in [`.github/automation-app-repos.txt`](../.github/automation-app-repos.txt), mostly through their `auto-release.yml` (and `reusable-auto-release.yml`); also `automation-app-health.yml` and `reusable-release-smoke.yml` here, anthropic_rust_sdk `release.yml`, and ollama_rust_sdk `dependencies.yml` | 90 days, counted from its [rotation record](#key-age-tracking) | Active. The record dates the stored key to 2026-10-06, so it is due by 2027-01-04 |
-| `GIT_TOKEN` | all | 2025-03-31 | Classic personal access token | lifeflux `auto-release.yml`, `ci.yml`, `quality.yml`, `security.yml` (fetches private dependencies). YaraFlux, the other former user, is archived | n/a | **Retiring.** GitHub rejects it (401), so those lifeflux workflows already fail where they need it. See [Retiring `GIT_TOKEN` and `CODECOV_TOKEN`](#retiring-git_token-and-codecov_token) |
-| `CODECOV_TOKEN` | all | 2025-03-10 | Codecov upload token (Codecov organization settings) | lifeflux `quality.yml` only. ollama_rust_sdk and threatflux-atlassian moved their `ci.yml` to Codecov OIDC on 2026-10-07 (ThreatFlux/ollama_rust_sdk#96, ThreatFlux/threatflux-atlassian#112), and the other repositories already uploaded with OIDC | None: do not rotate | **Retiring.** Delete it once no workflow reads it. See [Retiring `GIT_TOKEN` and `CODECOV_TOKEN`](#retiring-git_token-and-codecov_token) |
+| `GIT_TOKEN` | all | 2025-03-31 | Classic personal access token | Nothing, on any branch. ThreatFlux/lifeflux#24 removed the last references (lifeflux `auto-release.yml`, `ci.yml`, `quality.yml`, `security.yml`) on 2026-10-07. YaraFlux, the other former user, is archived | n/a | **Retiring.** GitHub rejects it (401) and no workflow reads it, so an org owner can delete it now. See [Retiring `GIT_TOKEN` and `CODECOV_TOKEN`](#retiring-git_token-and-codecov_token) |
+| `CODECOV_TOKEN` | all | 2025-03-10 | Codecov upload token (Codecov organization settings) | No default-branch workflow. The last three moved to Codecov OIDC on 2026-10-07: ollama_rust_sdk and threatflux-atlassian `ci.yml` (ThreatFlux/ollama_rust_sdk#96, ThreatFlux/threatflux-atlassian#112) and lifeflux `quality.yml` (ThreatFlux/lifeflux#24). The other repositories already uploaded with OIDC. Two non-default branches still pass it: threatflux-atlassian `dev` and lifeflux `feat/stable-modernization-20261005` | None: do not rotate | **Retiring.** Delete it once those two branches are updated from their default branch, or removed. See [Retiring `GIT_TOKEN` and `CODECOV_TOKEN`](#retiring-git_token-and-codecov_token) |
 | `ANTHROPIC_API_KEY` | private | 2025-06-19 | Anthropic API key (Anthropic console) | anthropic_rust_sdk `ci.yml` (that repository is public, so `private` visibility already hides the key from it) | 180 days | **Rotate**, overdue since 2025-12-16; review whether it is still needed |
 | `DOCKERHUB_TOKEN` | all | 2025-02-01 | Docker Hub access token for the `threatflux` namespace (Docker Hub account settings) | `docker.yml` in github_actions, lifeflux, openai_rust_sdk, rust-cicd-template, threatflux-unifi-sdk (template repositories only log in when `RUST_TEMPLATE_PUBLISH_DOCKERHUB=true`) | 180 days | **Rotate**, overdue since 2025-07-31 |
 | `DOCKERHUB_USERNAME` | all | 2025-02-01 | Docker Hub account name, not a credential | Same as `DOCKERHUB_TOKEN` | With the token | Keep with the token |
@@ -66,7 +66,7 @@ gh api /orgs/ThreatFlux/actions/secrets --paginate --jq '.secrets[] | [.name, .v
 gh search code --owner ThreatFlux 'secrets.NAME' --json repository,path --jq '.[] | "\(.repository.nameWithOwner) \(.path)"'
 ```
 
-Code search can lag behind recent pushes; for an exact answer, read each repository's `.github/workflows` on its default branch.
+Code search can lag behind recent pushes; for an exact answer, read each repository's `.github/workflows` on its default branch. Before deleting a secret, also check the other branches: [Retiring `GIT_TOKEN` and `CODECOV_TOKEN`](#retiring-git_token-and-codecov_token) shows how.
 
 ## crates.io trusted publishing
 
@@ -80,12 +80,37 @@ A new crate's first version still has to be published by hand, because crates.io
 
 ## Retiring `GIT_TOKEN` and `CODECOV_TOKEN`
 
-Neither secret should be rotated. Both are being retired:
+Neither secret should be rotated. Both are being retired. Since ThreatFlux/lifeflux#24 merged on 2026-10-07, no default-branch workflow in any non-archived ThreatFlux repository reads either of them:
 
-1. **`GIT_TOKEN`** no longer authenticates, so deleting it cannot break anything that works today. Replace the remaining references in lifeflux (`auto-release.yml`, `ci.yml`, `quality.yml`, `security.yml`) with `GITHUB_TOKEN` or a GitHub App installation token, then run `gh secret delete GIT_TOKEN --org ThreatFlux`. Revoke the personal access token too, if it still exists in its owner's developer settings.
-2. **`CODECOV_TOKEN`** still works. Move each workflow that reads it to OIDC: give the coverage job `id-token: write` and pass `use_oidc: true` to `codecov/codecov-action` instead of `token:`. ThreatFlux/ollama_rust_sdk#96 and ThreatFlux/threatflux-atlassian#112 did this for their `ci.yml` on 2026-10-07; lifeflux `quality.yml` is the last one. When no workflow reads it, run `gh secret delete CODECOV_TOKEN --org ThreatFlux` and regenerate the global upload token in Codecov's organization settings, so the old value stops working.
+1. **`GIT_TOKEN`** no longer authenticates, so deleting it cannot break anything that works today. ThreatFlux/lifeflux#24 removed its last references, in lifeflux `auto-release.yml`, `ci.yml`, `quality.yml` and `security.yml`; lifeflux's dependencies come from crates.io and public git repositories, so those workflows need no token. No workflow on any branch reads it, so an org owner can delete it now: run `gh secret delete GIT_TOKEN --org ThreatFlux`, and revoke the personal access token too, if it still exists in its owner's developer settings.
+2. **`CODECOV_TOKEN`** still works, but every default-branch coverage upload now authenticates with OIDC: the coverage job has `id-token: write` and passes `use_oidc: true` to `codecov/codecov-action` instead of `token:`. ThreatFlux/ollama_rust_sdk#96, ThreatFlux/threatflux-atlassian#112 and ThreatFlux/lifeflux#24 moved the last three default-branch workflows on 2026-10-07. A push or pull request on another branch runs that branch's own copy of the workflow, though, and as of 2026-10-07 two branches still pass the token:
+   - threatflux-atlassian `dev`: `ci.yml` runs on pushes to `dev` and on pull requests into it. The branch has no commits of its own (it is 53 commits behind `main`, last pushed 2026-03-14), so updating it to `main` or deleting it removes the reference.
+   - lifeflux `feat/stable-modernization-20261005`, the head of ThreatFlux/lifeflux#23: `quality.yml` runs for that pull request. The pull request conflicts with `main`; resolve `quality.yml` in favor of `main`'s OIDC upload step.
 
-Until each is gone, every Automation App Health run lists it as an obsolete secret. Once deleted, add it to the `--deleted` list in [`automation-app-health.yml`](../.github/workflows/automation-app-health.yml), and move its row to [Deleted secrets](#deleted-secrets).
+   Both upload steps set `fail_ci_if_error: false`, so deleting the secret first would not fail CI, but those branches would lose their coverage uploads. Once neither branch passes the token, run `gh secret delete CODECOV_TOKEN --org ThreatFlux`, then regenerate the global upload token in Codecov's organization settings, so the old value stops working.
+
+Before deleting either secret, check every branch, not only default branches (code search only covers default branches). Run this from an empty directory. It stops with an error if a repository cannot be listed, cloned, or searched, so a scan that ends with the "Scanned" line covered every branch. It matches `secrets.NAME`, `secrets['NAME']` and the `vars` equivalents in any letter case; a computed lookup such as `secrets[matrix.name]` still needs a manual look:
+
+```bash
+bash -euo pipefail <<'SCAN'
+# Secret names are case-insensitive, and expressions accept secrets.NAME or secrets['NAME'].
+pattern="(secrets|vars)(\.|\[ *['\"])(git_token|codecov_token)"
+# --paginate reads every page, so no repository is left out however many there are.
+repos=$(gh api --paginate 'orgs/ThreatFlux/repos?type=all&per_page=100' --jq '.[] | select(.archived | not) | .name')
+[ -n "$repos" ] || { echo "listed no repositories" >&2; exit 1; }
+for repo in $repos; do
+  git clone --quiet --bare --depth 1 --no-single-branch "https://github.com/ThreatFlux/$repo.git" "$repo.git"
+  status=0
+  git -C "$repo.git" grep -n -i -E "$pattern" \
+    $(git -C "$repo.git" for-each-ref --format='%(refname)' refs/heads) -- .github > "$repo.hits" || status=$?
+  [ "$status" -le 1 ] || { echo "git grep failed in $repo" >&2; exit 1; }
+  sed "s|^|$repo |" "$repo.hits"
+done
+echo "Scanned every branch of $(wc -w <<<"$repos" | tr -d ' ') repositories; any reference is listed above."
+SCAN
+```
+
+Until each secret is gone, every Automation App Health run lists it as an obsolete secret. Once deleted, move it from the `--obsolete` entries to the `--deleted` list in [`automation-app-health.yml`](../.github/workflows/automation-app-health.yml), and move its row to [Deleted secrets](#deleted-secrets).
 
 ## Rotation procedures
 
