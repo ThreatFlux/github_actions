@@ -95,8 +95,9 @@ Before deleting either secret, check every branch, not only default branches (co
 bash -euo pipefail <<'SCAN'
 # Secret names are case-insensitive, and expressions accept secrets.NAME or secrets['NAME'].
 pattern="(secrets|vars)(\.|\[ *['\"])(git_token|codecov_token)"
-repos=$(gh repo list ThreatFlux --no-archived --limit 200 --json name --jq '.[].name')
-[ -n "$repos" ] || { echo "gh repo list returned no repositories" >&2; exit 1; }
+# --paginate reads every page, so no repository is left out however many there are.
+repos=$(gh api --paginate 'orgs/ThreatFlux/repos?type=all&per_page=100' --jq '.[] | select(.archived | not) | .name')
+[ -n "$repos" ] || { echo "listed no repositories" >&2; exit 1; }
 for repo in $repos; do
   git clone --quiet --bare --depth 1 --no-single-branch "https://github.com/ThreatFlux/$repo.git" "$repo.git"
   status=0
