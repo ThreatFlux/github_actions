@@ -89,16 +89,18 @@ Neither secret should be rotated. Both are being retired. Since ThreatFlux/lifef
 
    Both upload steps set `fail_ci_if_error: false`, so deleting the secret first would not fail CI, but those branches would lose their coverage uploads. Once neither branch passes the token, run `gh secret delete CODECOV_TOKEN --org ThreatFlux`, then regenerate the global upload token in Codecov's organization settings, so the old value stops working.
 
-Before deleting either secret, check every branch, not only default branches (code search only covers default branches). Run this from an empty directory. It stops with an error if a repository cannot be listed, cloned, or searched, so a scan that ends with the "Scanned" line covered every branch:
+Before deleting either secret, check every branch, not only default branches (code search only covers default branches). Run this from an empty directory. It stops with an error if a repository cannot be listed, cloned, or searched, so a scan that ends with the "Scanned" line covered every branch. It matches `secrets.NAME`, `secrets['NAME']` and the `vars` equivalents in any letter case; a computed lookup such as `secrets[matrix.name]` still needs a manual look:
 
 ```bash
 bash -euo pipefail <<'SCAN'
+# Secret names are case-insensitive, and expressions accept secrets.NAME or secrets['NAME'].
+pattern="(secrets|vars)(\.|\[ *['\"])(git_token|codecov_token)"
 repos=$(gh repo list ThreatFlux --no-archived --limit 200 --json name --jq '.[].name')
 [ -n "$repos" ] || { echo "gh repo list returned no repositories" >&2; exit 1; }
 for repo in $repos; do
   git clone --quiet --bare --depth 1 --no-single-branch "https://github.com/ThreatFlux/$repo.git" "$repo.git"
   status=0
-  git -C "$repo.git" grep -n -E 'secrets\.(GIT_TOKEN|CODECOV_TOKEN)|vars\.GIT_TOKEN' \
+  git -C "$repo.git" grep -n -i -E "$pattern" \
     $(git -C "$repo.git" for-each-ref --format='%(refname)' refs/heads) -- .github > "$repo.hits" || status=$?
   [ "$status" -le 1 ] || { echo "git grep failed in $repo" >&2; exit 1; }
   sed "s|^|$repo |" "$repo.hits"
