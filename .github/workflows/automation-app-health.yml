@@ -251,8 +251,8 @@ jobs:
             --health-repo "${GITHUB_REPOSITORY#*/}" \
             --key-max-age-days "${KEY_MAX_AGE_DAYS}" \
             --max-age-days "${SECRET_MAX_AGE_DAYS}" \
-            --obsolete "GIT_TOKEN=Classic personal access token that GitHub now rejects (401). No workflow reads it since ThreatFlux/lifeflux#24 removed the last references, so an org owner can delete it now (gh secret delete GIT_TOKEN --org ThreatFlux) and revoke the token at GitHub if it still exists." \
-            --obsolete "CODECOV_TOKEN=Being retired, so do not rotate it: every Codecov upload now uses OIDC (use_oidc: true on codecov/codecov-action, with id-token: write), and no workflow reads it since ThreatFlux/lifeflux#24. An org owner can delete it now (gh secret delete CODECOV_TOKEN --org ThreatFlux) and then regenerate the upload token in Codecov." \
+            --obsolete "GIT_TOKEN=Classic personal access token that GitHub now rejects (401). No workflow on any branch reads it since ThreatFlux/lifeflux#24 removed the last references, so an org owner can delete it now (gh secret delete GIT_TOKEN --org ThreatFlux) and revoke the token at GitHub if it still exists." \
+            --obsolete "CODECOV_TOKEN=Being retired, so do not rotate it: every default-branch Codecov upload now uses OIDC (use_oidc: true on codecov/codecov-action, with id-token: write) since ThreatFlux/lifeflux#24. Two non-default branches still pass it (threatflux-atlassian dev and lifeflux feat/stable-modernization-20261005; see docs/SECRETS-ROTATION.md). Update or remove them, then delete the secret (gh secret delete CODECOV_TOKEN --org ThreatFlux) and regenerate the upload token in Codecov." \
             --not-credential DOCKERHUB_USERNAME \
             --deleted CARGO_REGISTRY_TOKEN \
             --deleted CODACY_API_TOKEN \
