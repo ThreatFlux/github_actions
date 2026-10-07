@@ -183,7 +183,7 @@ def code_list(names: frozenset[str] | set[str]) -> str:
     return ", ".join(f"`{name}`" for name in sorted(names))
 
 
-def secret_entry(audit: Audit) -> dict | None:
+def key_inventory_entry(audit: Audit) -> dict | None:
     return next((item for item in audit.secrets if item.get("name") == audit.key_secret), None)
 
 
@@ -206,7 +206,7 @@ FALLBACK_TEXT = ("Its age counts from the secret's last update instead, which al
 
 def fallback_key_age(audit: Audit) -> KeyAge:
     """The key's age from the secret's ``updated_at``, when the secret audit ran."""
-    entry = secret_entry(audit) if audit.secrets_outcome == "success" else None
+    entry = key_inventory_entry(audit) if audit.secrets_outcome == "success" else None
     updated = (entry or {}).get("updated_at") or (entry or {}).get("created_at") or ""
     if not updated:
         return KeyAge(BASIS_UNKNOWN, "", None)
@@ -283,7 +283,7 @@ def key_rotation_findings(audit: Audit, key: KeyAge) -> list[Finding]:
     )]
 
 
-def secret_ages(audit: Audit, key: KeyAge) -> list[SecretAge]:
+def inventory_rows(audit: Audit, key: KeyAge) -> list[SecretAge]:
     rows = []
     for secret in sorted(audit.secrets, key=lambda item: item["name"]):
         name = secret["name"]
@@ -355,8 +355,8 @@ def shared_access_findings(audit: Audit, name: str, kind: str, visibility: str,
 def key_access_findings(audit: Audit) -> list[Finding]:
     """The key must be an organization secret shared with exactly the listed repositories."""
     if audit.secrets_outcome != "success":
-        return []  # secret_findings already explains why the audit did not run
-    entry = secret_entry(audit)
+        return []  # inventory_findings already explains why the audit did not run
+    entry = key_inventory_entry(audit)
     if entry is None:
         # Same as for the App ID variable: only this repository can mint.
         return [Finding(
@@ -401,7 +401,7 @@ def variable_findings(audit: Audit) -> list[Finding]:
     return shared_access_findings(audit, name, "App ID", audit.variable_visibility, audit.variable_repos, fix)
 
 
-def secret_findings(audit: Audit, rows: list[SecretAge]) -> list[Finding]:
+def inventory_findings(audit: Audit, rows: list[SecretAge]) -> list[Finding]:
     if audit.secrets_outcome == "missing-permission":
         return [Finding(
             WARNING, "Organization secret audit skipped: the App lacks organization \"Secrets: read\"",
@@ -439,9 +439,9 @@ def evaluate(audit: Audit) -> tuple[str, list[Finding], list[SecretAge]]:
         return "broken", findings, []
 
     key, key_findings = key_age(audit)
-    rows = secret_ages(audit, key) if audit.secrets_outcome == "success" else []
+    rows = inventory_rows(audit, key) if audit.secrets_outcome == "success" else []
     findings = (installation_findings(audit) + key_access_findings(audit) + variable_findings(audit)
-                + secret_findings(audit, rows) + key_rotation_findings(audit, key) + key_findings)
+                + inventory_findings(audit, rows) + key_rotation_findings(audit, key) + key_findings)
     findings.sort(key=lambda finding: SEVERITY_ORDER[finding.severity])
     if any(finding.severity == ERROR for finding in findings):
         status = "broken"
@@ -470,7 +470,7 @@ def check_rows(audit: Audit, key: KeyAge) -> list[str]:
     rows.append("| Installation repositories | "
                 + access_result(audit, audit.installation_repos, "**not listed**") + " |")
 
-    entry = secret_entry(audit) if audit.secrets_outcome == "success" else None
+    entry = key_inventory_entry(audit) if audit.secrets_outcome == "success" else None
     if audit.secrets_outcome != "success":
         key_access = "skipped: organization secret audit did not run"
     elif entry is None:
@@ -539,7 +539,7 @@ def repository_lines(audit: Audit) -> list[str]:
     return lines
 
 
-def secret_table_lines(audit: Audit, rows: list[SecretAge], key: KeyAge) -> list[str]:
+def inventory_table_lines(audit: Audit, rows: list[SecretAge], key: KeyAge) -> list[str]:
     if not rows:
         return []
     lines = ["", "### Organization secrets", "",
@@ -571,7 +571,7 @@ def render_report(audit: Audit, result: tuple[str, list[Finding], list[SecretAge
     lines += check_rows(audit, key)
     lines.append(f"| Organization secret audit | {secret_result} |")
     lines += findings_lines(findings) + key_lines(audit) + repository_lines(audit)
-    lines += secret_table_lines(audit, rows, key)
+    lines += inventory_table_lines(audit, rows, key)
     lines += ["", f"Runbook: {runbook}."]
     return "\n".join(lines) + "\n"
 

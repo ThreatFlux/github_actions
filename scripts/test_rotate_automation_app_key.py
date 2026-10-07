@@ -228,7 +228,8 @@ class RotateKeyTests(unittest.TestCase):
 
     def test_failed_lookups_stop_before_any_comparison_or_change(self) -> None:
         """An API error must never pass for drift, least of all with --sync-repos."""
-        for env in ({"FAKE_LIST_FAILS": "1"}, {"FAKE_SECRET_VISIBILITY": "error"}):
+        # B105: fake-API switches (a failing listing, a failing visibility lookup), not passwords.
+        for env in ({"FAKE_LIST_FAILS": "1"}, {"FAKE_SECRET_VISIBILITY": "error"}):  # nosec B105
             with self.subTest(env=env):
                 result = self.rotate("--yes", "--sync-repos", str(self.pem), **env)
                 self.assertNotEqual(result.returncode, 0)
