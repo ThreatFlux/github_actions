@@ -1,15 +1,20 @@
 """Run rotate-automation-app-key.sh against fake gh and curl binaries.
 
 The fakes record every invocation, so the tests can prove the dry run changes
-nothing, the real run keeps the secret's repository list and feeds the key on
-stdin, and no key material or JWT ever reaches argv or the script's output.
+nothing, the real run shares the secret with exactly the checked-in repository
+list, feeds the key on stdin and records its fingerprint, drift between the list
+and the organization settings stops the script, and no key material or JWT ever
+reaches argv or the script's output.
 """
 
+import base64
+import hashlib
 import os
 import shutil
 
 # B404: The script under test and openssl run as fixed argv lists, never via a shell.
 import subprocess  # nosec B404
+import re
 import tempfile
 import unittest
 from pathlib import Path
@@ -17,6 +22,7 @@ from pathlib import Path
 SCRIPT = Path(__file__).resolve().with_name("rotate-automation-app-key.sh")
 APP_ID = "5205173"
 REPOS = "github_actions,ollama_rust_sdk"
+REPO_LIST = "# test list\nollama_rust_sdk\ngithub_actions  # health repository\n\n"
 
 FAKE_GH = r'''#!/usr/bin/env python3
 import os, sys
@@ -29,6 +35,8 @@ joined = " ".join(args)
 if args[:2] == ["secret", "set"]:
     (state / "secret-stdin").write_bytes(sys.stdin.buffer.read())
     sys.exit(int(os.environ.get("FAKE_SET_EXIT", "0")))
+if args[:2] == ["variable", "set"]:
+    sys.exit(int(os.environ.get("FAKE_VARIABLE_SET_EXIT", "0")))
 if args[:2] == ["workflow", "run"]:
     (state / "dispatched").write_text("yes")
     sys.exit(0)
@@ -37,16 +45,29 @@ if args[:2] == ["run", "list"]:
     sys.exit(0)
 if args[:2] == ["run", "watch"]:
     sys.exit(int(os.environ.get("FAKE_WATCH_EXIT", "0")))
+def visibility(variable):
+    value = os.environ.get(variable, "selected")
+    if value == "missing":
+        sys.exit("gh: Not Found (HTTP 404)")
+    if value == "error":
+        sys.exit("gh: Bad credentials (HTTP 401)")
+    print(value)
 if args[0] == "api":
     if joined.endswith("/actions/secrets --jq .secrets[].name"):
         repo = joined.split("/repos/ThreatFlux/", 1)[1].split("/", 1)[0]
         print("TF_AUTOMATION_APP_PRIVATE_KEY" if repo == os.environ.get("FAKE_SHADOW_REPO") else "CODECOV_TOKEN")
-    elif "/variables/TF_AUTOMATION_APP_ID" in joined:
-        print(os.environ["FAKE_APP_ID"])
-    elif joined.endswith("/repositories --jq .repositories[].name"):
+    elif joined.endswith("/repositories --jq .repositories[].name") and os.environ.get("FAKE_LIST_FAILS"):
+        sys.exit("gh: Server Error (HTTP 502)")
+    elif joined.endswith("/variables/TF_AUTOMATION_APP_ID/repositories --jq .repositories[].name"):
+        print("\n".join(os.environ.get("FAKE_VAR_REPOS", os.environ["FAKE_REPOS"]).split(",")))
+    elif joined.endswith("/secrets/TF_AUTOMATION_APP_PRIVATE_KEY/repositories --jq .repositories[].name"):
         print("\n".join(os.environ["FAKE_REPOS"].split(",")))
-    elif "/secrets/TF_AUTOMATION_APP_PRIVATE_KEY" in joined:
-        print("selected")
+    elif joined.endswith("/variables/TF_AUTOMATION_APP_ID --jq .visibility"):
+        visibility("FAKE_VAR_VISIBILITY")
+    elif joined.endswith("/variables/TF_AUTOMATION_APP_ID --jq .value"):
+        print(os.environ["FAKE_APP_ID"])
+    elif joined.endswith("/secrets/TF_AUTOMATION_APP_PRIVATE_KEY --jq .visibility"):
+        visibility("FAKE_SECRET_VISIBILITY")
     elif "/user" in joined:
         print("wroersma")
     else:
@@ -95,6 +116,8 @@ class RotateKeyTests(unittest.TestCase):
             "ROTATE_POLL_SECONDS": "0",
             "ROTATE_POLL_ATTEMPTS": "3",
         }
+        self.repos_file = self.root / "automation-app-repos.txt"
+        self.repos_file.write_text(REPO_LIST)
         self.pem = self.root / "new-key.pem"
         self.openssl("genrsa", "-out", str(self.pem), "2048")
 
@@ -105,9 +128,16 @@ class RotateKeyTests(unittest.TestCase):
     def rotate(self, *args: str, **env: str) -> subprocess.CompletedProcess:
         # B603/B607: the script under test with fixed arguments and a fixture key.
         return subprocess.run(  # nosec B603 B607
-            ["bash", str(SCRIPT), *args], env={**self.env, **env}, stdin=subprocess.DEVNULL,
-            capture_output=True, text=True, check=False, timeout=120,
+            ["bash", str(SCRIPT), "--repos-file", str(self.repos_file), *args], env={**self.env, **env},
+            stdin=subprocess.DEVNULL, capture_output=True, text=True, check=False, timeout=120,
         )
+
+    def fingerprint(self) -> str:
+        # B603/B607: fixed openssl subcommands on the temporary fixture key.
+        public = subprocess.run(  # nosec B603 B607
+            ["openssl", "rsa", "-in", str(self.pem), "-pubout", "-outform", "DER"],
+            check=True, capture_output=True).stdout
+        return "SHA256:" + base64.b64encode(hashlib.sha256(public).digest()).decode()
 
     def gh_log(self) -> str:
         path = self.state / "gh.log"
@@ -129,28 +159,112 @@ class RotateKeyTests(unittest.TestCase):
         key_lines = self.key_lines()
         result = self.rotate("--dry-run", str(self.pem))
         self.assertEqual(result.returncode, 0, result.stderr)
-        self.assertIn("fingerprint SHA256:", result.stdout)
-        self.assertIn(f"stays shared with: {REPOS}", result.stdout)
+        self.assertIn(f"fingerprint {self.fingerprint()}", result.stdout)
+        self.assertIn(f"will be shared with: {REPOS}", result.stdout)
+        self.assertIn(f"would record TF_AUTOMATION_APP_KEY_ROTATED_AT=<rotation time, UTC> and"
+                      f" TF_AUTOMATION_APP_KEY_FINGERPRINT={self.fingerprint()}", result.stdout)
         self.assertIn("Dry run: nothing changed", result.stdout)
         self.assertNotIn("secret set", self.gh_log())
+        self.assertNotIn("variable set", self.gh_log())
         self.assertNotIn("workflow run", self.gh_log())
         self.assertTrue(self.pem.exists())
         self.assert_no_key_material(result, key_lines)
 
-    def test_rotation_keeps_repositories_proves_the_key_and_removes_the_file(self) -> None:
+    def test_rotation_shares_the_listed_repositories_records_the_key_and_removes_the_file(self) -> None:
         key_bytes = self.pem.read_bytes()
         key_lines = self.key_lines()
+        fingerprint = self.fingerprint()
         result = self.rotate("--yes", str(self.pem))
         self.assertEqual(result.returncode, 0, result.stderr)
         log = self.gh_log()
         self.assertIn(
             f"secret set TF_AUTOMATION_APP_PRIVATE_KEY --org ThreatFlux --visibility selected --repos {REPOS}\n", log)
         self.assertEqual((self.state / "secret-stdin").read_bytes(), key_bytes)
+        self.assertNotIn("variable set TF_AUTOMATION_APP_ID", log)
+        scope = "--org ThreatFlux --visibility selected --repos github_actions"
+        rotated = re.search(rf"^variable set TF_AUTOMATION_APP_KEY_ROTATED_AT {scope} --body (\S+)$", log, re.M)
+        self.assertIsNotNone(rotated, log)
+        self.assertRegex(rotated.group(1), r"^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z$")
+        self.assertIn(f"variable set TF_AUTOMATION_APP_KEY_FINGERPRINT {scope} --body {fingerprint}\n", log)
+        # The date is written before the fingerprint, and both before the health run.
+        self.assertLess(log.index("ROTATED_AT"), log.index("KEY_FINGERPRINT"))
+        self.assertLess(log.index("KEY_FINGERPRINT"), log.index("workflow run"))
         self.assertIn("workflow run automation-app-health.yml --repo ThreatFlux/github_actions --ref main", log)
         self.assertIn("run watch 101 --repo ThreatFlux/github_actions --exit-status", log)
         self.assertIn("https://github.com/organizations/ThreatFlux/settings/apps/threatflux-automation", result.stdout)
         self.assertFalse(self.pem.exists())
         self.assert_no_key_material(result, key_lines)
+
+    def test_failed_record_warns_with_the_commands_and_carries_on(self) -> None:
+        fingerprint = self.fingerprint()
+        result = self.rotate("--yes", str(self.pem), FAKE_VARIABLE_SET_EXIT="1")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn("could not record the rotation", result.stderr)
+        self.assertIn(f"gh variable set TF_AUTOMATION_APP_KEY_FINGERPRINT --org ThreatFlux --visibility selected"
+                      f" --repos github_actions --body '{fingerprint}'", result.stderr)
+        self.assertFalse(self.pem.exists())
+
+    def test_drift_stops_before_any_change(self) -> None:
+        for env, message in (
+            ({"FAKE_REPOS": "github_actions"}, "TF_AUTOMATION_APP_PRIVATE_KEY is not shared with listed repositories:"
+                                               " ollama_rust_sdk"),
+            ({"FAKE_REPOS": f"{REPOS},lifeflux"}, "TF_AUTOMATION_APP_PRIVATE_KEY is shared with repositories that are"
+                                                  " not listed: lifeflux"),
+            ({"FAKE_VAR_REPOS": "ollama_rust_sdk"}, "TF_AUTOMATION_APP_ID is not shared with listed repositories:"
+                                                    " github_actions"),
+            # B105: a secret's visibility setting, not a password.
+            ({"FAKE_SECRET_VISIBILITY": "all"},  # nosec B105
+             "TF_AUTOMATION_APP_PRIVATE_KEY is visible to all repositories"),
+            ({"FAKE_VAR_VISIBILITY": "private"}, "TF_AUTOMATION_APP_ID is visible to private repositories"),
+        ):
+            with self.subTest(env=env):
+                result = self.rotate("--yes", str(self.pem), **env)
+                self.assertNotEqual(result.returncode, 0)
+                self.assertIn(message, result.stderr)
+                self.assertIn("rerun with --sync-repos", result.stderr)
+                self.assertNotIn("secret set", self.gh_log())
+                self.assertNotIn("variable set", self.gh_log())
+                self.assertTrue(self.pem.exists())
+
+    def test_failed_lookups_stop_before_any_comparison_or_change(self) -> None:
+        """An API error must never pass for drift, least of all with --sync-repos."""
+        # B105: fake-API switches (a failing listing, a failing visibility lookup), not passwords.
+        for env in ({"FAKE_LIST_FAILS": "1"}, {"FAKE_SECRET_VISIBILITY": "error"}):  # nosec B105
+            with self.subTest(env=env):
+                result = self.rotate("--yes", "--sync-repos", str(self.pem), **env)
+                self.assertNotEqual(result.returncode, 0)
+                self.assertNotIn("not shared with", result.stderr)
+                self.assertNotIn("set", self.gh_log().replace("--visibility", ""))
+                self.assertTrue(self.pem.exists())
+
+    def test_sync_repos_shares_secret_and_variable_with_exactly_the_list(self) -> None:
+        result = self.rotate("--yes", "--sync-repos", str(self.pem),
+                             FAKE_REPOS=f"{REPOS},lifeflux", FAKE_VAR_REPOS="github_actions")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        log = self.gh_log()
+        self.assertIn(f"variable set TF_AUTOMATION_APP_ID --org ThreatFlux --visibility selected --repos {REPOS}"
+                      f" --body {APP_ID}\n", log)
+        self.assertIn(
+            f"secret set TF_AUTOMATION_APP_PRIVATE_KEY --org ThreatFlux --visibility selected --repos {REPOS}\n", log)
+        self.assertLess(log.index("variable set TF_AUTOMATION_APP_ID"), log.index("secret set"))
+
+    def test_missing_secret_is_created_for_the_listed_repositories(self) -> None:
+        result = self.rotate("--yes", str(self.pem), FAKE_SECRET_VISIBILITY="missing")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn("does not exist as an organization secret", result.stderr)
+        self.assertIn(
+            f"secret set TF_AUTOMATION_APP_PRIVATE_KEY --org ThreatFlux --visibility selected --repos {REPOS}\n",
+            self.gh_log())
+
+    def test_check_repos_needs_no_key_and_reports_drift(self) -> None:
+        result = self.rotate("--check-repos")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn("match", result.stdout)
+        result = self.rotate("--check-repos", FAKE_VAR_REPOS=f"{REPOS},lifeflux")
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("TF_AUTOMATION_APP_ID is shared with repositories that are not listed: lifeflux", result.stderr)
+        self.assertNotIn("set", self.gh_log().replace("--visibility", ""))
+        self.assertNotEqual(self.rotate("--check-repos", str(self.pem)).returncode, 0)
 
     def test_failed_health_run_keeps_the_file(self) -> None:
         result = self.rotate("--yes", str(self.pem), FAKE_WATCH_EXIT="1")

@@ -1,9 +1,12 @@
 name: Automation App Health
 
-# Weekly proof that the threatflux-automation GitHub App still mints tokens and
-# reaches exactly the repositories it is installed on, plus an audit of the
-# organization secrets behind it. Findings go to a single tracking issue
-# (label secret-rotation) that closes itself once everything is healthy.
+# Weekly proof that the threatflux-automation GitHub App still mints tokens,
+# that its installation, the TF_AUTOMATION_APP_PRIVATE_KEY secret and the
+# TF_AUTOMATION_APP_ID variable all reach exactly the repositories listed in
+# .github/automation-app-repos.txt, and an audit of the organization secrets
+# behind it, including the App key's age from its rotation record. Findings go
+# to a single tracking issue (label secret-rotation) that closes itself once
+# everything is healthy.
 # scripts/rotate-automation-app-key.sh dispatches this workflow to prove a
 # freshly rotated key works before the old one is deleted.
 # Runbook: docs/SECRETS-ROTATION.md.
@@ -23,12 +26,12 @@ concurrency:
   cancel-in-progress: false
 
 env:
-  # The repositories the App installation must reach, no more and no fewer.
-  # Keep in sync with the installation and with the selected repositories of
-  # the TF_AUTOMATION_APP_ID variable and TF_AUTOMATION_APP_PRIVATE_KEY secret.
-  EXPECTED_REPOSITORIES: >-
-    github_actions,ollama_rust_sdk,rust-cicd-template,threatflux-atlassian,threatflux-package-security,threatflux-unifi-sdk,vertex_rust_sdk
+  # The repositories the installation, the key secret, and the App ID variable
+  # must each reach, no more and no fewer. scripts/rotate-automation-app-key.sh
+  # reads the same file.
+  REPOS_FILE: .github/automation-app-repos.txt
   APP_KEY_SECRET: TF_AUTOMATION_APP_PRIVATE_KEY
+  APP_ID_VARIABLE: TF_AUTOMATION_APP_ID
   KEY_MAX_AGE_DAYS: "90"
   SECRET_MAX_AGE_DAYS: "180"
   ISSUE_LABEL: secret-rotation
@@ -128,6 +131,83 @@ jobs:
           fi
           echo "outcome=success" >> "$GITHUB_OUTPUT"
 
+      # Organization variables need the App's organization permission
+      # "Variables: read" (organization_actions_variables), which an owner has
+      # to grant. This action release does not declare that permission input,
+      # but it forwards every permission-* input to the token request, so the
+      # runner's "Unexpected input" warning here is expected. Until the App
+      # holds the permission, minting fails and the audit says so.
+      - name: Mint an App token for the organization variable audit
+        id: variables-token
+        if: steps.app-token.outcome == 'success'
+        continue-on-error: true
+        uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3.2.0
+        with:
+          client-id: ${{ vars.TF_AUTOMATION_APP_ID }}
+          private-key: ${{ secrets.TF_AUTOMATION_APP_PRIVATE_KEY }}
+          # Not narrowed to this repository: the variable's selected-repository
+          # list is compared against the whole installation.
+          owner: ${{ github.repository_owner }} # zizmor: ignore[github-app] organization Variables: read only
+          permission-organization-actions-variables: read
+
+      - name: Read the App ID variable's repository access
+        id: variable
+        if: steps.app-token.outcome == 'success'
+        env:
+          GH_TOKEN: ${{ steps.variables-token.outputs.token }}
+          TOKEN_OUTCOME: ${{ steps.variables-token.outcome }}
+          ORG: ${{ github.repository_owner }}
+        run: |
+          set -euo pipefail
+          if [[ "${TOKEN_OUTCOME}" != success ]]; then
+            echo "::warning title=App ID variable audit skipped::The App could not mint a token with organization Variables: read. Grant that permission to the App and approve it for the ${ORG} installation; see docs/SECRETS-ROTATION.md."
+            echo "outcome=missing-permission" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          if ! visibility="$(gh api "/orgs/${ORG}/actions/variables/${APP_ID_VARIABLE}" --jq .visibility 2> variable-error.txt)"; then
+            cat variable-error.txt >&2
+            if grep -q 'HTTP 404' variable-error.txt; then
+              echo "outcome=not-found" >> "$GITHUB_OUTPUT"
+            elif grep -q 'HTTP 403' variable-error.txt; then
+              echo "outcome=missing-permission" >> "$GITHUB_OUTPUT"
+            else
+              echo "outcome=failure" >> "$GITHUB_OUTPUT"
+            fi
+            exit 0
+          fi
+          echo "visibility=${visibility}" >> "$GITHUB_OUTPUT"
+          if [[ "${visibility}" == selected ]]; then
+            if gh api --paginate "/orgs/${ORG}/actions/variables/${APP_ID_VARIABLE}/repositories" \
+              --jq '.repositories[].name' 2> variable-repos-error.txt | sort > app-id-variable-repos.txt; then
+              echo "${APP_ID_VARIABLE} is visible to $(wc -l < app-id-variable-repos.txt | tr -d ' ') repositories."
+            else
+              cat variable-repos-error.txt >&2
+              rm -f app-id-variable-repos.txt
+            fi
+          fi
+          echo "outcome=success" >> "$GITHUB_OUTPUT"
+
+      # The SHA256 fingerprint of the stored key ties the rotation record (the
+      # TF_AUTOMATION_APP_KEY_FINGERPRINT and TF_AUTOMATION_APP_KEY_ROTATED_AT
+      # organization variables the rotation script writes) to the key actually
+      # in the secret, and is the value the App's settings page shows for it.
+      # Only the public half is hashed; printf is a shell builtin, so the key
+      # never appears on a command line, and the runner masks it in the log.
+      - name: Fingerprint the stored App key
+        id: key
+        if: steps.app-token.outcome == 'success'
+        continue-on-error: true
+        env:
+          APP_PRIVATE_KEY: ${{ secrets.TF_AUTOMATION_APP_PRIVATE_KEY }}
+        run: |
+          set -euo pipefail
+          # Stored keys sometimes carry literal \n sequences instead of newlines.
+          digest="$(printf '%s\n' "${APP_PRIVATE_KEY//\\n/$'\n'}" \
+            | openssl rsa -passin pass: -pubout -outform DER 2>/dev/null \
+            | openssl dgst -sha256 -binary | openssl base64 -A)"
+          echo "Stored key fingerprint: SHA256:${digest}"
+          echo "fingerprint=SHA256:${digest}" >> "$GITHUB_OUTPUT"
+
       - name: Evaluate
         id: evaluate
         if: always()
@@ -136,13 +216,20 @@ jobs:
           MINT_OUTCOME: ${{ steps.app-token.outcome }}
           REPOS_OUTCOME: ${{ steps.repos.outcome || 'skipped' }}
           SECRETS_OUTCOME: ${{ steps.secrets.outputs.outcome || 'skipped' }}
+          VARIABLE_OUTCOME: ${{ steps.variable.outputs.outcome || 'skipped' }}
+          VARIABLE_VISIBILITY: ${{ steps.variable.outputs.visibility }}
+          KEY_FINGERPRINT: ${{ steps.key.outputs.fingerprint }}
+          # Written by scripts/rotate-automation-app-key.sh and shared with this
+          # repository; empty until the first recorded rotation.
+          RECORDED_FINGERPRINT: ${{ vars.TF_AUTOMATION_APP_KEY_FINGERPRINT }}
+          RECORDED_ROTATED_AT: ${{ vars.TF_AUTOMATION_APP_KEY_ROTATED_AT }}
           RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
           REPO_URL: ${{ github.server_url }}/${{ github.repository }}
         run: |
           set -euo pipefail
           python3 scripts/automation_app_health.py \
             --owner "${OWNER}" \
-            --expected-repos "${EXPECTED_REPOSITORIES}" \
+            --expected-repos-file "${REPOS_FILE}" \
             --mint-outcome "${MINT_OUTCOME}" \
             --repos-outcome "${REPOS_OUTCOME}" \
             --repos-file installation-repos.txt \
@@ -150,13 +237,21 @@ jobs:
             --secrets-file org-secrets.jsonl \
             --key-secret "${APP_KEY_SECRET}" \
             --key-secret-repos-file key-secret-repos.txt \
+            --app-id-variable "${APP_ID_VARIABLE}" \
+            --variable-outcome "${VARIABLE_OUTCOME}" \
+            --variable-visibility "${VARIABLE_VISIBILITY}" \
+            --variable-repos-file app-id-variable-repos.txt \
+            --key-fingerprint "${KEY_FINGERPRINT}" \
+            --recorded-fingerprint "${RECORDED_FINGERPRINT}" \
+            --recorded-rotated-at "${RECORDED_ROTATED_AT}" \
+            --health-repo "${GITHUB_REPOSITORY#*/}" \
             --key-max-age-days "${KEY_MAX_AGE_DAYS}" \
             --max-age-days "${SECRET_MAX_AGE_DAYS}" \
-            --obsolete "GIT_TOKEN=Classic personal access token that GitHub now rejects (401). Nothing may use it: replace any remaining reference with GITHUB_TOKEN or the threatflux-automation App, then delete the secret." \
+            --obsolete "GIT_TOKEN=Classic personal access token that GitHub now rejects (401). Nothing may use it: replace the remaining references (lifeflux workflows) with GITHUB_TOKEN or a GitHub App token, then delete the secret." \
             --not-credential DOCKERHUB_USERNAME \
             --not-credential CODACY_USERNAME \
             --not-credential CODACY_ORGANIZATION_PROVIDER \
-            --obsolete "CARGO_REGISTRY_TOKEN=crates.io rejects this token (403) and publishing moved to crates.io trusted publishing (OIDC). Delete the secret once every publishing repository's release.yml uses rust-lang/crates-io-auth-action." \
+            --obsolete "CARGO_REGISTRY_TOKEN=crates.io rejects this token (403), and every ThreatFlux release.yml now publishes through crates.io trusted publishing (rust-lang/crates-io-auth-action), so no workflow reads it. Delete the secret." \
             --run-url "${RUN_URL}" \
             --repo-url "${REPO_URL}" \
             --report health-report.md
@@ -194,7 +289,7 @@ jobs:
           if [[ "${STATUS}" == healthy ]]; then
             if [[ -n "${existing}" && "${state}" == OPEN ]]; then
               gh issue close "${number}" --repo "${GITHUB_REPOSITORY}" \
-                --comment "Healthy as of ${RUN_URL}: the App mints tokens, reaches exactly the expected repositories, and no secret needs attention. Closing."
+                --comment "Healthy as of ${RUN_URL}: the App mints tokens; its installation, key secret, and App ID variable reach exactly the repositories in ${REPOS_FILE}; and no secret needs attention. Closing."
               echo "Closed #${number}." | tee -a "$GITHUB_STEP_SUMMARY"
             else
               echo "Healthy; no open tracking issue." | tee -a "$GITHUB_STEP_SUMMARY"
@@ -222,5 +317,5 @@ jobs:
       - name: Fail when the App is broken
         if: always() && steps.evaluate.outputs.status == 'broken'
         run: |
-          echo "::error title=Automation App broken::The App cannot mint a token or reaches the wrong repositories; see the job summary."
+          echo "::error title=Automation App broken::The App cannot mint a token, or its installation, key secret, or App ID variable reaches other repositories than ${REPOS_FILE}; see the job summary."
           exit 1
