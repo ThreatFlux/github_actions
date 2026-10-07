@@ -118,7 +118,7 @@ Delete the workflow file from `.github/workflows/`. If you remove `auto-release.
 Common causes:
 
 1. **Binary name mismatch** — ensure `BINARY_NAME` in the Makefile matches the `[[bin]]` name in `Cargo.toml`.
-2. **Missing system dependencies** — if your crate depends on system libraries (e.g., OpenSSL), add them to the Dockerfile's build stage.
+2. **Missing system dependencies** — if your crate depends on system libraries (e.g., OpenSSL), add them to the Dockerfile's build stage. The runtime stage is distroless (glibc, libgcc, libssl, CA certificates; no shell or package manager), so anything else the binary needs at runtime has to be linked statically or copied in from the build stage.
 3. **Workspace path issues** — for workspaces, set `BINARY_PACKAGE` to the crate that owns the binary.
 
 ### How do I add code coverage badges?

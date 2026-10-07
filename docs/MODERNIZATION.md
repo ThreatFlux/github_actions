@@ -53,7 +53,9 @@ verification.
 
 Rust 1.99.0 Bookworm and Debian Bookworm slim bases are pinned to the verified
 multi-platform manifest digests. Builds retain the existing non-root runtime
-user, Bookworm distribution and embedded CycloneDX 1.5 SBOM. Locked builds and
+user, Bookworm distribution and embedded CycloneDX 1.5 SBOM. (The builder has
+since moved to Rust 1.99.0 trixie and the runtime to distroless `cc-debian13`
+running as uid 65532, both pinned by index digest; see the Dockerfile.) Locked builds and
 feature powersets include all targets; benchmark, build and scanner execution
 failures propagate. Required image, audit and SBOM artifacts fail on missing
 files. Trivy's finding policy remains informational (`exit-code: 0`); scanner
