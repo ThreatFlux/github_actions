@@ -239,6 +239,61 @@ fn mock_strict_finalize(server: &mut ServerGuard) -> Vec<Mock> {
 }
 
 #[test]
+fn forced_patch_over_maintenance_commits_gets_maintenance_notes() {
+    let temp_dir = write_fixture_repo();
+    let mut server = Server::new();
+    let _analysis = mock_analysis(&mut server, 1, CHORE_ONLY);
+    let _patch_tag = mock_tag_lookup(&mut server, "v0.2.4", 404, r#"{"message":"Not Found"}"#);
+    let _no_mutations = mock_no_mutations(&mut server);
+
+    let mut release_options = options(temp_dir.path());
+    release_options.bump = Some(BumpLevel::Patch);
+    release_options.dry_run = true;
+    let report = publisher(&server).release(&release_options).expect("release report");
+
+    assert_eq!(report.outcome, ReleaseOutcome::DryRun);
+    assert_eq!(report.next_version.as_deref(), Some("0.2.4"));
+    assert_eq!(
+        report.notes.as_deref(),
+        Some("## Release v0.2.4\n\n### Maintenance\n- chore: tidy (choreaa)\n")
+    );
+}
+
+#[test]
+fn release_commits_are_recognized_from_the_commit_message_template() {
+    let commits = crate::conventional::classify_commits(
+        &[
+            "chore: release v1.2.3",
+            "chore: release v1.2.3 (#42)",
+            "chore: release v2.0.0-rc.1+build.7",
+            "chore: release notes wording",
+            "chore: release v1.2.3 and tidy",
+            "ci: keep me",
+        ]
+        .map(|message| crate::github::CommitInfo {
+            sha: String::from("0123456789"),
+            message: message.to_owned(),
+            is_merge: false,
+        }),
+    );
+    let subjects = |template: &str| -> Vec<String> {
+        super::without_release_commits(&commits, template)
+            .into_iter()
+            .map(|commit| commit.subject)
+            .collect()
+    };
+
+    assert_eq!(
+        subjects("chore: release v{version}"),
+        ["chore: release notes wording", "chore: release v1.2.3 and tidy", "ci: keep me"]
+    );
+    // Only the template's first line is a subject; regex metacharacters are literal.
+    assert_eq!(subjects("chore: release v{version}\n\nAutomated.").len(), 3);
+    assert_eq!(subjects("chore(release): v{version} [bot]"), subjects("anything else"));
+    assert_eq!(subjects("chore: release notes wording").len(), 5);
+}
+
+#[test]
 fn release_creates_commit_tag_and_release() {
     let temp_dir = write_fixture_repo();
     let mut server = Server::new();

@@ -14,6 +14,7 @@ use std::{
 };
 
 use anyhow::{Context, Result, bail};
+use regex::Regex;
 use semver::Version;
 
 use crate::{
@@ -272,8 +273,7 @@ impl ReleasePublisher {
         let next_version = conventional::bump_version(&analysis.current, bump_level);
         let next = next_version.to_string();
         let tag = format!("{}{next}", options.tag_prefix);
-        report.notes =
-            Some(conventional::release_notes(&tag, &analysis.commits, analysis.truncated));
+        report.notes = Some(release_notes(options, &tag, &analysis));
         report.next_version = Some(next);
         report.tag = Some(tag.clone());
 
@@ -312,8 +312,7 @@ impl ReleasePublisher {
         let mut report = initial_report(&analysis, None);
         let version = analysis.current.clone();
         let tag = format!("{}{version}", options.tag_prefix);
-        report.notes =
-            Some(conventional::release_notes(&tag, &analysis.commits, analysis.truncated));
+        report.notes = Some(release_notes(options, &tag, &analysis));
         report.next_version = Some(version.to_string());
         report.tag = Some(tag.clone());
 
@@ -598,6 +597,33 @@ impl ReleasePublisher {
         report.outcome = ReleaseOutcome::Released;
         Ok(())
     }
+}
+
+/// Release notes for `tag`, without the automation's own version-bump commits.
+fn release_notes(options: &ReleaseOptions, tag: &str, analysis: &Analysis) -> String {
+    let commits = without_release_commits(&analysis.commits, &options.commit_message);
+    conventional::release_notes(tag, &commits, analysis.truncated)
+}
+
+/// Drop the commits that are this tool's own version bumps: the first line of
+/// `commit_message` rendered for any version, also as squash-merged from a
+/// release pull request (`chore: release v1.2.3 (#42)`). The tag phase and a
+/// merged release pull request both release a range that contains the bump
+/// commit, and listing it under "Maintenance" would only repeat the title.
+fn without_release_commits(
+    commits: &[ConventionalCommit],
+    commit_message: &str,
+) -> Vec<ConventionalCommit> {
+    let template = commit_message.lines().next().unwrap_or_default().trim();
+    let pattern = template
+        .split("{version}")
+        .map(regex::escape)
+        .collect::<Vec<_>>()
+        .join(r"\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?(?:\+[0-9A-Za-z.-]+)?");
+    let Ok(release_commit) = Regex::new(&format!(r"^{pattern}(?: \(#\d+\))?$")) else {
+        return commits.to_vec();
+    };
+    commits.iter().filter(|commit| !release_commit.is_match(&commit.subject)).cloned().collect()
 }
 
 /// A report that releases nothing yet; callers fill in what the run decides.

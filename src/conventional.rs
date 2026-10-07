@@ -104,12 +104,24 @@ pub fn bump_version(current: &Version, level: BumpLevel) -> Version {
     next
 }
 
+/// True when `subject` follows the Conventional Commits grammar
+/// (`type(scope)!: description`), whatever its type.
+#[must_use]
+pub fn is_conventional_subject(subject: &str) -> bool {
+    SUBJECT_RE.is_match(subject)
+}
+
 /// Render markdown release notes grouped by commit kind, listing breaking
 /// changes first and omitting empty sections.
+///
+/// A release with no breaking change, feature, or fix (a forced or manual
+/// bump over `ci:`, `build:`, `chore:`, `docs:` and similar commits) would
+/// otherwise get an empty body, so its other conventional commits are listed
+/// under "Maintenance" instead. Releases that do have features or fixes keep
+/// listing only those, and subjects that are not conventional commits are
+/// never listed.
 #[must_use]
 pub fn release_notes(tag: &str, commits: &[ConventionalCommit], truncated: bool) -> String {
-    use std::fmt::Write as _;
-
     let mut notes = format!("## Release {tag}\n");
     let sections = [
         (CommitKind::Breaking, "Breaking Changes"),
@@ -118,26 +130,39 @@ pub fn release_notes(tag: &str, commits: &[ConventionalCommit], truncated: bool)
     ];
 
     for (kind, title) in sections {
-        let mut header_written = false;
-        for commit in commits.iter().filter(|commit| commit.kind == kind) {
-            if !header_written {
-                notes.push('\n');
-                writeln!(notes, "### {title}").expect("writing to a String cannot fail");
-                header_written = true;
-            }
-            let short_sha = commit.sha.get(..7).unwrap_or(&commit.sha);
-            writeln!(notes, "- {} ({short_sha})", commit.subject)
-                .expect("writing to a String cannot fail");
-        }
+        let section: Vec<&ConventionalCommit> =
+            commits.iter().filter(|commit| commit.kind == kind).collect();
+        push_section(&mut notes, title, &section);
+    }
+
+    if commits.iter().all(|commit| commit.kind == CommitKind::Other) {
+        let maintenance: Vec<&ConventionalCommit> =
+            commits.iter().filter(|commit| is_conventional_subject(&commit.subject)).collect();
+        push_section(&mut notes, "Maintenance", &maintenance);
     }
 
     if truncated {
-        notes.push('\n');
-        writeln!(notes, "_Note: the commit list was truncated; some changes may be missing._")
-            .expect("writing to a String cannot fail");
+        notes.push_str("\n_Note: the commit list was truncated; some changes may be missing._\n");
     }
 
     notes
+}
+
+/// Append a `### {title}` section listing `commits` with short SHAs; nothing
+/// when `commits` is empty.
+fn push_section(notes: &mut String, title: &str, commits: &[&ConventionalCommit]) {
+    use std::fmt::Write as _;
+
+    if commits.is_empty() {
+        return;
+    }
+    notes.push('\n');
+    writeln!(notes, "### {title}").expect("writing to a String cannot fail");
+    for commit in commits {
+        let short_sha = commit.sha.get(..7).unwrap_or(&commit.sha);
+        writeln!(notes, "- {} ({short_sha})", commit.subject)
+            .expect("writing to a String cannot fail");
+    }
 }
 
 #[cfg(test)]
@@ -145,7 +170,8 @@ mod tests {
     use semver::Version;
 
     use super::{
-        BumpLevel, CommitKind, bump_version, classify_commits, release_notes, required_bump,
+        BumpLevel, CommitKind, bump_version, classify_commits, is_conventional_subject,
+        release_notes, required_bump,
     };
     use crate::github::CommitInfo;
 
@@ -300,5 +326,54 @@ mod tests {
         let notes = release_notes("v1.0.0", &[], true);
 
         assert!(notes.contains("truncated"), "{notes}");
+    }
+
+    #[test]
+    fn release_notes_list_maintenance_commits_when_nothing_else_qualifies() {
+        let commits = classify_commits(&[
+            commit("ci(automation): audit the App weekly"),
+            commit("build(docker): move to trixie"),
+            commit("chore(deps): bump serde"),
+            commit("docs: explain trusted publishing"),
+            commit("Update README.md"),
+        ]);
+
+        let notes = release_notes("v0.7.8", &commits, false);
+
+        assert_eq!(
+            notes,
+            "## Release v0.7.8\n\n### Maintenance\n- ci(automation): audit the App weekly (0123456)\n- build(docker): move to trixie (0123456)\n- chore(deps): bump serde (0123456)\n- docs: explain trusted publishing (0123456)\n"
+        );
+    }
+
+    #[test]
+    fn release_notes_leave_maintenance_out_beside_features_or_fixes() {
+        for headline in ["fix: repair thing", "feat: add thing", "refactor!: drop thing"] {
+            let commits = classify_commits(&[commit(headline), commit("ci: tidy workflows")]);
+
+            let notes = release_notes("v1.0.0", &commits, false);
+
+            assert!(!notes.contains("Maintenance"), "{notes}");
+            assert!(!notes.contains("ci: tidy workflows"), "{notes}");
+        }
+    }
+
+    #[test]
+    fn release_notes_without_conventional_commits_stay_bare() {
+        let commits = classify_commits(&[commit("Update README.md"), commit("wip")]);
+
+        assert_eq!(release_notes("v1.0.1", &commits, false), "## Release v1.0.1\n");
+        assert_eq!(
+            release_notes("v1.0.1", &commits, true),
+            "## Release v1.0.1\n\n_Note: the commit list was truncated; some changes may be missing._\n"
+        );
+    }
+
+    #[test]
+    fn conventional_subjects_are_recognized_by_grammar_not_type() {
+        assert!(is_conventional_subject("chore(release): v1"));
+        assert!(is_conventional_subject("perf!: faster"));
+        assert!(!is_conventional_subject("Merge branch main"));
+        assert!(!is_conventional_subject("(ci): missing type"));
     }
 }

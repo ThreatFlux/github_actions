@@ -218,6 +218,61 @@ fn tag_phase_releases_even_when_no_commit_warrants_a_bump() {
 }
 
 #[test]
+fn tag_phase_notes_list_maintenance_commits_without_the_bump_commit() {
+    // A forced patch over ci/docs commits: the range holds the bump commit the
+    // earlier phase pushed, and nothing qualifies as a feature or fix.
+    let range = r#"{"total_commits":4,"commits":[
+        {"sha":"ciaaaaaaaaa","commit":{"message":"ci(automation): audit the App weekly"},"parents":[{}]},
+        {"sha":"docsbbbbbbb","commit":{"message":"docs: explain trusted publishing\n\nBody text."},"parents":[{}]},
+        {"sha":"mergeccccc","commit":{"message":"Merge branch 'main' into topic"},"parents":[{},{}]},
+        {"sha":"bumpddddddd","commit":{"message":"chore: release v0.2.3"},"parents":[{}]}
+    ]}"#;
+    let temp_dir = write_fixture_repo();
+    let mut server = Server::new();
+    let _analysis = mock_analysis(&mut server, 2, range);
+    let _tag_lookup = server
+        .mock("GET", "/repos/acme/demo/git/ref/tags/v0.2.3")
+        .with_status(404)
+        .with_body(r#"{"message":"Not Found"}"#)
+        .create();
+    let _tag_object = server
+        .mock("POST", "/repos/acme/demo/git/tags")
+        .with_status(201)
+        .with_body(r#"{"sha":"tagobjectsha"}"#)
+        .create();
+    let _tag_ref = server
+        .mock("POST", "/repos/acme/demo/git/refs")
+        .with_status(201)
+        .with_body(r#"{"ref":"refs/tags/v0.2.3"}"#)
+        .create();
+    let release = server
+        .mock("POST", "/repos/acme/demo/releases")
+        .match_body(Matcher::AllOf(vec![
+            Matcher::Regex(
+                r"### Maintenance\\n- ci\(automation\): audit the App weekly \(ciaaaaa\)".into(),
+            ),
+            Matcher::Regex(r"- docs: explain trusted publishing \(docsbbb\)".into()),
+        ]))
+        .expect(1)
+        .with_status(201)
+        .with_body(r#"{"html_url":"https://github.com/acme/demo/releases/tag/v0.2.3"}"#)
+        .create();
+
+    let mut release_options = options(temp_dir.path());
+    release_options.phase = ReleasePhase::Tag;
+    let report = publisher(&server).release(&release_options).expect("release report");
+
+    assert_eq!(report.outcome, ReleaseOutcome::Released);
+    assert_eq!(
+        report.notes.as_deref(),
+        Some(
+            "## Release v0.2.3\n\n### Maintenance\n- ci(automation): audit the App weekly (ciaaaaa)\n- docs: explain trusted publishing (docsbbb)\n"
+        )
+    );
+    release.assert();
+}
+
+#[test]
 fn phases_cannot_be_combined_with_the_release_pull_request_flow() {
     let temp_dir = write_fixture_repo();
     let server = Server::new();
