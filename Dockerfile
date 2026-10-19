@@ -12,7 +12,7 @@
 # Rust builder; refresh the runtime with
 #   docker buildx imagetools inspect gcr.io/distroless/cc-debian13:nonroot
 
-FROM rust:1.99.0-trixie@sha256:6ff07edce8775d0f64be7aba9197229407301bddf2054d62c27b541a6238a181 AS rust-base
+FROM rust:1.99.0-trixie@sha256:81015672d6939b0265f09adf96d5de125482bb1330106076956b0518e74edc90 AS rust-base
 
 ARG CARGO_BUILD_JOBS=2
 ENV CARGO_BUILD_JOBS=${CARGO_BUILD_JOBS}
