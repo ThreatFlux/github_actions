@@ -3,7 +3,7 @@
 
 CARGO ?= cargo
 RUST_MSRV ?= 1.97.1
-RUST_TOOLCHAIN ?= 1.99.0
+RUST_TOOLCHAIN ?= 1.99.1
 export RUSTUP_TOOLCHAIN := $(RUST_TOOLCHAIN)
 
 DOCKER_IMAGE ?= $(shell basename $(CURDIR))
@@ -56,7 +56,7 @@ dev-setup: ## Install development tools
 	@cargo install cargo-deny --locked --version 0.20.2
 	@cargo install cargo-cyclonedx --locked --version 0.5.9
 	@cargo install cargo-hack --locked --version 0.6.45
-	@python3 -m pip install --user pre-commit==4.6.2
+	@python3 -m pip install --user pre-commit==4.7.0
 	@echo "$(GREEN)Development tools installed!$(NC)"
 
 .PHONY: install-hooks
