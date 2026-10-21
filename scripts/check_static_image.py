@@ -3,9 +3,11 @@
 
 import argparse
 import json
+import re
 from pathlib import PurePosixPath
 import struct
-import subprocess
+# Fixed Docker/OpenSSL executables use argv arrays, never a shell.
+import subprocess  # nosec B404
 import tarfile
 import tempfile
 
@@ -14,11 +16,11 @@ BINARIES = {"usr/local/bin/app", "usr/bin/tini"}
 
 
 def check_ca_trust(bundle):
-    encoded = subprocess.check_output(
-        ["openssl", "crl2pkcs7", "-nocrl", "-certfile", "/dev/stdin"], input=bundle
+    encoded = subprocess.check_output(  # nosec B603
+        ["openssl", "crl2pkcs7", "-nocrl", "-certfile", "/dev/stdin"], shell=False, input=bundle
     )
-    subjects = subprocess.check_output(
-        ["openssl", "pkcs7", "-print_certs", "-noout"], input=encoded
+    subjects = subprocess.check_output(  # nosec B603
+        ["openssl", "pkcs7", "-print_certs", "-noout"], shell=False, input=encoded
     ).decode().lower()
     for distrusted in ("emsign ecc root ca - g3", "aaa certificate services"):
         if distrusted in subjects:
@@ -120,7 +122,8 @@ def check_support_files(filesystem, files, architecture):
 
 def check_filesystem(container, architecture):
     with tempfile.TemporaryFile() as archive:
-        subprocess.run(["docker", "export", container], stdout=archive, check=True)
+        # Container ID was validated after docker create; it cannot add options.
+        subprocess.run(["docker", "export", container], stdout=archive, check=True, shell=False)  # nosec B603
         archive.seek(0)
         with tarfile.open(fileobj=archive) as filesystem:
             files = {str(PurePosixPath(m.name)): m for m in filesystem if m.isfile()}
@@ -128,23 +131,39 @@ def check_filesystem(container, architecture):
             check_support_files(filesystem, files, architecture)
 
 
+def image_reference(value):
+    """Accept image names, tags and digests, never CLI options or shell syntax."""
+    if not re.fullmatch(r"[a-zA-Z0-9][a-zA-Z0-9._/:@-]*", value):
+        raise argparse.ArgumentTypeError("expected a Docker image name, tag or digest")
+    return value
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("image")
+    parser.add_argument("image", type=image_reference)
     parser.add_argument("--platform", choices=("linux/amd64", "linux/arm64"))
     args = parser.parse_args()
     create = ["docker", "create"]
     if args.platform:
         create += ["--platform", args.platform]
-    container = subprocess.check_output(create + ["--", args.image], text=True).strip()
+    # Validated image is a single operand after --; executable/options are fixed.
+    container = subprocess.check_output(  # nosec B603  # nosemgrep: dangerous-subprocess-use-audit, dangerous-subprocess-use-tainted-env-args
+        create + ["--", args.image], text=True, shell=False,  # nosemgrep: dangerous-subprocess-use-tainted-env-args
+    ).strip()
+    if not re.fullmatch(r"[0-9a-f]{64}", container):
+        raise ValueError("docker create returned an invalid container ID")
     try:
-        info = json.loads(subprocess.check_output(["docker", "inspect", container]))[0]
-        image = json.loads(subprocess.check_output(["docker", "image", "inspect", info["Image"]]))[0]
+        # Only a validated container ID reaches Docker, as one argv operand.
+        info = json.loads(subprocess.check_output(["docker", "inspect", container], shell=False))[0]  # nosec B603  # nosemgrep: dangerous-subprocess-use
+        image_id = info["Image"]
+        if not re.fullmatch(r"sha256:[0-9a-f]{64}", image_id):
+            raise ValueError("docker inspect returned an invalid image ID")
+        image = json.loads(subprocess.check_output(["docker", "image", "inspect", image_id], shell=False))[0]  # nosec B603  # nosemgrep: dangerous-subprocess-use
         check_configuration(info)
         check_filesystem(container, image["Architecture"])
         print(f"Static runtime verified: {args.image} ({image['Architecture']})")
     finally:
-        subprocess.run(["docker", "rm", container], stdout=subprocess.DEVNULL, check=True)
+        subprocess.run(["docker", "rm", container], stdout=subprocess.DEVNULL, check=True, shell=False)  # nosec B603
 
 
 if __name__ == "__main__":

@@ -2,10 +2,12 @@
 """Exercise GitHub Actions Maintainer CLI hostname lookup and certificate validation in its image."""
 
 import argparse
+import re
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 import ssl
-import subprocess
+# Fixed Docker/OpenSSL executables use argv arrays, never a shell.
+import subprocess  # nosec B404
 import tempfile
 import threading
 
@@ -42,8 +44,11 @@ def create_certificate(root):
     (root / "extensions.cnf").write_text(
         "basicConstraints=critical,CA:FALSE\nsubjectAltName=DNS:host.docker.internal\n"
         "keyUsage=critical,digitalSignature,keyEncipherment\nextendedKeyUsage=serverAuth\n")
+    # Fixed OpenSSL subcommands; paths come from our private TemporaryDirectory.
     for command in commands:
-        subprocess.run(command, check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        subprocess.run(  # nosec B603  # nosemgrep: dangerous-subprocess-use-audit
+            command, check=True, shell=False, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+        )
     certificate.chmod(0o644)
     return certificate, key
 
@@ -57,8 +62,12 @@ def run_cli(image, platform, port, root, certificate=None, hostname="host.docker
         command += ["-v", f"{certificate}:/fixture/ca.crt:ro", "-e", "SSL_CERT_FILE=/fixture/ca.crt"]
     command += ["-v", f"{root}/repo:/fixture/repo:ro",
                 "-e", f"GITHUB_API_BASE_URL=https://{hostname}:{port}"]
-    return subprocess.run(command + ["--", image, "pin", "--repo", "/fixture/repo", "--dry-run"],
-                          capture_output=True, text=True, timeout=45)
+    # Validated image follows --; mounts, environment and CLI flags are fixed
+    # fixture data in separate argv elements. No shell interprets any value.
+    return subprocess.run(  # nosec B603  # nosemgrep: dangerous-subprocess-use-audit, dangerous-subprocess-use-tainted-env-args
+        command + ["--", image, "pin", "--repo", "/fixture/repo", "--dry-run"],
+        capture_output=True, text=True, timeout=45, shell=False,
+    )
 
 
 def check_tls(image, platform, server, certificate, root):
@@ -84,8 +93,9 @@ def check_image(image, platform, root):
     workflows.mkdir(parents=True)
     (workflows / "fixture.yml").write_text("jobs:\n  fixture:\n    steps:\n      - uses: fixture/action@v1\n")
     certificate, key = create_certificate(root)
-    # Bridge-network containers must reach this temporary host-only test service.
-    server = ThreadingHTTPServer(("0.0.0.0", 0), Handler)
+    # Bridge-network containers need a reachable host interface. This ephemeral
+    # TLS fixture serves only a fabricated SHA, with no secrets or mutable API.
+    server = ThreadingHTTPServer(("0.0.0.0", 0), Handler)  # nosec B104
     server.requests = []
     context = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
     context.minimum_version = ssl.TLSVersion.TLSv1_2
@@ -102,9 +112,16 @@ def check_image(image, platform, root):
         thread.join()
 
 
+def image_reference(value):
+    """Accept image names, tags and digests, never CLI options or shell syntax."""
+    if not re.fullmatch(r"[a-zA-Z0-9][a-zA-Z0-9._/:@-]*", value):
+        raise argparse.ArgumentTypeError("expected a Docker image name, tag or digest")
+    return value
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("image")
+    parser.add_argument("image", type=image_reference)
     parser.add_argument("--platform", choices=("linux/amd64", "linux/arm64"))
     args = parser.parse_args()
     with tempfile.TemporaryDirectory(prefix="github-actions-https-") as directory:
