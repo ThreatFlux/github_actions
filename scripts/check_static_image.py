@@ -4,6 +4,7 @@
 import argparse
 import json
 import re
+import shutil
 from pathlib import PurePosixPath
 import struct
 # Fixed Docker/OpenSSL tools come from the trusted CI runner PATH; argv
@@ -144,6 +145,9 @@ def main():
     parser.add_argument("image", type=image_reference)
     parser.add_argument("--platform", choices=("linux/amd64", "linux/arm64"))
     args = parser.parse_args()
+    docker = shutil.which("docker")
+    if docker is None:
+        raise RuntimeError("Docker is required for static image validation")
     create = ["docker", "create"]
     if args.platform:
         create += ["--platform", args.platform]
@@ -155,11 +159,17 @@ def main():
         raise ValueError("docker create returned an invalid container ID")
     try:
         # Only a validated container ID reaches Docker, as one argv operand.
-        info = json.loads(subprocess.check_output(["docker", "inspect", container], shell=False))[0]  # nosec B603, B607  # nosemgrep: dangerous-subprocess-use
+        inspection = subprocess.check_output(  # nosec B603  # nosemgrep: dangerous-subprocess-use-audit
+            [docker, "inspect", container], shell=False,  # nosemgrep: dangerous-subprocess-use-tainted-env-args
+        )
+        info = json.loads(inspection)[0]
         image_id = info["Image"]
         if not re.fullmatch(r"sha256:[0-9a-f]{64}", image_id):
             raise ValueError("docker inspect returned an invalid image ID")
-        image = json.loads(subprocess.check_output(["docker", "image", "inspect", image_id], shell=False))[0]  # nosec B603, B607  # nosemgrep: dangerous-subprocess-use
+        inspection = subprocess.check_output(  # nosec B603  # nosemgrep: dangerous-subprocess-use-audit
+            [docker, "image", "inspect", image_id], shell=False,  # nosemgrep: dangerous-subprocess-use-tainted-env-args
+        )
+        image = json.loads(inspection)[0]
         check_configuration(info)
         check_filesystem(container, image["Architecture"])
         print(f"Static runtime verified: {args.image} ({image['Architecture']})")
