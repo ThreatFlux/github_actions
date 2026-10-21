@@ -65,7 +65,7 @@ def run_cli(image, platform, port, root, certificate=None, hostname="host.docker
     # Validated image follows --; mounts, environment and CLI flags are fixed
     # fixture data in separate argv elements. No shell interprets any value.
     return subprocess.run(  # nosec B603  # nosemgrep: dangerous-subprocess-use-audit, dangerous-subprocess-use-tainted-env-args
-        command + ["--", image, "pin", "--repo", "/fixture/repo", "--dry-run"],
+        command + ["--", image, "pin", "--repo", "/fixture/repo", "--dry-run"],  # nosemgrep: dangerous-subprocess-use-tainted-env-args
         capture_output=True, text=True, timeout=45, shell=False,
     )
 

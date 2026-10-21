@@ -6,7 +6,8 @@ import json
 import re
 from pathlib import PurePosixPath
 import struct
-# Fixed Docker/OpenSSL executables use argv arrays, never a shell.
+# Fixed Docker/OpenSSL tools come from the trusted CI runner PATH; argv
+# arrays never invoke a shell. B607 allows these known tool lookups only.
 import subprocess  # nosec B404
 import tarfile
 import tempfile
@@ -16,10 +17,10 @@ BINARIES = {"usr/local/bin/app", "usr/bin/tini"}
 
 
 def check_ca_trust(bundle):
-    encoded = subprocess.check_output(  # nosec B603
+    encoded = subprocess.check_output(  # nosec B603, B607
         ["openssl", "crl2pkcs7", "-nocrl", "-certfile", "/dev/stdin"], shell=False, input=bundle
     )
-    subjects = subprocess.check_output(  # nosec B603
+    subjects = subprocess.check_output(  # nosec B603, B607
         ["openssl", "pkcs7", "-print_certs", "-noout"], shell=False, input=encoded
     ).decode().lower()
     for distrusted in ("emsign ecc root ca - g3", "aaa certificate services"):
@@ -123,7 +124,7 @@ def check_support_files(filesystem, files, architecture):
 def check_filesystem(container, architecture):
     with tempfile.TemporaryFile() as archive:
         # Container ID was validated after docker create; it cannot add options.
-        subprocess.run(["docker", "export", container], stdout=archive, check=True, shell=False)  # nosec B603
+        subprocess.run(["docker", "export", container], stdout=archive, check=True, shell=False)  # nosec B603, B607
         archive.seek(0)
         with tarfile.open(fileobj=archive) as filesystem:
             files = {str(PurePosixPath(m.name)): m for m in filesystem if m.isfile()}
@@ -147,23 +148,23 @@ def main():
     if args.platform:
         create += ["--platform", args.platform]
     # Validated image is a single operand after --; executable/options are fixed.
-    container = subprocess.check_output(  # nosec B603  # nosemgrep: dangerous-subprocess-use-audit, dangerous-subprocess-use-tainted-env-args
+    container = subprocess.check_output(  # nosec B603, B607  # nosemgrep: dangerous-subprocess-use-audit, dangerous-subprocess-use-tainted-env-args
         create + ["--", args.image], text=True, shell=False,  # nosemgrep: dangerous-subprocess-use-tainted-env-args
     ).strip()
     if not re.fullmatch(r"[0-9a-f]{64}", container):
         raise ValueError("docker create returned an invalid container ID")
     try:
         # Only a validated container ID reaches Docker, as one argv operand.
-        info = json.loads(subprocess.check_output(["docker", "inspect", container], shell=False))[0]  # nosec B603  # nosemgrep: dangerous-subprocess-use
+        info = json.loads(subprocess.check_output(["docker", "inspect", container], shell=False))[0]  # nosec B603, B607  # nosemgrep: dangerous-subprocess-use
         image_id = info["Image"]
         if not re.fullmatch(r"sha256:[0-9a-f]{64}", image_id):
             raise ValueError("docker inspect returned an invalid image ID")
-        image = json.loads(subprocess.check_output(["docker", "image", "inspect", image_id], shell=False))[0]  # nosec B603  # nosemgrep: dangerous-subprocess-use
+        image = json.loads(subprocess.check_output(["docker", "image", "inspect", image_id], shell=False))[0]  # nosec B603, B607  # nosemgrep: dangerous-subprocess-use
         check_configuration(info)
         check_filesystem(container, image["Architecture"])
         print(f"Static runtime verified: {args.image} ({image['Architecture']})")
     finally:
-        subprocess.run(["docker", "rm", container], stdout=subprocess.DEVNULL, check=True, shell=False)  # nosec B603
+        subprocess.run(["docker", "rm", container], stdout=subprocess.DEVNULL, check=True, shell=False)  # nosec B603, B607
 
 
 if __name__ == "__main__":
