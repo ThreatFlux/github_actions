@@ -32,7 +32,7 @@ ARG VERSION=0.0.0
 ARG BUILD_DATE=unknown
 ARG VCS_REF=unknown
 ARG BINARY_NAME=github-actions-maintainer
-ARG BINARY_PACKAGE=github-actions-maintainer
+ARG BINARY_PACKAGE=
 ARG CLI_NAME=github-actions-maintainer
 ARG SBOM_MANIFEST_PATH=Cargo.toml
 ARG OCI_IMAGE_TITLE="github_actions runtime"
@@ -40,17 +40,20 @@ ARG OCI_IMAGE_DESCRIPTION="github_actions maintained static runtime"
 ARG OCI_IMAGE_VENDOR=ThreatFlux
 ARG OCI_IMAGE_SOURCE=https://github.com/ThreatFlux/github_actions
 
+SHELL ["/bin/ash", "-eo", "pipefail", "-c"]
+
+# Refresh these direct Alpine package pins together with the builder digest.
 # tini-static preserves signal forwarding and zombie reaping without a libc
 # dependency. Build tools stay in the builder; OpenSSL is vendored by Cargo.
 RUN apk add --no-cache \
-    binutils \
-    build-base \
-    ca-certificates \
-    cmake \
-    linux-headers \
-    perl \
-    pkgconf \
-    tini-static
+    binutils=2.45.1-r1 \
+    build-base=0.5-r4 \
+    ca-certificates=20261020-r0 \
+    cmake=4.2.3-r0 \
+    linux-headers=7.0.0-r1 \
+    perl=5.42.2-r1 \
+    pkgconf=2.5.1-r0 \
+    tini-static=0.19.0-r3
 
 FROM rust-base AS builder
 

@@ -13,7 +13,10 @@ import threading
 
 
 class Handler(BaseHTTPRequestHandler):
+    """Serve the fixed commit fixture without accepting mutable API operations."""
+
     def do_GET(self):
+        """Serve one fabricated GitHub commit response for the TLS fixture."""
         if self.path != "/repos/fixture/action/commits/v1":
             self.send_error(404)
             return
@@ -26,10 +29,12 @@ class Handler(BaseHTTPRequestHandler):
         self.wfile.write(response)
 
     def log_message(self, *_):
+        """Keep the fixture quiet during expected certificate failures."""
         pass
 
 
 def create_certificate(root):
+    """Create a temporary CA and a leaf certificate for the fixture hostname."""
     certificate, key = root / "ca.crt", root / "key.pem"
     commands = [
         ["openssl", "req", "-x509", "-newkey", "rsa:2048", "-nodes", "-days", "1",
@@ -54,6 +59,7 @@ def create_certificate(root):
 
 
 def run_cli(image, platform, port, root, certificate=None, hostname="host.docker.internal"):
+    """Run the image with read-only fixture mounts and a temporary API endpoint."""
     command = ["docker", "run", "--rm", "--read-only", "--cap-drop", "ALL",
                "--security-opt", "no-new-privileges", "--add-host", f"{hostname}:host-gateway"]
     if platform:
@@ -71,6 +77,7 @@ def run_cli(image, platform, port, root, certificate=None, hostname="host.docker
 
 
 def check_tls(image, platform, server, certificate, root):
+    """Require trusted HTTPS and reject unknown issuers and wrong hostnames."""
     trusted = run_cli(image, platform, server.server_port, root, certificate)
     if (trusted.returncode or "Dry run: would pin 1 action" not in trusted.stdout
         or "1111111111111111111111111111111111111111" not in trusted.stdout
@@ -89,6 +96,7 @@ def check_tls(image, platform, server, certificate, root):
 
 
 def check_image(image, platform, root):
+    """Serve the temporary TLS fixture while testing the container API client."""
     workflows = root / "repo" / ".github" / "workflows"
     workflows.mkdir(parents=True)
     (workflows / "fixture.yml").write_text("jobs:\n  fixture:\n    steps:\n      - uses: fixture/action@v1\n")
@@ -120,6 +128,7 @@ def image_reference(value):
 
 
 def main():
+    """Parse image options and run the temporary HTTPS fixture."""
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("image", type=image_reference)
     parser.add_argument("--platform", choices=("linux/amd64", "linux/arm64"))

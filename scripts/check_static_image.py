@@ -18,6 +18,7 @@ BINARIES = {"usr/local/bin/app", "usr/bin/tini"}
 
 
 def check_ca_trust(bundle):
+    """Reject distrusted root certificates from the shipped trust bundle."""
     encoded = subprocess.check_output(  # nosec B603, B607
         ["openssl", "crl2pkcs7", "-nocrl", "-certfile", "/dev/stdin"], shell=False, input=bundle
     )
@@ -30,6 +31,7 @@ def check_ca_trust(bundle):
 
 
 def check_dynamic_section(name, data, header):
+    """Reject shared-library dependencies in an ELF64 dynamic section."""
     for entry in range(header[2], header[2] + header[5], 16):
         tag, _ = struct.unpack_from("<qQ", data, entry)
         if tag == 0:
@@ -39,6 +41,7 @@ def check_dynamic_section(name, data, header):
 
 
 def check_elf(name, data, architecture):
+    """Verify native ELF64 static executables and PIE for the application."""
     if data[:6] != b"\x7fELF\x02\x01":
         raise ValueError(f"{name}: expected a little-endian ELF64 executable")
     if name == "usr/local/bin/app" and struct.unpack_from("<H", data, 16)[0] != 3:
@@ -59,6 +62,7 @@ def check_elf(name, data, architecture):
 
 
 def check_configuration(info):
+    """Require the nonroot account, static init and explicit CA bundle."""
     config = info["Config"]
     if config["User"] != "65532:65532":
         raise ValueError("runtime must use the nonroot 65532:65532 account")
@@ -69,11 +73,13 @@ def check_configuration(info):
 
 
 def read_file(filesystem, files, name):
+    """Read one regular file from the exported container filesystem."""
     with filesystem.extractfile(files[name]) as source:
         return source.read()
 
 
 def check_runtime_files(filesystem, files, architecture):
+    """Allow only the expected static, root-owned runtime executables."""
     seen = set()
     for name, member in files.items():
         if member.mode & 0o6000:
@@ -95,16 +101,17 @@ def check_runtime_files(filesystem, files, architecture):
 
 
 def check_ca_package(status):
+    """Require installed CA package provenance; Dockerfile owns the version floor."""
     if "Package: ca-certificates\n" not in status or "Status: install ok installed\n" not in status:
         raise ValueError("missing installed CA supplier package record")
-    version = next(
-        line.removeprefix("Version: ") for line in status.splitlines() if line.startswith("Version: ")
-    )
-    if version == "20250419":
-        raise ValueError("stale CA supplier package record")
+    # Dockerfile owns the Debian version comparison against 20250419+deb13u1.
+    # Check provenance completeness here rather than duplicating Debian ordering.
+    if not any(line.startswith("Version: ") and line[9:].strip() for line in status.splitlines()):
+        raise ValueError("missing CA supplier package version")
 
 
 def check_support_files(filesystem, files, architecture):
+    """Verify CA trust, package provenance, application SBOM and musl linkage."""
     bundle = read_file(filesystem, files, "etc/ssl/certs/ca-certificates.crt")
     if b"-----BEGIN CERTIFICATE-----" not in bundle:
         raise ValueError("missing CA certificates")
@@ -123,6 +130,7 @@ def check_support_files(filesystem, files, architecture):
 
 
 def check_filesystem(container, architecture):
+    """Export the container and validate its runtime and supporting files."""
     with tempfile.TemporaryFile() as archive:
         # Container ID was validated after docker create; it cannot add options.
         subprocess.run(["docker", "export", container], stdout=archive, check=True, shell=False)  # nosec B603, B607
@@ -141,6 +149,7 @@ def image_reference(value):
 
 
 def main():
+    """Parse image options and validate the exported container."""
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("image", type=image_reference)
     parser.add_argument("--platform", choices=("linux/amd64", "linux/arm64"))
