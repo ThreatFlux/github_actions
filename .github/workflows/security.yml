@@ -156,7 +156,7 @@ jobs:
       - name: TruffleHog Scan
         uses: trufflesecurity/trufflehog@e63326d6545de8f425d93ce24078c6e68d83f70e # v3.99.3
         with:
-          version: 3.98.0
+          version: 3.99.3
           extra_args: --only-verified
 
       - name: Install Gitleaks
