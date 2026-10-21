@@ -159,14 +159,14 @@ def main():
         raise ValueError("docker create returned an invalid container ID")
     try:
         # Only a validated container ID reaches Docker, as one argv operand.
-        inspection = subprocess.check_output(  # nosec B603  # nosemgrep: dangerous-subprocess-use-audit
+        inspection = subprocess.check_output(  # nosec B603  # nosemgrep: dangerous-subprocess-use-audit, python_exec_rule-subprocess-call
             [docker, "inspect", container], shell=False,  # nosemgrep: dangerous-subprocess-use-tainted-env-args
         )
         info = json.loads(inspection)[0]
         image_id = info["Image"]
         if not re.fullmatch(r"sha256:[0-9a-f]{64}", image_id):
             raise ValueError("docker inspect returned an invalid image ID")
-        inspection = subprocess.check_output(  # nosec B603  # nosemgrep: dangerous-subprocess-use-audit
+        inspection = subprocess.check_output(  # nosec B603  # nosemgrep: dangerous-subprocess-use-audit, python_exec_rule-subprocess-call
             [docker, "image", "inspect", image_id], shell=False,  # nosemgrep: dangerous-subprocess-use-tainted-env-args
         )
         image = json.loads(inspection)[0]
