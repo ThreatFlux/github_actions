@@ -420,7 +420,7 @@ dependencies = [
 
 [[package]]
 name = "github-actions-maintainer"
-version = "0.7.8"
+version = "0.7.9"
 dependencies = [
  "anyhow",
  "clap",
