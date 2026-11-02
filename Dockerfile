@@ -126,7 +126,7 @@ RUN mkdir -p /home/builder/out/bin /home/builder/out/doc \
     } > /home/builder/out/doc/native-build.txt
 
 # Static distroless: certificates/account data, no dynamic libc; multi-arch digest
-FROM gcr.io/distroless/static-debian13:nonroot@sha256:18f4cc26c9ffa7f20a359298be7deadac5c607c8e03a02b8119f1a5fc2f82c99 AS runtime
+FROM gcr.io/distroless/static-debian13:nonroot@sha256:25ac8f0c3b2334a9eb05452266bd4697864a8c8ef0ef71e5e6480d7f92868329 AS runtime
 
 ARG VERSION=0.0.0
 ARG BUILD_DATE=unknown
