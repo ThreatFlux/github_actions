@@ -473,7 +473,7 @@ so `ghcr.io/threatflux/github_actions:0.7.2` cannot exist before `v0.7.2` does.
 | Phase | Trigger | What it does |
 |---|---|---|
 | 1 — bump | `CI`, `Security`, and `Docker` all green on the exact head | Pins the runtime to the head's image so this run executes a current binary, then `phase: bump` commits the version bump and stops. Dispatches full `ci.yml`, `security.yml`, and `docker.yml` (`release-prep=true`) runs for that version commit. |
-| 2 — tag | `docker.yml` hands off after build, scan, signing, and SBOM; all three workflows must succeed on the exact current head | Resolves the new image's digest, **verifies its `--version` equals the manifest version**, gives the digest its `:X.Y.Z`, `:X.Y`, and `:X` tags, rewrites both Dockerfile pins, then `phase: tag` stages those pins into the commit it tags. |
+| 2 — tag | `docker.yml` hands off after build, scan, signing, and SBOM; all three workflows must succeed on the exact current head | Resolves the new image's digest, **verifies its `--version` equals the manifest version**, rewrites both Dockerfile pins, then `phase: tag` stages those pins into the commit it tags. Only a confirmed release promotes the sealed digest to `:X.Y.Z` and its newest eligible `:X.Y` / `:X` aliases. |
 
 Consequences worth knowing:
 
@@ -492,7 +492,10 @@ Consequences worth knowing:
   reads the manifest version at `main` and checks whether its tag exists, so any
   later run — the weekly cron, a push, or a manual dispatch — finishes a release
   that stalled after phase 1 rather than bumping again. `workflow_dispatch`
-  accepts an explicit `phase` to force either half.
+  accepts an explicit `phase` to force either half. Only an actual HTTP 404
+  means the tag is absent; permission, transport, and server errors stop the
+  run. An explicit tag request for an existing version is a no-op before
+  publication. The publisher also rechecks tag existence after validation.
 - **Both phases require successful CI, Security, and Docker runs on their
   exact current head.** The most recently updated push or manually dispatched
   run of each workflow is authoritative, with creation time and run ID breaking
@@ -503,6 +506,44 @@ Consequences worth knowing:
   An ordinary main merge after the version bump needs its own successful
   checks. Both release calls pass that validated SHA as `expected-head`, so
   a subsequent branch advance is rejected before the publisher writes.
+
+The version name in a `FROM name:version@sha256:digest` pin can be prospective:
+[BuildKit 0.35.0 resolves image references through containerd](https://github.com/moby/buildkit/blob/v0.35.0/util/imageutil/config.go),
+whose [pinned containerd 2.4.2 resolver selects the manifest by digest when present](https://github.com/containerd/containerd/blob/v2.4.2/core/remotes/docker/resolver.go).
+The local rewrite therefore keeps the readable version and executes the existing
+verified digest before any remote version alias is written. Existing-tag,
+manifest-version, and changed-head refusals cannot promote image aliases.
+
+### Recovering a post-tag image publication failure
+
+A Git tag and GitHub Release can exist even when later OCI promotion or workflow
+dispatch fails. Recover that exact tagged release with the existing package-write
+authorization in `GITHUB_TOKEN`, the authorized account in `GITHUB_ACTOR`, and
+`GITHUB_REPOSITORY=ThreatFlux/github_actions`:
+
+```bash
+set -euo pipefail
+export GITHUB_REPOSITORY=ThreatFlux/github_actions
+VERSION=0.7.10  # replace with the already-created release version
+TAG="v${VERSION}"
+recovery_script="$(mktemp)"
+gh api "repos/${GITHUB_REPOSITORY}/contents/scripts/promote_release_image.sh?ref=${TAG}" \
+  --jq .content | base64 -d > "${recovery_script}"
+VERSION="${VERSION}" bash "${recovery_script}"
+gh workflow run release.yml --repo "${GITHUB_REPOSITORY}" --ref "${TAG}" -f version="${VERSION}"
+rm -f "${recovery_script}"
+```
+
+The helper reads **both runtime pins from that exact Git tag**, requires their
+versioned image references and digests to match, verifies the tagged manifest,
+digest, and binary version, and repairs the full version alias. It promotes a minor or major alias
+only when that release remains newest in the corresponding stable line, then
+verifies each written alias resolves to the sealed digest. A missing or divergent
+pin fails before registry writes. Supply `EXPECTED_IMAGE` / `EXPECTED_DIGEST` to
+add an independent expected-build check; the normal workflow always supplies
+both. Dispatching `release.yml` then resumes the native assets/package pipeline
+for the already-created tag. A normal Auto Release rerun deliberately leaves an
+existing version unchanged; recovery uses its sealed pin instead of current main.
 
 Consumer repositories do not need any of this. The reusable workflow below
 releases in a single pass, which is correct for a repository that does not

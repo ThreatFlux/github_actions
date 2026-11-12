@@ -94,9 +94,14 @@ jobs:
 
           # A manifest version with no tag means phase 1 already committed the
           # bump, so this run finishes that release instead of starting another.
-          if gh api "repos/${GITHUB_REPOSITORY}/git/ref/tags/v${version}" >/dev/null 2>&1; then
+          if response="$(gh api --include --silent "repos/${GITHUB_REPOSITORY}/git/ref/tags/v${version}")"; then
             detected=bump
           else
+            status="$(awk '/^HTTP\// { status=$2 } END { print status }' <<< "${response}")"
+            if [[ "${status}" != 404 ]]; then
+              echo "release tag lookup failed with HTTP ${status:-unavailable}; refusing to infer absence" >&2
+              exit 1
+            fi
             detected=tag
           fi
           phase="${REQUESTED_PHASE}"
@@ -104,14 +109,21 @@ jobs:
             phase="${detected}"
           fi
 
+          skip=false
+          if [[ "${phase}" == tag && "${detected}" == bump ]]; then
+            echo "v${version} already exists; the requested tag phase is a no-op"
+            skip=true
+          fi
           echo "head=${sha} manifest=${version} detected=${detected} phase=${phase}"
           {
+            echo "skip=${skip}"
             echo "sha=${sha}"
             echo "version=${version}"
             echo "phase=${phase}"
           } >> "$GITHUB_OUTPUT"
 
       - name: Check CI status
+        if: steps.target.outputs.skip != 'true'
         id: ci_status
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -238,31 +250,6 @@ jobs:
             exit 1
           fi
 
-      # Give the verified digest its version tags now, so the image the action
-      # pins is the same one `:VERSION` names. docker.yml is deliberately not
-      # dispatched for the tag afterwards: rebuilding would move those tags to a
-      # different digest than the released Dockerfiles pin, and re-running a
-      # 40-minute multi-arch build to produce a byte-identical binary buys
-      # nothing. The scan, signature, and SBOM already cover this digest.
-      - name: Tag the verified image with the release version
-        if: needs.check.outputs.phase == 'tag'
-        env:
-          IMAGE: ${{ steps.runtime.outputs.image }}
-          DIGEST: ${{ steps.runtime.outputs.digest }}
-          VERSION: ${{ needs.check.outputs.version }}
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: |
-          set -euo pipefail
-          echo "${GITHUB_TOKEN}" | docker login ghcr.io -u "${GITHUB_ACTOR}" --password-stdin
-          major="${VERSION%%.*}"
-          minor="${VERSION#*.}"
-          minor="${minor%%.*}"
-          docker buildx imagetools create \
-            --tag "${IMAGE}:${VERSION}" \
-            --tag "${IMAGE}:${major}.${minor}" \
-            --tag "${IMAGE}:${major}" \
-            "${IMAGE}@${DIGEST}"
-
       # A local container action is built when the step using it runs, so this
       # rewrite also decides which binary the release steps below execute: the
       # tag phase runs the very image it is about to pin, and the bump phase runs
@@ -276,8 +263,9 @@ jobs:
         env:
           IMAGE: ${{ steps.runtime.outputs.image }}
           DIGEST: ${{ steps.runtime.outputs.digest }}
-          # The tag phase pins by version tag, which now names this digest; the
-          # bump phase has no version tag yet and pins by short SHA.
+          # The tag phase pins a prospective display tag plus the existing
+          # digest. Docker resolves the digest without looking up that tag.
+          # Remote version aliases move only after the publisher succeeds.
           REF_TAG: ${{ needs.check.outputs.phase == 'tag' && needs.check.outputs.version || steps.runtime.outputs.short }}
           PIN_FILES: runtime/Dockerfile release/Dockerfile
         run: |
@@ -333,6 +321,18 @@ jobs:
           update-major-alias: "true"
           phase: tag
           extra-files: ${{ steps.runtime_pin.outputs.files }}
+
+      # Refusals (existing tag, manifest behind latest, or changed head) must
+      # never mutate registry aliases. The publisher rechecks the tag after
+      # phase detection; only its confirmed release enables this write.
+      - name: Tag the verified image with the release version
+        if: steps.release.outputs.released == 'true'
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          EXPECTED_IMAGE: ${{ steps.runtime.outputs.image }}
+          EXPECTED_DIGEST: ${{ steps.runtime.outputs.digest }}
+          VERSION: ${{ steps.release.outputs.version }}
+        run: bash scripts/promote_release_image.sh
 
       # Tags created with GITHUB_TOKEN do not trigger tag-push workflows, so
       # dispatch the tag pipeline explicitly (workflow_dispatch is exempt from
