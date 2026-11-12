@@ -7,7 +7,7 @@
 //! version — plus the workspace `Cargo.lock`, without shelling out to cargo.
 
 use std::{
-    collections::BTreeSet,
+    collections::{BTreeMap, BTreeSet},
     fs,
     path::{Path, PathBuf},
 };
@@ -16,6 +16,14 @@ use anyhow::{Context, Result, bail};
 use toml_edit::{DocumentMut, Item, Value, value};
 
 use crate::{cargo, model::FileUpdate};
+
+#[path = "versioning_nested.rs"]
+mod nested;
+pub(crate) use nested::{
+    plan_read_only_rewrite, plan_version_rewrite_in_tree, tracked_nested_lockfiles,
+};
+
+pub(crate) type SourceFiles = BTreeMap<PathBuf, String>;
 
 const DEPENDENCY_TABLES: [&str; 3] = ["dependencies", "dev-dependencies", "build-dependencies"];
 
@@ -38,22 +46,35 @@ pub fn current_version(repo_root: &Path) -> Result<String> {
 /// Plan the rewrite of every member manifest and the lockfile to
 /// `new_version`, without touching the filesystem.
 pub fn plan_version_rewrite(repo_root: &Path, new_version: &str) -> Result<VersionRewritePlan> {
+    plan_with_sources(repo_root, new_version).map(|(plan, _)| plan)
+}
+
+fn plan_with_sources(
+    repo_root: &Path,
+    new_version: &str,
+) -> Result<(VersionRewritePlan, SourceFiles)> {
+    let mut sources = SourceFiles::new();
     let repo_root = repo_root
         .canonicalize()
         .with_context(|| format!("failed to resolve repository root '{}'", repo_root.display()))?;
     let root_manifest = repo_root.join("Cargo.toml");
-    let root_document = parse_manifest(&root_manifest)?;
+    let root_document = source_document(&root_manifest, &mut sources)?;
     let current_version = version_from_document(&root_document).ok_or_else(|| {
         anyhow::anyhow!("unable to determine current version from '{}'", root_manifest.display())
     })?;
 
     let manifests = member_manifests(&repo_root, &root_document);
-    let internal_packages = internal_package_names(&manifests)?;
-    let mut file_updates = plan_manifest_updates(&manifests, &internal_packages, new_version)?;
+    let internal_packages = internal_package_names(&manifests, &mut sources)?;
+    let mut file_updates =
+        plan_manifest_updates(&manifests, &internal_packages, new_version, &mut sources)?;
 
-    if let Some(lockfile_update) =
-        plan_lockfile_update(&repo_root, &internal_packages, new_version)?
-    {
+    if let Some(lockfile_update) = plan_lockfile_update(
+        &repo_root.join("Cargo.lock"),
+        &internal_packages,
+        None,
+        new_version,
+        &mut sources,
+    )? {
         file_updates.push(lockfile_update);
     }
 
@@ -61,22 +82,25 @@ pub fn plan_version_rewrite(repo_root: &Path, new_version: &str) -> Result<Versi
         bail!("no Cargo.toml files were updated");
     }
 
-    Ok(VersionRewritePlan {
-        current_version,
-        internal_packages: internal_packages.into_iter().collect(),
-        file_updates,
-    })
+    Ok((
+        VersionRewritePlan {
+            current_version,
+            internal_packages: internal_packages.into_iter().collect(),
+            file_updates,
+        },
+        sources,
+    ))
 }
 
 fn plan_manifest_updates(
     manifests: &[PathBuf],
     internal_packages: &BTreeSet<String>,
     new_version: &str,
+    sources: &mut SourceFiles,
 ) -> Result<Vec<FileUpdate>> {
     let mut file_updates = Vec::new();
     for manifest in manifests {
-        let original = fs::read_to_string(manifest)
-            .with_context(|| format!("failed to read Cargo manifest '{}'", manifest.display()))?;
+        let original = source_text(manifest, sources)?;
         let mut document = original
             .parse::<DocumentMut>()
             .with_context(|| format!("failed to parse Cargo manifest '{}'", manifest.display()))?;
@@ -88,6 +112,22 @@ fn plan_manifest_updates(
         }
     }
     Ok(file_updates)
+}
+
+fn source_text(file: &Path, sources: &mut SourceFiles) -> Result<String> {
+    if let Some(original) = sources.get(file) {
+        return Ok(original.clone());
+    }
+    let original = fs::read_to_string(file)
+        .with_context(|| format!("failed to read release source '{}'", file.display()))?;
+    sources.insert(file.to_path_buf(), original.clone());
+    Ok(original)
+}
+
+fn source_document(file: &Path, sources: &mut SourceFiles) -> Result<DocumentMut> {
+    source_text(file, sources)?
+        .parse::<DocumentMut>()
+        .with_context(|| format!("failed to parse release source '{}'", file.display()))
 }
 
 fn parse_manifest(manifest: &Path) -> Result<DocumentMut> {
@@ -119,6 +159,14 @@ fn version_from_document(document: &DocumentMut) -> Option<String> {
 }
 
 fn member_manifests(repo_root: &Path, root_document: &DocumentMut) -> Vec<PathBuf> {
+    member_manifests_from_paths(repo_root, root_document, cargo::discover_manifest_files(repo_root))
+}
+
+fn member_manifests_from_paths(
+    repo_root: &Path,
+    root_document: &DocumentMut,
+    candidates: impl IntoIterator<Item = PathBuf>,
+) -> Vec<PathBuf> {
     let root_manifest = repo_root.join("Cargo.toml");
     let mut manifests = vec![root_manifest.clone()];
 
@@ -128,7 +176,7 @@ fn member_manifests(repo_root: &Path, root_document: &DocumentMut) -> Vec<PathBu
     }
     let excludes = workspace_path_list(root_document, "exclude");
 
-    for manifest in cargo::discover_manifest_files(repo_root) {
+    for manifest in candidates {
         if manifest == root_manifest {
             continue;
         }
@@ -159,10 +207,13 @@ fn workspace_path_list(root_document: &DocumentMut, key: &str) -> Vec<String> {
         .unwrap_or_default()
 }
 
-fn internal_package_names(manifests: &[PathBuf]) -> Result<BTreeSet<String>> {
+fn internal_package_names(
+    manifests: &[PathBuf],
+    sources: &mut SourceFiles,
+) -> Result<BTreeSet<String>> {
     let mut names = BTreeSet::new();
     for manifest in manifests {
-        let document = parse_manifest(manifest)?;
+        let document = source_document(manifest, sources)?;
         if let Some(name) = document
             .get("package")
             .and_then(Item::as_table_like)
@@ -251,34 +302,43 @@ fn set_dependency_version(item: &mut Item, new_version: &str) -> bool {
 }
 
 fn plan_lockfile_update(
-    repo_root: &Path,
+    lockfile: &Path,
     internal_packages: &BTreeSet<String>,
+    current_versions: Option<&BTreeMap<String, String>>,
     new_version: &str,
+    sources: &mut SourceFiles,
 ) -> Result<Option<FileUpdate>> {
-    let lockfile = repo_root.join("Cargo.lock");
     if !lockfile.is_file() {
         return Ok(None);
     }
 
-    let original = fs::read_to_string(&lockfile)
-        .with_context(|| format!("failed to read lockfile '{}'", lockfile.display()))?;
+    let original = source_text(lockfile, sources)?;
     let mut document = original
         .parse::<DocumentMut>()
         .with_context(|| format!("failed to parse lockfile '{}'", lockfile.display()))?;
+    if let Some(versions) = current_versions {
+        validate_owned_lock_versions(&document, versions, lockfile)?;
+    }
     let mut changed = false;
+    let mut rewritten = BTreeSet::new();
 
     if let Some(packages) = document.get_mut("package").and_then(Item::as_array_of_tables_mut) {
         for package in packages.iter_mut() {
-            let is_internal = package
-                .get("name")
-                .and_then(Item::as_str)
-                .is_some_and(|name| internal_packages.contains(name));
             // A `source` marks a registry/git entry, which can share a
             // workspace member's name (for example a dev-dependency on an
             // older published version of the same crate).
-            if !is_internal || package.get("source").is_some() {
+            let name = package.get("name").and_then(Item::as_str).unwrap_or_default();
+            let old_version = package.get("version").and_then(Item::as_str).unwrap_or_default();
+            let matches_current = current_versions.is_none_or(|versions| {
+                versions.get(name).is_some_and(|current| current == old_version)
+            });
+            if !internal_packages.contains(name)
+                || package.get("source").is_some()
+                || !matches_current
+            {
                 continue;
             }
+            rewritten.insert((name.to_owned(), old_version.to_owned()));
             if let Some(version_item) = package.get_mut("version")
                 && version_item.as_str().is_some()
             {
@@ -286,9 +346,67 @@ fn plan_lockfile_update(
                 changed = true;
             }
         }
+        rewrite_lockfile_references(packages, &rewritten, new_version);
     }
 
-    Ok(changed.then(|| FileUpdate { file: lockfile, updated_content: document.to_string() }))
+    Ok(changed.then(|| FileUpdate {
+        file: lockfile.to_path_buf(),
+        updated_content: document.to_string(),
+    }))
+}
+
+fn validate_owned_lock_versions(
+    document: &DocumentMut,
+    versions: &BTreeMap<String, String>,
+    lockfile: &Path,
+) -> Result<()> {
+    let Some(packages) = document.get("package").and_then(Item::as_array_of_tables) else {
+        return Ok(());
+    };
+    for (name, current) in versions {
+        let locked: BTreeSet<_> = packages
+            .iter()
+            .filter(|package| {
+                package.get("source").is_none()
+                    && package.get("name").and_then(Item::as_str) == Some(name.as_str())
+            })
+            .filter_map(|package| package.get("version").and_then(Item::as_str))
+            .collect();
+        if !locked.is_empty() && !locked.contains(current.as_str()) {
+            bail!(
+                "nested lockfile '{}' has stale or ambiguous owned path package '{name}': expected {current}; refresh this consumer lock before releasing",
+                lockfile.display()
+            );
+        }
+    }
+    Ok(())
+}
+
+fn rewrite_lockfile_references(
+    packages: &mut toml_edit::ArrayOfTables,
+    rewritten: &BTreeSet<(String, String)>,
+    new_version: &str,
+) {
+    for package in packages.iter_mut() {
+        let Some(dependencies) = package.get_mut("dependencies").and_then(Item::as_array_mut)
+        else {
+            continue;
+        };
+        for dependency in dependencies.iter_mut() {
+            let Some(reference) = dependency.as_str() else {
+                continue;
+            };
+            let fields: Vec<_> = reference.split_whitespace().collect();
+            // Registry/git-qualified references have a third source component.
+            if fields.len() == 2
+                && rewritten.contains(&(fields[0].to_owned(), fields[1].to_owned()))
+            {
+                let decor = dependency.decor().clone();
+                *dependency = Value::from(format!("{} {new_version}", fields[0]));
+                *dependency.decor_mut() = decor;
+            }
+        }
+    }
 }
 
 /// Match a workspace `members` glob against a `/`-separated relative path.

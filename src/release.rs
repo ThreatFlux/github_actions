@@ -305,7 +305,8 @@ impl ReleasePublisher {
             return Ok(report);
         }
 
-        let plan = versioning::plan_version_rewrite(&options.repo_root, &next_version.to_string())?;
+        let plan =
+            self.version_rewrite_plan(options, &analysis.head_sha, &next_version.to_string())?;
         let mut file_updates = plan.file_updates;
         let extra = extra_file_updates(&options.repo_root, &options.extra_files, &file_updates)?;
         file_updates.extend(extra);
@@ -321,6 +322,40 @@ impl ReleasePublisher {
             ReleaseAction::CommitAndRelease { branch: analysis.branch.clone() }
         };
         self.prepare_and_publish(options, analysis, next_version, tag, file_updates, action, report)
+    }
+
+    fn version_rewrite_plan(
+        &self,
+        options: &ReleaseOptions,
+        analyzed_head: &str,
+        next_version: &str,
+    ) -> Result<versioning::VersionRewritePlan> {
+        // PR dry runs deliberately analyze main while previewing local PR
+        // contents. Preserve that read-only contract; write paths below bind
+        // every consulted source to the exact analyzed tree instead.
+        if options.dry_run {
+            return versioning::plan_read_only_rewrite(&options.repo_root, next_version);
+        }
+        let repo_root = options.repo_root.canonicalize()?;
+        let tracked =
+            self.github.regular_files_at_commit(&options.owner, &options.repo, analyzed_head)?;
+        if versioning::tracked_nested_lockfiles(&tracked.keys().cloned().collect()).next().is_none()
+        {
+            return versioning::plan_version_rewrite(&options.repo_root, next_version);
+        }
+        let rewrite = versioning::plan_version_rewrite_in_tree(
+            &repo_root,
+            next_version,
+            &tracked.keys().cloned().collect(),
+        )?;
+        self.github.validate_release_sources(
+            &options.owner,
+            &options.repo,
+            &repo_root,
+            &tracked,
+            &rewrite.original_files,
+        )?;
+        Ok(rewrite.plan)
     }
 
     /// Tag the version the manifest already holds, without bumping it. The
