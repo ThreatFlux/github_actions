@@ -2,7 +2,7 @@ name: Auto Release
 
 concurrency:
   group: auto-release-${{ github.event.workflow_run.head_branch || github.ref_name || 'main' }}
-  cancel-in-progress: true
+  cancel-in-progress: false
 
 # A release runs in two phases, because a container action cannot pin a runtime
 # image built from its own release: docker.yml derives version tags from the git
