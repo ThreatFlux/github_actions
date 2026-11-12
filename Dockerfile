@@ -28,6 +28,15 @@ RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates
 # rust 1.99.1 on Alpine 3.24 (musl); multi-arch index digest
 FROM rust:1.99.1-alpine3.24@sha256:44819b27be4c97b0e4d7203bd2e02c4820f97700211b6a37fb4c246a2de59383 AS rust-base
 
+# The 1.100.0 compiler is stable; its official Docker indexes are not published
+# yet. Use the verified digest only to bootstrap rustup, then replace the old
+# compiler before building or exporting this toolchain base image.
+RUN rustup toolchain install 1.100.0 --profile minimal --no-self-update \
+      --component rustfmt --component clippy --component llvm-tools-preview && \
+    rustup default 1.100.0 && \
+    rustup toolchain uninstall 1.99.1 && \
+    test "$(rustc --version | cut -d ' ' -f 2)" = 1.100.0
+
 ARG VERSION=0.0.0
 ARG BUILD_DATE=unknown
 ARG VCS_REF=unknown
