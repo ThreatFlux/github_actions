@@ -90,3 +90,28 @@ class ReleaseGateTests(unittest.TestCase):
             ),
             "should-release=true",
         )
+
+
+    def test_release_action_binds_writes_but_keeps_pr_dry_run_preview(self):
+        source = WORKFLOW.read_text(encoding="utf-8")
+        release = source.split("      - name: Release\n", 1)[1].split("      - name:", 1)[0]
+        # Together with the real shell-gate PR dry-run above and the Rust
+        # empty-input -> publisher regression, verify the actual action wiring:
+        # dry-run=true passes the supported empty optional input, while writes
+        # pass the exact SHA emitted by the successful gate.
+        self.assertIn(
+            "expected-head: ${{ !inputs.dry-run && needs.check.outputs.target-sha || '' }}",
+            release,
+        )
+        self.assertIn("dry-run: ${{ inputs.dry-run }}", release)
+        self.assertIn("ref: ${{ needs.check.outputs.target-sha }}", source)
+        self.assertEqual(
+            self.gate(
+                EVENT_NAME="pull_request",
+                CURRENT_REF="refs/pull/123/merge",
+                DRY_RUN="true",
+                REQUIRED_WORKFLOWS="",
+                FAKE_MAIN_SHA="b" * 40,
+            ),
+            "should-release=true",
+        )

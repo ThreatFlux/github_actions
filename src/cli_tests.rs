@@ -488,3 +488,64 @@ fn action_expected_head_reaches_the_publisher_before_any_output_write() {
         assert!(!temp_dir.path().join("outputs").exists());
     });
 }
+
+#[test]
+fn empty_action_expected_head_allows_read_only_release_analysis_without_startup_normalization() {
+    for expected in ["", "  "] {
+        with_env(&[("INPUT_EXPECTED-HEAD", expected)], || {
+            let temp_dir = tempfile::tempdir().expect("tempdir");
+            std::fs::write(
+                temp_dir.path().join("Cargo.toml"),
+                "[package]\nname = \"demo\"\nversion = \"0.2.3\"\n",
+            )
+            .expect("write manifest");
+            let mut server = mockito::Server::new();
+            let head = server
+                .mock("GET", "/repos/acme/demo/git/ref/heads/main")
+                .with_status(200)
+                .with_body(r#"{"object":{"sha":"basecommitsha"}}"#)
+                .create();
+            let tags = server
+                .mock("GET", "/repos/acme/demo/tags?per_page=100&page=1")
+                .with_status(200)
+                .with_body(r#"[{"name":"v0.2.3","commit":{"sha":"tagsha"}}]"#)
+                .create();
+            let compare = server
+                .mock("GET", "/repos/acme/demo/compare/v0.2.3...basecommitsha?per_page=100&page=1")
+                .with_status(200)
+                .with_body(r#"{"total_commits":1,"commits":[{"sha":"chore","commit":{"message":"chore: tidy"},"parents":[{}]}]}"#)
+                .create();
+            let no_mutation = server.mock("POST", mockito::Matcher::Any).expect(0).create();
+            // Deliberately bypass main's INPUT_* cleanup: run_release also
+            // treats an omitted optional Docker action input as no guard.
+            let mut args = release_args(Cli::parse_from([
+                "bin",
+                "release",
+                "--owner",
+                "acme",
+                "--repo-name",
+                "demo",
+                "--base-branch",
+                "main",
+                "--token",
+                "ghp_testtoken",
+                "--dry-run",
+            ]));
+            assert_eq!(args.expected_head.as_deref(), Some(expected));
+            args.repo = temp_dir.path().to_path_buf();
+            args.notes_file = temp_dir.path().join("notes.md");
+            args.github_output = Some(temp_dir.path().join("outputs"));
+
+            super::release_cli::run_release(args, Some(server.url()))
+                .expect("read-only release analysis");
+
+            for mock in [head, tags, compare, no_mutation] {
+                mock.assert();
+            }
+            drop(server);
+            let output =
+                std::fs::read_to_string(temp_dir.path().join("outputs")).expect("release outputs");
+            assert!(output.contains("released=false"));
+        });
+    }
+}
