@@ -308,6 +308,9 @@ fn plan_lockfile_update(
     let mut document = original
         .parse::<DocumentMut>()
         .with_context(|| format!("failed to parse lockfile '{}'", lockfile.display()))?;
+    if let Some(versions) = current_versions {
+        validate_owned_lock_versions(&document, versions, lockfile)?;
+    }
     let mut changed = false;
     let mut rewritten = BTreeSet::new();
 
@@ -342,6 +345,33 @@ fn plan_lockfile_update(
         file: lockfile.to_path_buf(),
         updated_content: document.to_string(),
     }))
+}
+
+fn validate_owned_lock_versions(
+    document: &DocumentMut,
+    versions: &BTreeMap<String, String>,
+    lockfile: &Path,
+) -> Result<()> {
+    let Some(packages) = document.get("package").and_then(Item::as_array_of_tables) else {
+        return Ok(());
+    };
+    for (name, current) in versions {
+        let locked: BTreeSet<_> = packages
+            .iter()
+            .filter(|package| {
+                package.get("source").is_none()
+                    && package.get("name").and_then(Item::as_str) == Some(name.as_str())
+            })
+            .filter_map(|package| package.get("version").and_then(Item::as_str))
+            .collect();
+        if !locked.is_empty() && !locked.contains(current.as_str()) {
+            bail!(
+                "nested lockfile '{}' has stale or ambiguous owned path package '{name}': expected {current}; refresh this consumer lock before releasing",
+                lockfile.display()
+            );
+        }
+    }
+    Ok(())
 }
 
 fn rewrite_lockfile_references(

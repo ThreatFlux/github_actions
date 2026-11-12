@@ -10,7 +10,6 @@ use toml_edit::{DocumentMut, Item};
 use super::{
     SourceFiles, VersionRewritePlan, dependency_table_paths, member_manifests,
     plan_lockfile_update, plan_with_sources, set_dependency_version, source_document,
-    version_from_document,
 };
 use crate::{cargo, model::FileUpdate, remote};
 
@@ -91,13 +90,32 @@ fn owned_manifests(
             .and_then(|package| package.get("name"))
             .and_then(Item::as_str)
         {
-            let version = version_from_document(&document)
-                .or_else(|| version_from_document(&root))
+            let version = owned_package_version(&document, &root)
                 .context("owned package has no release version")?;
             owned.insert(manifest.canonicalize()?, (name.to_owned(), version));
         }
     }
     Ok(owned)
+}
+
+fn owned_package_version(document: &DocumentMut, root: &DocumentMut) -> Option<String> {
+    let version = document
+        .get("package")
+        .and_then(Item::as_table_like)
+        .and_then(|package| package.get("version"))?;
+    if let Some(explicit) = version.as_str() {
+        return Some(explicit.to_owned());
+    }
+    if version.as_table_like()?.get("workspace").and_then(Item::as_bool) != Some(true) {
+        return None;
+    }
+    root.get("workspace")
+        .and_then(Item::as_table_like)
+        .and_then(|workspace| workspace.get("package"))
+        .and_then(Item::as_table_like)
+        .and_then(|package| package.get("version"))
+        .and_then(Item::as_str)
+        .map(ToOwned::to_owned)
 }
 
 fn is_tracked(repo_root: &Path, file: &Path, tracked: &BTreeSet<String>) -> bool {
@@ -145,7 +163,15 @@ impl<'a> ConsumerContext<'a> {
     }
 
     fn update_consumer(&mut self, lockfile: &Path, new_version: &str) -> Result<bool> {
-        self.visit(&lockfile.with_file_name("Cargo.toml"), &mut BTreeSet::new())?;
+        let manifest = lockfile.with_file_name("Cargo.toml");
+        let document = source_document(&manifest, &mut self.sources)?;
+        self.reject_owned_patches(&manifest, &document)?;
+        let mut visited = BTreeMap::new();
+        for member in member_manifests(manifest.parent().context("consumer root")?, &document) {
+            if is_tracked(self.repo_root, &member, self.tracked) {
+                self.visit(&member, true, &mut visited)?;
+            }
+        }
         if self.reached.is_empty() {
             return Ok(false);
         }
@@ -163,21 +189,29 @@ impl<'a> ConsumerContext<'a> {
         Ok(true)
     }
 
-    fn visit(&mut self, manifest: &Path, visited: &mut BTreeSet<PathBuf>) -> Result<()> {
-        if !visited.insert(manifest.to_path_buf()) {
+    fn visit(
+        &mut self,
+        manifest: &Path,
+        include_dev: bool,
+        visited: &mut BTreeMap<PathBuf, bool>,
+    ) -> Result<()> {
+        if visited.get(manifest).is_some_and(|previous| *previous || !include_dev) {
             return Ok(());
         }
+        visited.insert(manifest.to_path_buf(), include_dev);
         let document = source_document(manifest, &mut self.sources)?;
-        self.reject_owned_patches(manifest, &document)?;
-        for dependency in self.path_dependencies(manifest, &document)? {
+        for dependency in self.path_dependencies(manifest, &document, include_dev)? {
             if let Some((name, version)) = self.owned.get(&dependency.target) {
                 self.reached.insert(name.clone(), version.clone());
                 // Record exact declaring items; excluded consumer package versions
                 // and unrelated registry dependencies remain untouched.
-                self.declarations.push(dependency);
-            } else {
-                self.visit(&dependency.target, visited)?;
+                self.declarations.push(PathDependency {
+                    declaration: dependency.declaration.clone(),
+                    item_path: dependency.item_path.clone(),
+                    target: dependency.target.clone(),
+                });
             }
+            self.visit(&dependency.target, false, visited)?;
         }
         Ok(())
     }
@@ -186,10 +220,14 @@ impl<'a> ConsumerContext<'a> {
         &mut self,
         manifest: &Path,
         document: &DocumentMut,
+        include_dev: bool,
     ) -> Result<Vec<PathDependency>> {
         let mut dependencies = Vec::new();
         for table_path in dependency_table_paths(document) {
-            if table_path.first().is_some_and(|part| part == "workspace") {
+            if table_path.first().is_some_and(|part| part == "workspace")
+                || (!include_dev
+                    && table_path.last().is_some_and(|part| part == "dev-dependencies"))
+            {
                 continue;
             }
             let table = table_path
@@ -221,7 +259,9 @@ impl<'a> ConsumerContext<'a> {
         };
         let mut declaration = manifest.to_path_buf();
         let path = if table.get("workspace").and_then(Item::as_bool) == Some(true) {
-            let (workspace, document) = self.workspace_manifest(manifest)?;
+            let Some((workspace, document)) = self.workspace_manifest(manifest)? else {
+                return Ok(None);
+            };
             declaration = workspace;
             item_path = vec![
                 "workspace".to_owned(),
@@ -259,7 +299,23 @@ impl<'a> ConsumerContext<'a> {
         Ok(is_tracked(self.repo_root, &target, self.tracked).then_some(target))
     }
 
-    fn workspace_manifest(&mut self, manifest: &Path) -> Result<(PathBuf, DocumentMut)> {
+    fn workspace_manifest(&mut self, manifest: &Path) -> Result<Option<(PathBuf, DocumentMut)>> {
+        let member = source_document(manifest, &mut self.sources)?;
+        if let Some(explicit) = member
+            .get("package")
+            .and_then(Item::as_table_like)
+            .and_then(|package| package.get("workspace"))
+            .and_then(Item::as_str)
+        {
+            let Some(candidate) = self.dependency_target(manifest, explicit)? else {
+                return Ok(None);
+            };
+            let document = source_document(&candidate, &mut self.sources)?;
+            if document.get("workspace").is_some() {
+                return Ok(Some((candidate, document)));
+            }
+            return Ok(None);
+        }
         for directory in manifest.parent().into_iter().flat_map(Path::ancestors) {
             if !directory.starts_with(self.repo_root) {
                 break;
@@ -269,22 +325,11 @@ impl<'a> ConsumerContext<'a> {
                 continue;
             }
             let document = source_document(&candidate, &mut self.sources)?;
-            if document
-                .get("package")
-                .and_then(Item::as_table_like)
-                .and_then(|package| package.get("workspace"))
-                .is_some()
-            {
-                bail!(
-                    "explicit package.workspace for nested release consumer '{}' is unsupported",
-                    candidate.display()
-                );
-            }
             if document.get("workspace").is_some() {
-                return Ok((candidate, document));
+                return Ok(Some((candidate, document)));
             }
         }
-        bail!("cannot resolve inherited path dependency workspace for '{}'", manifest.display())
+        Ok(None)
     }
 
     fn reject_owned_patches(&self, manifest: &Path, document: &DocumentMut) -> Result<()> {
