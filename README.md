@@ -472,8 +472,8 @@ so `ghcr.io/threatflux/github_actions:0.7.2` cannot exist before `v0.7.2` does.
 
 | Phase | Trigger | What it does |
 |---|---|---|
-| 1 — bump | `CI`, `Security`, and `Docker` all green on the head | Pins the runtime to the head's image so this run executes a current binary, then `phase: bump` commits the version bump and stops. Dispatches `docker.yml` with `release-prep=true`. |
-| 2 — tag | `docker.yml` hands off after build, scan, and sign | Resolves the new image's digest, **verifies its `--version` equals the manifest version**, gives the digest its `:X.Y.Z`, `:X.Y`, and `:X` tags, rewrites both Dockerfile pins, then `phase: tag` stages those pins into the commit it tags. |
+| 1 — bump | `CI`, `Security`, and `Docker` all green on the exact head | Pins the runtime to the head's image so this run executes a current binary, then `phase: bump` commits the version bump and stops. Dispatches full `ci.yml`, `security.yml`, and `docker.yml` (`release-prep=true`) runs for that version commit. |
+| 2 — tag | `docker.yml` hands off after build, scan, signing, and SBOM; all three workflows must succeed on the exact current head | Resolves the new image's digest, **verifies its `--version` equals the manifest version**, gives the digest its `:X.Y.Z`, `:X.Y`, and `:X` tags, rewrites both Dockerfile pins, then `phase: tag` stages those pins into the commit it tags. |
 
 Consequences worth knowing:
 
@@ -486,16 +486,21 @@ Consequences worth knowing:
   digest already produces the version tags, and rebuilding would move them to a
   digest the release does not pin.
 - **The version commit is pushed with `GITHUB_TOKEN`, so it starts no
-  workflows.** Both the image build and the handoff back are explicit
-  dispatches, which are exempt from that suppression.
+  push workflows.** Full CI, Security, the image build, and the handoff back
+  use explicit dispatches, which are exempt from that suppression.
 - **A committed-but-untagged version is the resumable state.** Phase detection
   reads the manifest version at `main` and checks whether its tag exists, so any
   later run — the weekly cron, a push, or a manual dispatch — finishes a release
   that stalled after phase 1 rather than bumping again. `workflow_dispatch`
   accepts an explicit `phase` to force either half.
-- **Phase 2 is not gated on CI and Security runs** for its target, because no
-  workflow runs for a token-pushed commit. Its gate is the registry: the image
-  must exist and must report the version being tagged.
+- **Both phases require successful CI, Security, and Docker runs on their
+  exact current head.** The latest push or manually dispatched run of each
+  workflow is authoritative; a failed rerun blocks release. PR and scheduled
+  runs cannot substitute. The tag phase can wait up to ten minutes for the
+  Docker handoff run to finish, and also requires the image/version proof.
+  An ordinary main merge after the version bump needs its own successful
+  checks. Both release calls pass that validated SHA as `expected-head`, so
+  a subsequent branch advance is rejected before the publisher writes.
 
 Consumer repositories do not need any of this. The reusable workflow below
 releases in a single pass, which is correct for a repository that does not

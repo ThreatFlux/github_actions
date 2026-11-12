@@ -54,7 +54,7 @@ jobs:
     runs-on: ${{ vars.RUST_TEMPLATE_RUNNER_UBUNTU || 'ubuntu-latest' }}
     if: >-
       (github.event_name == 'workflow_run' &&
-      github.event.workflow_run.event == 'push' &&
+      (github.event.workflow_run.event == 'push' || github.event.workflow_run.event == 'workflow_dispatch') &&
       github.event.workflow_run.conclusion == 'success' &&
       github.event.workflow_run.head_repository.full_name == github.repository) ||
       github.event_name == 'schedule' ||
@@ -116,40 +116,53 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           TARGET_SHA: ${{ steps.target.outputs.sha }}
+          PHASE: ${{ steps.target.outputs.phase }}
         run: |
           set -euo pipefail
-          # Docker is required alongside CI and Security: phase 1 pins the image
-          # published for this commit so it runs a current binary, and the tag
-          # phase has nothing to pin if that publish never happened.
-          for workflow in ci security docker; do
-            # --repo is required: this job has no checkout, so gh cannot infer
-            # the repository from a git remote.
-            status="$(gh run list --repo "${GITHUB_REPOSITORY}" --workflow="${workflow}.yml" \
-              --branch=main --commit="${TARGET_SHA}" --event=push --limit=1 \
-              --json conclusion --jq '.[0].conclusion // ""')"
-            echo "${workflow}=${status}"
-            if [[ "${status}" != "success" ]]; then
-              echo "all_passed=false" >> "$GITHUB_OUTPUT"
+          # The Docker handoff can dispatch us just before its own run finishes.
+          # Wait briefly for that completion, without exempting the tag phase
+          # from any gate. A newer failed rerun supersedes an earlier success.
+          attempts=1
+          if [[ "${PHASE}" == tag ]]; then attempts=21; fi
+          for ((attempt=1; attempt<=attempts; attempt++)); do
+            main_sha="$(gh api "repos/${GITHUB_REPOSITORY}/commits/main" --jq .sha)"
+            if [[ "${main_sha}" != "${TARGET_SHA}" ]]; then
+              echo "main advanced; a new run must validate its new head"
+              break
+            fi
+            all_passed=true
+            terminal_failure=false
+            for workflow in ci security docker; do
+              # GITHUB_TOKEN version commits need explicitly dispatched checks.
+              # PR and scheduled runs cannot substitute for these main checks.
+              status="$(gh run list --repo "${GITHUB_REPOSITORY}" --workflow="${workflow}.yml" \
+                --branch=main --commit="${TARGET_SHA}" --limit=100 \
+                --json event,status,conclusion --jq \
+                '[.[] | select(.event == "push" or .event == "workflow_dispatch")][0] | if . == null then "missing" else (.status + ":" + (.conclusion // "")) end')"
+              echo "${workflow}=${status}"
+              if [[ "${status}" != completed:success ]]; then
+                all_passed=false
+                if [[ "${status}" == completed:* ]]; then terminal_failure=true; fi
+              fi
+            done
+            if [[ "${all_passed}" == true ]]; then
+              echo "all_passed=true" >> "$GITHUB_OUTPUT"
               exit 0
             fi
+            if [[ "${terminal_failure}" == true || "${attempt}" == "${attempts}" ]]; then break; fi
+            sleep 30
           done
-          echo "all_passed=true" >> "$GITHUB_OUTPUT"
+          echo "all_passed=false" >> "$GITHUB_OUTPUT"
 
       - name: Decide whether to attempt a release
         id: decide
         env:
           ALL_PASSED: ${{ steps.ci_status.outputs.all_passed }}
-          PHASE: ${{ steps.target.outputs.phase }}
         run: |
           # The release CLI itself no-ops when no conventional commit warrants
           # a release, so this gate only enforces green CI, Security, and Docker
           # runs — including for manual dispatches.
-          #
-          # The tag phase is exempt: its target is the version commit this
-          # automation pushed, and a push by GITHUB_TOKEN starts no workflows, so
-          # there are no runs to check. Its gate is the registry instead — the
-          # image must exist and must report the version being tagged.
-          if [[ "${PHASE}" == "tag" || "${ALL_PASSED}" == "true" ]]; then
+          if [[ "${ALL_PASSED}" == "true" ]]; then
             echo "should_release=true" >> "$GITHUB_OUTPUT"
           else
             echo "should_release=false" >> "$GITHUB_OUTPUT"
@@ -283,10 +296,11 @@ jobs:
         with:
           command: release
           token: ${{ secrets.GITHUB_TOKEN }}
+          expected-head: ${{ needs.check.outputs.target_sha }}
           bump: ${{ github.event.inputs.version_bump || 'auto' }}
           phase: bump
 
-      - name: Publish a runtime image for the committed version
+      - name: Validate and publish the committed version
         if: needs.check.outputs.phase == 'bump' && steps.bump.outputs.commit != '' && steps.bump.outputs.released != 'true'
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -296,8 +310,16 @@ jobs:
           set -euo pipefail
           echo "committed ${VERSION} as ${COMMIT}; building its runtime image"
           # main now holds the version commit, and a push by GITHUB_TOKEN starts
-          # no workflows, so ask docker.yml to build it. release-prep makes
-          # docker.yml dispatch the tag phase once the image is published.
+          # no workflows. Run the full CI and Security suites as well as Docker;
+          # the tag phase requires all three on the exact current main commit.
+          # release-prep hands back after image scan, signing, and SBOM finish.
+          main_sha="$(gh api "repos/${GITHUB_REPOSITORY}/commits/main" --jq .sha)"
+          if [[ "${main_sha}" != "${COMMIT}" ]]; then
+            echo "main advanced after the bump; its own checks must finish before release"
+            exit 0
+          fi
+          gh workflow run ci.yml --repo "$GITHUB_REPOSITORY" --ref main
+          gh workflow run security.yml --repo "$GITHUB_REPOSITORY" --ref main
           gh workflow run docker.yml --repo "$GITHUB_REPOSITORY" --ref main -f release-prep=true
 
       - name: Tag and publish the committed version
@@ -307,6 +329,7 @@ jobs:
         with:
           command: release
           token: ${{ secrets.GITHUB_TOKEN }}
+          expected-head: ${{ needs.check.outputs.target_sha }}
           update-major-alias: "true"
           phase: tag
           extra-files: ${{ steps.runtime_pin.outputs.files }}
