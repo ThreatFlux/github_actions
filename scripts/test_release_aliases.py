@@ -2,6 +2,7 @@
 
 import base64
 import os
+import secrets
 import shlex
 import tempfile
 import unittest
@@ -78,7 +79,7 @@ def replay(script, **overrides):
             FAKE_CLI_VERSION="0.7.10",
             FAKE_VERSIONS="0.7.10\n0.7.9",
             VERSION="0.7.10",
-            GITHUB_TOKEN="test-token",
+            GITHUB_TOKEN=secrets.token_hex(24),
             GITHUB_ACTOR="test-actor",
             EXPECTED_IMAGE=IMAGE,
             EXPECTED_DIGEST=DIGEST,
@@ -166,8 +167,14 @@ class ReleaseAliasTests(unittest.TestCase):
             promoted_aliases(writes), [f"{IMAGE}:0.7.10", f"{IMAGE}:0.7", f"{IMAGE}:0"]
         )
         self.assertIn(IMAGE + "@" + DIGEST, writes)
-        self.assertIn("runtime/Dockerfile?ref=v0.7.10", calls)
-        self.assertIn("release/Dockerfile?ref=v0.7.10", calls)
+        request_tokens = {
+            token for line in calls.splitlines() for token in shlex.split(line)
+        }
+        for name in ["runtime/Dockerfile", "release/Dockerfile", "Cargo.toml"]:
+            self.assertIn(
+                f"repos/ThreatFlux/github_actions/contents/{name}?ref=v0.7.10",
+                request_tokens,
+            )
         self.assertNotIn("ref=main", calls)
 
     def test_old_release_recovery_preserves_newer_line_aliases(self):
