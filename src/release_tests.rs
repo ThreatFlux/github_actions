@@ -15,6 +15,8 @@ mod expected_head;
 mod extra_files;
 #[path = "release_guard_tests.rs"]
 mod guard;
+#[path = "release_nested_lockfile_tests.rs"]
+mod nested_lockfiles;
 #[path = "release_phase_tests.rs"]
 mod phases;
 #[path = "release_pr_flow_tests.rs"]

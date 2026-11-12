@@ -9,6 +9,9 @@ use reqwest::{
 use semver::Version;
 use serde::{Deserialize, Serialize};
 
+#[path = "github_source.rs"]
+mod source;
+
 #[derive(Debug, Clone)]
 pub struct GitHubClient {
     base_url: String,

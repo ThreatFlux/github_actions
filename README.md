@@ -144,13 +144,15 @@ cargo run -- release \
 
 1. Reads the current version from `Cargo.toml` (`[package].version`, falling back to `[workspace.package].version`).
 2. Finds the latest `--tag-prefix` semver tag and classifies the conventional commits since it (`feat:` → minor, `fix:` → patch, `!`/`BREAKING CHANGE` → major). Merge commits are skipped. When no commit warrants a release it exits successfully with `released=false`; `--bump major|minor|patch` forces a release.
-3. Rewrites the version across workspace member manifests, internal dependency pins, and `Cargo.lock`.
+3. Rewrites the version across workspace member manifests, internal dependency pins, and `Cargo.lock`. Independently locked tracked consumers such as `fuzz/` also update the owned path package and its explicit lock references; their own package versions remain unchanged.
 4. Creates the release commit directly on the base branch (fast-forward only — if the branch advanced past the analyzed head, the run skips cleanly), the `vX.Y.Z` tag (annotated by default so provenance checks like `git cat-file -t` pass; `--tag-style lightweight` opts out), an optional moving major alias tag (`--update-major-alias`), and the GitHub Release with grouped release notes: Breaking Changes, Features, and Bug Fixes. A release with none of those (for example `--bump patch` over `ci:`, `build:`, `chore:`, and `docs:` commits) lists its other conventional commits under Maintenance instead, leaving out the tool's own `chore: release vX.Y.Z` bump commit.
 5. Writes release notes to `--notes-file` and `released`/`version`/`tag`/`commit`/`release-url`/`notes-file` outputs to `$GITHUB_OUTPUT` when set.
 
 Automation that gates a specific commit should pass `--expected-head <full-commit-sha>` (action input `expected-head`). The publisher rejects a different branch head before reading release history or preparing writes, then retains its mid-run race checks. The reusable release workflow forwards the exact commit accepted by its validation gate for writes; read-only PR dry runs retain their existing preview behavior. Direct CLI and library callers can omit the guard for the existing manual release behavior; library callers can opt in with `ReleasePublisher::release_at_head` without changing `ReleaseOptions`.
 
 Release mode requires a token with `contents: write` on the target repository. The `workflow` scope is not required because release commits only touch Cargo manifests.
+
+Nested consumers are selected through actual in-repository path dependencies, including renamed and inherited requirements. Write releases verify every consulted manifest and lockfile against regular-file blobs from the analyzed commit; untracked sources, symlinks, registry entries and historical package copies cannot become owned release entries. A nested patch/replace that redirects an owned package, or an explicit `package.workspace` reference that cannot be resolved safely, stops with an actionable error instead of publishing a partial update. Read-only PR dry runs may preview their local source without requiring it to match main.
 
 #### Splitting a release across two runs
 
