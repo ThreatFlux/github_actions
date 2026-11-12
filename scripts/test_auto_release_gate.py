@@ -12,8 +12,21 @@ WORKFLOW = Path(__file__).resolve().parents[1] / ".github/workflows/auto-release
 SHA = "a" * 40
 
 
-def run_record(event="push", status="completed", conclusion="success"):
-    return {"event": event, "status": status, "conclusion": conclusion}
+def run_record(
+    event="push",
+    status="completed",
+    conclusion="success",
+    created="2026-11-12T00:00:00Z",
+    updated=None,
+):
+    return {
+        "event": event,
+        "status": status,
+        "conclusion": conclusion,
+        "createdAt": created,
+        "updatedAt": updated or created,
+        "databaseId": 1,
+    }
 
 
 class AutoReleaseGateTests(unittest.TestCase):
@@ -104,8 +117,22 @@ class AutoReleaseGateTests(unittest.TestCase):
             run_record(status="queued", conclusion=""),
         ):
             with self.subTest(newer=newer):
+                newer.update(
+                    createdAt="2026-11-12T01:00:00Z", updatedAt="2026-11-12T01:00:00Z"
+                )
                 histories = self.histories_with("ci", [newer, run_record()])
                 self.assertEqual(self.gate(histories=histories), "all_passed=false")
+
+    def test_unsorted_run_history_cannot_hide_newer_failed_validation(self):
+        failed = run_record(conclusion="failure", created="2026-11-12T01:00:00Z")
+        histories = self.histories_with("security", [run_record(), failed])
+        self.assertEqual(self.gate(histories=histories), "all_passed=false")
+
+    def test_recent_failed_attempt_of_an_older_run_supersedes_success(self):
+        rerun = run_record(conclusion="failure", updated="2026-11-12T02:00:00Z")
+        newer_run = run_record(created="2026-11-12T01:00:00Z")
+        histories = self.histories_with("security", [newer_run, rerun])
+        self.assertEqual(self.gate(histories=histories), "all_passed=false")
 
     def test_main_advance_requires_new_validation(self):
         self.assertEqual(self.gate(main_sha="b" * 40), "all_passed=false")

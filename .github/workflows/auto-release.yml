@@ -137,8 +137,8 @@ jobs:
               # PR and scheduled runs cannot substitute for these main checks.
               status="$(gh run list --repo "${GITHUB_REPOSITORY}" --workflow="${workflow}.yml" \
                 --branch=main --commit="${TARGET_SHA}" --limit=100 \
-                --json event,status,conclusion --jq \
-                '[.[] | select(.event == "push" or .event == "workflow_dispatch")][0] | if . == null then "missing" else (.status + ":" + (.conclusion // "")) end')"
+                --json event,status,conclusion,createdAt,updatedAt,databaseId --jq \
+                '[.[] | select(.event == "push" or .event == "workflow_dispatch")] | sort_by(.updatedAt, .createdAt, .databaseId) | last | if . == null then "missing" else (.status + ":" + (.conclusion // "")) end')"
               echo "${workflow}=${status}"
               if [[ "${status}" != completed:success ]]; then
                 all_passed=false

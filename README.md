@@ -494,8 +494,10 @@ Consequences worth knowing:
   that stalled after phase 1 rather than bumping again. `workflow_dispatch`
   accepts an explicit `phase` to force either half.
 - **Both phases require successful CI, Security, and Docker runs on their
-  exact current head.** The latest push or manually dispatched run of each
-  workflow is authoritative; a failed rerun blocks release. PR and scheduled
+  exact current head.** The most recently updated push or manually dispatched
+  run of each workflow is authoritative, with creation time and run ID breaking
+  ties; a failed rerun blocks release. CI runs on every main push, including
+  documentation-only changes. PR and scheduled
   runs cannot substitute. The tag phase can wait up to ten minutes for the
   Docker handoff run to finish, and also requires the image/version proof.
   An ordinary main merge after the version bump needs its own successful
