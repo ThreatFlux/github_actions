@@ -330,9 +330,6 @@ impl ReleasePublisher {
         analyzed_head: &str,
         next_version: &str,
     ) -> Result<versioning::VersionRewritePlan> {
-        if !versioning::has_nested_lockfiles(&options.repo_root) {
-            return versioning::plan_version_rewrite(&options.repo_root, next_version);
-        }
         // PR dry runs deliberately analyze main while previewing local PR
         // contents. Preserve that read-only contract; write paths below bind
         // every consulted source to the exact analyzed tree instead.
@@ -342,6 +339,10 @@ impl ReleasePublisher {
         let repo_root = options.repo_root.canonicalize()?;
         let tracked =
             self.github.regular_files_at_commit(&options.owner, &options.repo, analyzed_head)?;
+        if versioning::tracked_nested_lockfiles(&tracked.keys().cloned().collect()).next().is_none()
+        {
+            return versioning::plan_version_rewrite(&options.repo_root, next_version);
+        }
         let rewrite = versioning::plan_version_rewrite_in_tree(
             &repo_root,
             next_version,

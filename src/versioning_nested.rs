@@ -8,8 +8,9 @@ use anyhow::{Context, Result, bail};
 use toml_edit::{DocumentMut, Item};
 
 use super::{
-    SourceFiles, VersionRewritePlan, dependency_table_paths, member_manifests,
-    plan_lockfile_update, plan_with_sources, set_dependency_version, source_document,
+    SourceFiles, VersionRewritePlan, dependency_table_paths, matches_member_pattern,
+    member_manifests_from_paths, plan_lockfile_update, plan_with_sources, set_dependency_version,
+    source_document, workspace_path_list,
 };
 use crate::{cargo, model::FileUpdate, remote};
 
@@ -29,8 +30,13 @@ fn nested_lockfiles(repo_root: &Path) -> Vec<PathBuf> {
         .collect()
 }
 
-pub fn has_nested_lockfiles(repo_root: &Path) -> bool {
-    !nested_lockfiles(repo_root).is_empty()
+pub fn tracked_nested_lockfiles(tracked: &BTreeSet<String>) -> impl Iterator<Item = &String> {
+    tracked.iter().filter(|relative| {
+        relative.as_str() != "Cargo.lock"
+            && relative.ends_with("/Cargo.lock")
+            && tracked
+                .contains(&(relative.trim_end_matches("Cargo.lock").to_owned() + "Cargo.toml"))
+    })
 }
 
 pub fn plan_read_only_rewrite(repo_root: &Path, new_version: &str) -> Result<VersionRewritePlan> {
@@ -51,20 +57,22 @@ pub fn plan_version_rewrite_in_tree(
 ) -> Result<TreeRewritePlan> {
     let repo_root = repo_root.canonicalize()?;
     let (mut plan, mut sources) = plan_with_sources(&repo_root, new_version)?;
-    let owned = owned_manifests(&repo_root, &mut sources)?;
+    let owned = owned_manifests(&repo_root, tracked, &mut sources)?;
     let mut updates: BTreeMap<_, _> =
         plan.file_updates.into_iter().map(|update| (update.file, update.updated_content)).collect();
-    for lockfile in nested_lockfiles(&repo_root) {
+    for relative in tracked_nested_lockfiles(tracked) {
+        let lockfile = repo_root.join(relative);
         let manifest = lockfile.with_file_name("Cargo.toml");
         if !is_tracked(&repo_root, &lockfile, tracked)
             || !is_tracked(&repo_root, &manifest, tracked)
         {
-            continue;
+            bail!(
+                "tracked nested release source '{relative}' is missing, non-regular or outside its analyzed path"
+            );
         }
         let mut context = ConsumerContext::new(&repo_root, tracked, &owned, &sources, &updates);
-        if !context.update_consumer(&lockfile, new_version)? {
-            continue;
-        }
+        context.update_consumer(&lockfile, new_version)?;
+        // Negative ownership decisions need the same exact-source evidence.
         sources = context.sources;
         updates = context.updates;
     }
@@ -78,11 +86,12 @@ pub fn plan_version_rewrite_in_tree(
 
 fn owned_manifests(
     repo_root: &Path,
+    tracked: &BTreeSet<String>,
     sources: &mut SourceFiles,
 ) -> Result<BTreeMap<PathBuf, (String, String)>> {
     let root = source_document(&repo_root.join("Cargo.toml"), sources)?;
     let mut owned = BTreeMap::new();
-    for manifest in member_manifests(repo_root, &root) {
+    for manifest in tracked_members(repo_root, repo_root, &root, tracked) {
         let document = source_document(&manifest, sources)?;
         if let Some(name) = document
             .get("package")
@@ -96,6 +105,25 @@ fn owned_manifests(
         }
     }
     Ok(owned)
+}
+
+fn tracked_members(
+    scope_root: &Path,
+    repo_root: &Path,
+    document: &DocumentMut,
+    tracked: &BTreeSet<String>,
+) -> Vec<PathBuf> {
+    member_manifests_from_paths(
+        scope_root,
+        document,
+        tracked
+            .iter()
+            .filter(|relative| {
+                relative.as_str() == "Cargo.toml" || relative.ends_with("/Cargo.toml")
+            })
+            .map(|relative| repo_root.join(relative))
+            .filter(|file| file.starts_with(scope_root)),
+    )
 }
 
 fn owned_package_version(document: &DocumentMut, root: &DocumentMut) -> Option<String> {
@@ -141,6 +169,8 @@ struct ConsumerContext<'a> {
     updates: BTreeMap<PathBuf, String>,
     reached: BTreeMap<String, String>,
     declarations: Vec<PathDependency>,
+    workspace: Option<PathBuf>,
+    workspace_excludes: Vec<String>,
 }
 
 impl<'a> ConsumerContext<'a> {
@@ -159,18 +189,29 @@ impl<'a> ConsumerContext<'a> {
             updates: updates.clone(),
             reached: BTreeMap::new(),
             declarations: Vec::new(),
+            workspace: None,
+            workspace_excludes: Vec::new(),
         }
     }
 
     fn update_consumer(&mut self, lockfile: &Path, new_version: &str) -> Result<bool> {
         let manifest = lockfile.with_file_name("Cargo.toml");
+        super::source_text(lockfile, &mut self.sources)?;
         let document = source_document(&manifest, &mut self.sources)?;
         self.reject_owned_patches(&manifest, &document)?;
+        self.workspace = document.get("workspace").map(|_| manifest.clone());
+        self.workspace_excludes = workspace_path_list(&document, "exclude");
         let mut visited = BTreeMap::new();
-        for member in member_manifests(manifest.parent().context("consumer root")?, &document) {
-            if is_tracked(self.repo_root, &member, self.tracked) {
-                self.visit(&member, true, &mut visited)?;
+        for member in tracked_members(
+            manifest.parent().context("consumer root")?,
+            self.repo_root,
+            &document,
+            self.tracked,
+        ) {
+            if !is_tracked(self.repo_root, &member, self.tracked) {
+                bail!("tracked workspace member '{}' is missing or non-regular", member.display());
             }
+            self.visit(&member, true, &mut visited)?;
         }
         if self.reached.is_empty() {
             return Ok(false);
@@ -211,9 +252,29 @@ impl<'a> ConsumerContext<'a> {
                     target: dependency.target.clone(),
                 });
             }
-            self.visit(&dependency.target, false, visited)?;
+            let member_scope = self.is_workspace_member(&dependency.target)?;
+            self.visit(&dependency.target, member_scope, visited)?;
         }
         Ok(())
+    }
+
+    fn is_workspace_member(&mut self, manifest: &Path) -> Result<bool> {
+        let Some(workspace) = self.workspace.clone() else {
+            return Ok(false);
+        };
+        let root = workspace.parent().context("workspace parent")?;
+        let Some(directory) = manifest.parent() else {
+            return Ok(false);
+        };
+        let Ok(relative) = directory.strip_prefix(root) else {
+            return Ok(false);
+        };
+        let relative = relative.to_string_lossy().replace('\\', "/");
+        if self.workspace_excludes.iter().any(|pattern| matches_member_pattern(pattern, &relative))
+        {
+            return Ok(false);
+        }
+        Ok(self.workspace_manifest(manifest)?.is_some_and(|(owner, _)| owner == workspace))
     }
 
     fn path_dependencies(
@@ -287,16 +348,25 @@ impl<'a> ConsumerContext<'a> {
 
     fn dependency_target(&self, declaration: &Path, path: &str) -> Result<Option<PathBuf>> {
         let target = declaration.parent().context("manifest parent")?.join(path).join("Cargo.toml");
-        if target.ancestors().any(|ancestor| {
-            std::fs::symlink_metadata(ancestor)
-                .is_ok_and(|metadata| metadata.file_type().is_symlink())
-        }) {
+        let mut normalized = PathBuf::new();
+        for component in target.components() {
+            if component == std::path::Component::ParentDir {
+                normalized.pop();
+            } else {
+                normalized.push(component.as_os_str());
+            }
+        }
+        let relative = remote::relative_repository_path(self.repo_root, &normalized).ok();
+        if !relative.is_some_and(|relative| self.tracked.contains(&relative)) {
             return Ok(None);
         }
-        let Ok(target) = target.canonicalize() else {
-            return Ok(None);
-        };
-        Ok(is_tracked(self.repo_root, &target, self.tracked).then_some(target))
+        if !is_tracked(self.repo_root, &normalized, self.tracked) {
+            bail!(
+                "tracked path dependency '{}' is missing, non-regular or redirected",
+                normalized.display()
+            );
+        }
+        Ok(Some(normalized))
     }
 
     fn workspace_manifest(&mut self, manifest: &Path) -> Result<Option<(PathBuf, DocumentMut)>> {

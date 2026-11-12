@@ -20,7 +20,7 @@ use crate::{cargo, model::FileUpdate};
 #[path = "versioning_nested.rs"]
 mod nested;
 pub(crate) use nested::{
-    has_nested_lockfiles, plan_read_only_rewrite, plan_version_rewrite_in_tree,
+    plan_read_only_rewrite, plan_version_rewrite_in_tree, tracked_nested_lockfiles,
 };
 
 pub(crate) type SourceFiles = BTreeMap<PathBuf, String>;
@@ -159,6 +159,14 @@ fn version_from_document(document: &DocumentMut) -> Option<String> {
 }
 
 fn member_manifests(repo_root: &Path, root_document: &DocumentMut) -> Vec<PathBuf> {
+    member_manifests_from_paths(repo_root, root_document, cargo::discover_manifest_files(repo_root))
+}
+
+fn member_manifests_from_paths(
+    repo_root: &Path,
+    root_document: &DocumentMut,
+    candidates: impl IntoIterator<Item = PathBuf>,
+) -> Vec<PathBuf> {
     let root_manifest = repo_root.join("Cargo.toml");
     let mut manifests = vec![root_manifest.clone()];
 
@@ -168,7 +176,7 @@ fn member_manifests(repo_root: &Path, root_document: &DocumentMut) -> Vec<PathBu
     }
     let excludes = workspace_path_list(root_document, "exclude");
 
-    for manifest in cargo::discover_manifest_files(repo_root) {
+    for manifest in candidates {
         if manifest == root_manifest {
             continue;
         }

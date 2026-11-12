@@ -147,6 +147,63 @@ fn dirty_nested_source_fails_before_any_repository_write() {
 }
 
 #[test]
+fn removing_the_owned_edge_cannot_hide_a_tracked_consumer_from_source_validation() {
+    let (repo, sources) = nested_fixture();
+    fs::write(
+        repo.path().join("fuzz/Cargo.toml"),
+        "[package]\nname = \"demo-fuzz\"\nversion = \"0.0.0\"\n[workspace]\n",
+    )
+    .expect("ambient edge removal");
+    let mut server = Server::new();
+    let _reads = mock_analysis(&mut server, 1, FEAT_AND_FIX);
+    let _sources = source_mocks(&mut server, &sources, false);
+    let writes = no_writes(&mut server);
+    let error = publisher(&server)
+        .release(&options(repo.path()))
+        .expect_err("negative ownership evidence must match");
+    assert!(error.to_string().contains("differs from the analyzed commit"));
+    for mock in writes {
+        mock.assert();
+    }
+}
+
+#[test]
+fn deleting_the_only_local_nested_lock_does_not_select_unverified_legacy_planning() {
+    let (repo, sources) = nested_fixture();
+    fs::remove_file(repo.path().join("fuzz/Cargo.lock")).expect("ambient lock removal");
+    let mut server = Server::new();
+    let _reads = mock_analysis(&mut server, 1, FEAT_AND_FIX);
+    let _sources = source_mocks(&mut server, &sources, false);
+    let writes = no_writes(&mut server);
+    let error = publisher(&server)
+        .release(&options(repo.path()))
+        .expect_err("tracked tree determines candidates");
+    assert!(error.to_string().contains("tracked nested release source"));
+    for mock in writes {
+        mock.assert();
+    }
+}
+
+#[test]
+fn tracked_regular_consumer_replaced_by_a_directory_cannot_be_excluded_silently() {
+    let (repo, sources) = nested_fixture();
+    let lock = repo.path().join("fuzz/Cargo.lock");
+    fs::remove_file(&lock).expect("remove lock");
+    fs::create_dir(lock).expect("ambient mode change");
+    let mut server = Server::new();
+    let _reads = mock_analysis(&mut server, 1, FEAT_AND_FIX);
+    let _sources = source_mocks(&mut server, &sources, false);
+    let writes = no_writes(&mut server);
+    let error = publisher(&server)
+        .release(&options(repo.path()))
+        .expect_err("regular source mode required");
+    assert!(error.to_string().contains("missing, non-regular or outside its analyzed path"));
+    for mock in writes {
+        mock.assert();
+    }
+}
+
+#[test]
 fn truncated_tree_fails_before_any_repository_write() {
     let (repo, sources) = nested_fixture();
     let mut server = Server::new();

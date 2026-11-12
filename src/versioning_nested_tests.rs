@@ -329,6 +329,60 @@ fn dependency_visit_can_later_upgrade_to_a_workspace_member_dev_scope() {
 }
 
 #[test]
+fn implicit_nested_workspace_path_member_includes_its_dev_dependency_scope() {
+    let (repo, mut tracked) = fixture("[dependencies]\nhelper = { path = \"helper\" }");
+    write(
+        repo.path(),
+        "fuzz/helper/Cargo.toml",
+        "[package]\nname = \"helper\"\nversion = \"0.0.0\"\n[dev-dependencies]\ndemo = { path = \"../..\", version = \"0.2.3\" }\n",
+    );
+    tracked.insert("fuzz/helper/Cargo.toml".to_owned());
+    let rewrite = plan_version_rewrite_in_tree(repo.path(), "0.3.0", &tracked)
+        .expect("implicit member dev scope");
+    assert!(updated(&rewrite, "fuzz/Cargo.lock").contains("name = \"demo\"\nversion = \"0.3.0\""));
+    assert!(
+        updated(&rewrite, "fuzz/helper/Cargo.toml")
+            .contains("path = \"../..\", version = \"0.3.0\"")
+    );
+}
+
+#[test]
+fn deleting_a_tracked_path_manifest_cannot_hide_its_owned_dependency_edge() {
+    let (repo, mut tracked) = fixture("[dependencies]\nhelper = { path = \"helper\" }");
+    write(
+        repo.path(),
+        "fuzz/helper/Cargo.toml",
+        "[package]\nname = \"helper\"\nversion = \"0.0.0\"\n[dependencies]\ndemo = { path = \"../..\" }\n",
+    );
+    tracked.insert("fuzz/helper/Cargo.toml".to_owned());
+    fs::remove_file(repo.path().join("fuzz/helper/Cargo.toml")).expect("ambient deletion");
+    let Err(error) = plan_version_rewrite_in_tree(repo.path(), "0.3.0", &tracked) else {
+        panic!("tracked dependency source cannot be omitted locally");
+    };
+    assert!(error.to_string().contains("tracked path dependency"));
+    assert!(error.to_string().contains("missing, non-regular or redirected"));
+}
+
+#[test]
+fn explicitly_excluded_nested_path_dependency_keeps_dependency_only_dev_scope() {
+    let (repo, mut tracked) = fixture("[dependencies]\nhelper = { path = \"helper\" }");
+    let root = repo.path().join("fuzz/Cargo.toml");
+    let contents = fs::read_to_string(&root).expect("workspace") + "exclude = [\"helper\"]\n";
+    fs::write(root, contents).expect("exclude implicit member");
+    write(
+        repo.path(),
+        "fuzz/helper/Cargo.toml",
+        "[package]\nname = \"helper\"\nversion = \"0.0.0\"\n[dev-dependencies]\ndemo = { path = \"../..\", version = \"0.2.3\" }\n",
+    );
+    tracked.insert("fuzz/helper/Cargo.toml".to_owned());
+    let rewrite = plan_version_rewrite_in_tree(repo.path(), "0.3.0", &tracked)
+        .expect("excluded package dev scope");
+    assert!(
+        rewrite.plan.file_updates.iter().all(|update| !update.file.ends_with("fuzz/Cargo.lock"))
+    );
+}
+
+#[test]
 fn nested_virtual_workspace_updates_its_actual_member_path_dependencies() {
     let (repo, mut tracked) = fixture("");
     write(repo.path(), "fuzz/Cargo.toml", "[workspace]\nmembers = [\"member\"]\n");
@@ -393,7 +447,7 @@ fn unrelated_empty_and_historical_workspaces_are_not_release_inputs() {
         rewrite.plan.file_updates.iter().all(|update| !update.file.ends_with("fuzz/Cargo.lock")
             && !update.file.ends_with("archive/Cargo.lock"))
     );
-    assert!(rewrite.original_files.keys().all(|file| !file.ends_with("archive/Cargo.toml")));
+    assert!(rewrite.original_files.keys().any(|file| file.ends_with("archive/Cargo.toml")));
 }
 
 #[test]
@@ -413,8 +467,8 @@ fn symlink_lockfile_is_not_a_release_consumer() {
     fs::remove_file(repo.path().join("fuzz/Cargo.lock")).expect("remove fixture lock");
     std::os::unix::fs::symlink("../Cargo.lock", repo.path().join("fuzz/Cargo.lock"))
         .expect("symlink");
-    let rewrite = plan_version_rewrite_in_tree(repo.path(), "0.3.0", &tracked).expect("plan");
-    assert!(
-        rewrite.plan.file_updates.iter().all(|update| !update.file.ends_with("fuzz/Cargo.lock"))
-    );
+    let Err(error) = plan_version_rewrite_in_tree(repo.path(), "0.3.0", &tracked) else {
+        panic!("local symlink must not hide a tracked regular consumer lock");
+    };
+    assert!(error.to_string().contains("missing, non-regular or outside its analyzed path"));
 }

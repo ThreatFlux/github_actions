@@ -57,6 +57,13 @@ impl GitHubClient {
         originals: &SourceFiles,
     ) -> Result<()> {
         for (file, original) in originals {
+            ensure!(
+                std::fs::symlink_metadata(file)
+                    .is_ok_and(|metadata| metadata.file_type().is_file())
+                    && file.canonicalize().is_ok_and(|canonical| &canonical == file),
+                "release source '{}' is missing, non-regular or redirected",
+                file.display()
+            );
             let relative = remote::relative_repository_path(repo_root, file)?;
             let sha = tracked.get(&relative).with_context(|| {
                 format!("release source '{relative}' is not a tracked regular file")
