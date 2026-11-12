@@ -17,7 +17,7 @@
 # Refresh trust data and its package provenance together. Distroless currently
 # has fixed CA data but stale package metadata; never globally dismiss the
 # advisory while older published images still trust the distrusted roots.
-FROM --platform=$BUILDPLATFORM debian:trixie-slim@sha256:f6b08b09a05725f9431502d3b5714f5c4576e82c1a84fa1debe0c24a7e0c3ec4 AS trust-store
+FROM --platform=$BUILDPLATFORM debian:trixie-slim@sha256:a72b4433de1cf7d6bae0c4cee74d0547f58601a643b3375f070c51600d63b6b2 AS trust-store
 
 # hadolint ignore=DL3008
 RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates && \
@@ -26,7 +26,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates
     rm -rf /var/lib/apt/lists/*
 
 # rust 1.99.1 on Alpine 3.24 (musl); multi-arch index digest
-FROM rust:1.99.1-alpine3.24@sha256:b1d5dd5a22a09404d3e798c0cf051b689077360374eb505fa5bb93c479693d87 AS rust-base
+FROM rust:1.99.1-alpine3.24@sha256:44819b27be4c97b0e4d7203bd2e02c4820f97700211b6a37fb4c246a2de59383 AS rust-base
 
 ARG VERSION=0.0.0
 ARG BUILD_DATE=unknown
