@@ -301,10 +301,16 @@ fn set_dependency_version(item: &mut Item, new_version: &str) -> bool {
     false
 }
 
+#[derive(Clone, Copy)]
+struct LockfileOwnership<'a> {
+    versions: &'a BTreeMap<String, String>,
+    required: &'a BTreeSet<String>,
+}
+
 fn plan_lockfile_update(
     lockfile: &Path,
     internal_packages: &BTreeSet<String>,
-    current_versions: Option<&BTreeMap<String, String>>,
+    current_versions: Option<LockfileOwnership<'_>>,
     new_version: &str,
     sources: &mut SourceFiles,
 ) -> Result<Option<FileUpdate>> {
@@ -324,21 +330,11 @@ fn plan_lockfile_update(
 
     if let Some(packages) = document.get_mut("package").and_then(Item::as_array_of_tables_mut) {
         for package in packages.iter_mut() {
-            // A `source` marks a registry/git entry, which can share a
-            // workspace member's name (for example a dev-dependency on an
-            // older published version of the same crate).
-            let name = package.get("name").and_then(Item::as_str).unwrap_or_default();
-            let old_version = package.get("version").and_then(Item::as_str).unwrap_or_default();
-            let matches_current = current_versions.is_none_or(|versions| {
-                versions.get(name).is_some_and(|current| current == old_version)
-            });
-            if !internal_packages.contains(name)
-                || package.get("source").is_some()
-                || !matches_current
-            {
+            let Some(identity) = owned_lock_identity(package, internal_packages, current_versions)
+            else {
                 continue;
-            }
-            rewritten.insert((name.to_owned(), old_version.to_owned()));
+            };
+            rewritten.insert(identity);
             if let Some(version_item) = package.get_mut("version")
                 && version_item.as_str().is_some()
             {
@@ -355,24 +351,43 @@ fn plan_lockfile_update(
     }))
 }
 
+fn owned_lock_identity(
+    package: &toml_edit::Table,
+    names: &BTreeSet<String>,
+    ownership: Option<LockfileOwnership<'_>>,
+) -> Option<(String, String)> {
+    let name = package.get("name").and_then(Item::as_str)?;
+    let version = package.get("version").and_then(Item::as_str)?;
+    // Registry/git entries can share an owned package's name and version.
+    if !names.contains(name)
+        || package.get("source").is_some()
+        || ownership
+            .is_some_and(|owned| owned.versions.get(name).is_none_or(|current| current != version))
+    {
+        return None;
+    }
+    Some((name.to_owned(), version.to_owned()))
+}
+
 fn validate_owned_lock_versions(
     document: &DocumentMut,
-    versions: &BTreeMap<String, String>,
+    ownership: LockfileOwnership<'_>,
     lockfile: &Path,
 ) -> Result<()> {
-    let Some(packages) = document.get("package").and_then(Item::as_array_of_tables) else {
-        return Ok(());
-    };
-    for (name, current) in versions {
+    let packages = document.get("package").and_then(Item::as_array_of_tables);
+    for (name, current) in ownership.versions {
         let locked: BTreeSet<_> = packages
-            .iter()
+            .into_iter()
+            .flat_map(|entries| entries.iter())
             .filter(|package| {
                 package.get("source").is_none()
                     && package.get("name").and_then(Item::as_str) == Some(name.as_str())
             })
             .filter_map(|package| package.get("version").and_then(Item::as_str))
             .collect();
-        if !locked.is_empty() && !locked.contains(current.as_str()) {
+        if (ownership.required.contains(name) || !locked.is_empty())
+            && !locked.contains(current.as_str())
+        {
             bail!(
                 "nested lockfile '{}' has stale or ambiguous owned path package '{name}': expected {current}; refresh this consumer lock before releasing",
                 lockfile.display()

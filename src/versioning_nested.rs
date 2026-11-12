@@ -155,10 +155,18 @@ fn is_tracked(repo_root: &Path, file: &Path, tracked: &BTreeSet<String>) -> bool
             .is_ok_and(|relative| tracked.contains(&relative))
 }
 
+#[derive(Clone)]
 struct PathDependency {
     declaration: PathBuf,
     item_path: Vec<String>,
     target: PathBuf,
+    optional: bool,
+}
+
+#[derive(Clone, Copy, Default)]
+struct VisitScope {
+    include_dev: bool,
+    required: bool,
 }
 
 struct ConsumerContext<'a> {
@@ -168,6 +176,8 @@ struct ConsumerContext<'a> {
     sources: SourceFiles,
     updates: BTreeMap<PathBuf, String>,
     reached: BTreeMap<String, String>,
+    required: BTreeSet<String>,
+    local_identities: BTreeMap<(String, String), BTreeSet<PathBuf>>,
     declarations: Vec<PathDependency>,
     workspace: Option<PathBuf>,
     workspace_excludes: Vec<String>,
@@ -188,6 +198,8 @@ impl<'a> ConsumerContext<'a> {
             sources: sources.clone(),
             updates: updates.clone(),
             reached: BTreeMap::new(),
+            required: BTreeSet::new(),
+            local_identities: BTreeMap::new(),
             declarations: Vec::new(),
             workspace: None,
             workspace_excludes: Vec::new(),
@@ -211,16 +223,17 @@ impl<'a> ConsumerContext<'a> {
             if !is_tracked(self.repo_root, &member, self.tracked) {
                 bail!("tracked workspace member '{}' is missing or non-regular", member.display());
             }
-            self.visit(&member, true, &mut visited)?;
+            self.visit(&member, VisitScope { include_dev: true, required: true }, &mut visited)?;
         }
         if self.reached.is_empty() {
             return Ok(false);
         }
+        self.reject_ambiguous_owned_identities()?;
         let names = self.reached.keys().cloned().collect();
         if let Some(update) = plan_lockfile_update(
             lockfile,
             &names,
-            Some(&self.reached),
+            Some(super::LockfileOwnership { versions: &self.reached, required: &self.required }),
             new_version,
             &mut self.sources,
         )? {
@@ -233,27 +246,76 @@ impl<'a> ConsumerContext<'a> {
     fn visit(
         &mut self,
         manifest: &Path,
-        include_dev: bool,
-        visited: &mut BTreeMap<PathBuf, bool>,
+        mut scope: VisitScope,
+        visited: &mut BTreeMap<PathBuf, VisitScope>,
     ) -> Result<()> {
-        if visited.get(manifest).is_some_and(|previous| *previous || !include_dev) {
-            return Ok(());
+        if let Some(previous) = visited.get(manifest) {
+            if (previous.include_dev || !scope.include_dev)
+                && (previous.required || !scope.required)
+            {
+                return Ok(());
+            }
+            scope.include_dev |= previous.include_dev;
+            scope.required |= previous.required;
         }
-        visited.insert(manifest.to_path_buf(), include_dev);
+        visited.insert(manifest.to_path_buf(), scope);
         let document = source_document(manifest, &mut self.sources)?;
-        for dependency in self.path_dependencies(manifest, &document, include_dev)? {
+        self.record_local_identity(manifest, &document)?;
+        for dependency in self.path_dependencies(manifest, &document, scope.include_dev)? {
+            let member_scope = self.is_workspace_member(&dependency.target)?;
+            let required =
+                member_scope || (scope.required && (scope.include_dev || !dependency.optional));
             if let Some((name, version)) = self.owned.get(&dependency.target) {
                 self.reached.insert(name.clone(), version.clone());
-                // Record exact declaring items; excluded consumer package versions
-                // and unrelated registry dependencies remain untouched.
-                self.declarations.push(PathDependency {
-                    declaration: dependency.declaration.clone(),
-                    item_path: dependency.item_path.clone(),
-                    target: dependency.target.clone(),
-                });
+                if required {
+                    self.required.insert(name.clone());
+                }
+                self.declarations.push(dependency.clone());
             }
-            let member_scope = self.is_workspace_member(&dependency.target)?;
-            self.visit(&dependency.target, member_scope, visited)?;
+            self.visit(
+                &dependency.target,
+                VisitScope { include_dev: member_scope, required },
+                visited,
+            )?;
+        }
+        Ok(())
+    }
+
+    fn record_local_identity(&mut self, manifest: &Path, document: &DocumentMut) -> Result<()> {
+        let Some(package) = document.get("package").and_then(Item::as_table_like) else {
+            return Ok(());
+        };
+        let Some(name) = package.get("name").and_then(Item::as_str) else {
+            return Ok(());
+        };
+        let version = if let Some(version) = package.get("version").and_then(Item::as_str) {
+            Some(version.to_owned())
+        } else if let Some((_, version)) = self.owned.get(manifest) {
+            Some(version.clone())
+        } else {
+            self.workspace_manifest(manifest)?
+                .and_then(|(_, workspace)| owned_package_version(document, &workspace))
+        };
+        if let Some(version) = version {
+            self.local_identities
+                .entry((name.to_owned(), version))
+                .or_default()
+                .insert(manifest.to_path_buf());
+        }
+        Ok(())
+    }
+
+    fn reject_ambiguous_owned_identities(&self) -> Result<()> {
+        for (name, version) in &self.reached {
+            if self
+                .local_identities
+                .get(&(name.clone(), version.clone()))
+                .is_some_and(|paths| paths.len() > 1)
+            {
+                bail!(
+                    "ambiguous reachable local path identity '{name} {version}'; refusing to relabel a historical package copy"
+                );
+            }
         }
         Ok(())
     }
@@ -318,6 +380,7 @@ impl<'a> ConsumerContext<'a> {
         let Some(table) = item.as_table_like() else {
             return Ok(None);
         };
+        let optional = table.get("optional").and_then(Item::as_bool).unwrap_or(false);
         let mut declaration = manifest.to_path_buf();
         let path = if table.get("workspace").and_then(Item::as_bool) == Some(true) {
             let Some((workspace, document)) = self.workspace_manifest(manifest)? else {
@@ -343,7 +406,7 @@ impl<'a> ConsumerContext<'a> {
         let Some(target) = self.dependency_target(&declaration, &path)? else {
             return Ok(None);
         };
-        Ok(Some(PathDependency { declaration, item_path, target }))
+        Ok(Some(PathDependency { declaration, item_path, target, optional }))
     }
 
     fn dependency_target(&self, declaration: &Path, path: &str) -> Result<Option<PathBuf>> {
