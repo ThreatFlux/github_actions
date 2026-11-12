@@ -64,23 +64,35 @@ fn no_writes(server: &mut ServerGuard) -> Vec<Mock> {
         .collect()
 }
 
-fn bump_write_mocks(server: &mut ServerGuard) -> Vec<Mock> {
+fn expected_blob(server: &mut ServerGuard, content: &str, sha: &str, hits: usize) -> Mock {
+    let escaped = content.replace('\\', "\\\\").replace('"', "\\\"").replace('\n', "\\n");
+    server
+        .mock("POST", "/repos/acme/demo/git/blobs")
+        .match_body(Matcher::JsonString(format!(r#"{{"content":"{escaped}","encoding":"utf-8"}}"#)))
+        .expect(hits)
+        .with_status(201)
+        .with_body(format!(r#"{{"sha":"{sha}"}}"#))
+        .create()
+}
+
+fn bump_write_mocks(server: &mut ServerGuard, sources: &BTreeMap<String, String>) -> Vec<Mock> {
     let paths = ["Cargo.lock", "Cargo.toml", "fuzz/Cargo.lock", "fuzz/Cargo.toml"];
     let tree: Vec<_> = paths
         .into_iter()
-        .map(|path| format!(r#"{{"path":"{path}","mode":"100644","type":"blob","sha":"blobsha"}}"#))
+        .map(|path| {
+            let sha = match path {
+                "Cargo.toml" => "rootmanifest",
+                "fuzz/Cargo.toml" => "consumermanifest",
+                _ => "lockblob",
+            };
+            format!(r#"{{"path":"{path}","mode":"100644","type":"blob","sha":"{sha}"}}"#)
+        })
         .collect();
-    vec![
+    let mut mocks = vec![
         server
             .mock("GET", "/repos/acme/demo/git/commits/basecommitsha")
             .with_status(200)
             .with_body(r#"{"tree":{"sha":"basetreesha"}}"#)
-            .create(),
-        server
-            .mock("POST", "/repos/acme/demo/git/blobs")
-            .expect(4)
-            .with_status(201)
-            .with_body(r#"{"sha":"blobsha"}"#)
             .create(),
         server
             .mock("POST", "/repos/acme/demo/git/trees")
@@ -102,7 +114,14 @@ fn bump_write_mocks(server: &mut ServerGuard) -> Vec<Mock> {
             .with_status(200)
             .with_body(r#"{"ref":"refs/heads/main"}"#)
             .create(),
-    ]
+    ];
+    let root = sources["Cargo.toml"].replace("0.2.3", "0.3.0");
+    let consumer = sources["fuzz/Cargo.toml"].replace("=0.2.3", "0.3.0");
+    let locks = sources["Cargo.lock"].replace("0.2.3", "0.3.0");
+    mocks.push(expected_blob(server, &root, "rootmanifest", 1));
+    mocks.push(expected_blob(server, &consumer, "consumermanifest", 1));
+    mocks.push(expected_blob(server, &locks, "lockblob", 2));
+    mocks
 }
 
 #[test]
@@ -111,7 +130,7 @@ fn real_bump_commit_contains_both_lockfiles_and_only_owned_dependency_requiremen
     let mut server = Server::new();
     let mut mocks = mock_analysis(&mut server, 2, FEAT_AND_FIX);
     mocks.extend(source_mocks(&mut server, &sources, false));
-    mocks.extend(bump_write_mocks(&mut server));
+    mocks.extend(bump_write_mocks(&mut server, &sources));
     let mut options = options(repo.path());
     options.phase = ReleasePhase::Bump;
     let report = publisher(&server).release(&options).expect("tracked source bump");
