@@ -3,11 +3,6 @@ name: CI
 on:
   push:
     branches: [main, dev]
-    paths-ignore:
-      - "**.md"
-      - "LICENSE"
-      - ".gitignore"
-      - "docs/**"
   pull_request:
     branches: [main, dev]
     paths-ignore:

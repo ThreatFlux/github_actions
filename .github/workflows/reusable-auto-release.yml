@@ -237,6 +237,23 @@ jobs:
           path: .release-action
           persist-credentials: false
 
+      - name: Verify validated-head runtime capability
+        if: ${{ !inputs.dry-run }}
+        env:
+          ACTION_ROOT: .release-action
+        run: |
+          set -euo pipefail
+          image="$(awk '$1 == "FROM" { print $2; exit }' "${ACTION_ROOT}/runtime/Dockerfile")"
+          if [[ ! "${image}" =~ ^ghcr\.io/[a-z0-9._/-]+:[A-Za-z0-9._-]+@sha256:[a-f0-9]{64}$ ]]; then
+            echo "expected an immutable GHCR runtime pin" >&2
+            exit 1
+          fi
+          help="$(docker run --rm "${image}" release --help)"
+          if ! grep -Fq -- '--expected-head' <<< "${help}"; then
+            echo "the pinned runtime cannot enforce expected-head; use a released workflow with a guard-capable runtime" >&2
+            exit 1
+          fi
+
       # The token is limited to this repository and to what the run needs:
       # contents for the release commit, tag, and Release; pull requests only
       # in create-pr mode; actions only when it will dispatch workflows.
@@ -269,6 +286,9 @@ jobs:
         uses: ./.release-action
         with:
           command: release
+          # PR dry runs intentionally analyze a checkout that can differ from
+          # main. Bind writes to the validated head without blocking that preview.
+          expected-head: ${{ !inputs.dry-run && needs.check.outputs.target-sha || '' }}
           token: ${{ steps.github-app-token.outputs.token || secrets.release-token || github.token }}
           bump: ${{ inputs.bump }}
           tag-prefix: ${{ inputs.tag-prefix }}

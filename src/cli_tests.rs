@@ -423,3 +423,120 @@ fn empty_command_line_values_fall_through_to_input_env() {
         assert_eq!(args.title, "from environment");
     });
 }
+
+#[test]
+fn release_expected_head_resolves_from_action_input_and_explicit_flag_wins() {
+    with_env(&[("INPUT_EXPECTED-HEAD", "validatedsha")], || {
+        assert_eq!(
+            release_args(parse(&["bin", "release"])).expected_head.as_deref(),
+            Some("validatedsha")
+        );
+        assert_eq!(
+            release_args(parse(&["bin", "release", "--expected-head", "explicitsha"]))
+                .expected_head
+                .as_deref(),
+            Some("explicitsha")
+        );
+    });
+}
+
+#[test]
+fn release_expected_head_remains_optional_for_manual_calls_and_empty_action_inputs() {
+    with_env(&[], || {
+        assert_eq!(release_args(parse(&["bin", "release"])).expected_head, None);
+    });
+    with_env(&[("INPUT_EXPECTED-HEAD", "  ")], || {
+        assert_eq!(release_args(parse(&["bin", "release"])).expected_head, None);
+    });
+}
+
+/// Parse the same release invocation for mock publishers, deliberately
+/// bypassing main's `INPUT_*` cleanup to exercise `run_release`'s own boundary.
+fn mock_release_args(repo_root: &std::path::Path) -> ReleaseArgs {
+    let mut args = release_args(Cli::parse_from([
+        "bin",
+        "release",
+        "--owner",
+        "acme",
+        "--repo-name",
+        "demo",
+        "--base-branch",
+        "main",
+        "--token",
+        "ghp_testtoken",
+    ]));
+    args.repo = repo_root.to_path_buf();
+    args.notes_file = repo_root.join("notes.md");
+    args.github_output = Some(repo_root.join("outputs"));
+    args
+}
+
+#[test]
+fn action_expected_head_reaches_the_publisher_before_any_output_write() {
+    with_env(&[("INPUT_EXPECTED-HEAD", "validatedsha")], || {
+        let temp_dir = tempfile::tempdir().expect("tempdir");
+        let mut server = mockito::Server::new();
+        let head = server
+            .mock("GET", "/repos/acme/demo/git/ref/heads/main")
+            .with_status(200)
+            .with_body(r#"{"object":{"sha":"advancedsha"}}"#)
+            .create();
+        let no_mutation = server.mock("POST", mockito::Matcher::Any).expect(0).create();
+        let args = mock_release_args(temp_dir.path());
+
+        let error = super::release_cli::run_release(args, Some(server.url()))
+            .expect_err("action must reject an unvalidated head");
+
+        head.assert();
+        no_mutation.assert();
+        drop(server);
+        assert!(error.to_string().contains("does not match expected head validatedsha"));
+        assert!(!temp_dir.path().join("notes.md").exists());
+        assert!(!temp_dir.path().join("outputs").exists());
+    });
+}
+
+#[test]
+fn empty_action_expected_head_allows_read_only_release_analysis_without_startup_normalization() {
+    for expected in ["", "  "] {
+        with_env(&[("INPUT_EXPECTED-HEAD", expected)], || {
+            let temp_dir = tempfile::tempdir().expect("tempdir");
+            std::fs::write(
+                temp_dir.path().join("Cargo.toml"),
+                "[package]\nname = \"demo\"\nversion = \"0.2.3\"\n",
+            )
+            .expect("write manifest");
+            let mut server = mockito::Server::new();
+            let head = server
+                .mock("GET", "/repos/acme/demo/git/ref/heads/main")
+                .with_status(200)
+                .with_body(r#"{"object":{"sha":"basecommitsha"}}"#)
+                .create();
+            let tags = server
+                .mock("GET", "/repos/acme/demo/tags?per_page=100&page=1")
+                .with_status(200)
+                .with_body(r#"[{"name":"v0.2.3","commit":{"sha":"tagsha"}}]"#)
+                .create();
+            let compare = server
+                .mock("GET", "/repos/acme/demo/compare/v0.2.3...basecommitsha?per_page=100&page=1")
+                .with_status(200)
+                .with_body(r#"{"total_commits":1,"commits":[{"sha":"chore","commit":{"message":"chore: tidy"},"parents":[{}]}]}"#)
+                .create();
+            let no_mutation = server.mock("POST", mockito::Matcher::Any).expect(0).create();
+            let mut args = mock_release_args(temp_dir.path());
+            assert_eq!(args.expected_head.as_deref(), Some(expected));
+            args.dry_run = true;
+
+            super::release_cli::run_release(args, Some(server.url()))
+                .expect("read-only release analysis");
+
+            for mock in [head, tags, compare, no_mutation] {
+                mock.assert();
+            }
+            drop(server);
+            let output =
+                std::fs::read_to_string(temp_dir.path().join("outputs")).expect("release outputs");
+            assert!(output.contains("released=false"));
+        });
+    }
+}

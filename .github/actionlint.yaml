@@ -2,6 +2,10 @@
 # stable actionlint 1.7.12 release. Preserve the reusable workflow's exact source.
 # https://github.blog/changelog/2026-09-03-github-actions-early-september-2026-updates/
 paths:
+  .github/workflows/auto-release.yml:
+    ignore:
+      # GitHub supports queued concurrency; stable actionlint 1.7.12 predates it.
+      - '^unexpected key "queue" for "concurrency" section\. expected one of "cancel-in-progress", "group"$'
   .github/workflows/reusable-auto-release.yml:
     ignore:
       - '^property "workflow_repository" is not defined in object type \{check_run_id: number; container:'

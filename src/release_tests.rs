@@ -9,6 +9,8 @@ use crate::{GitHubClient, conventional::BumpLevel};
 // Extra-file staging, the phased release, and the manifest-behind-tag guard
 // each have their own mock scaffolding, so they live in sibling files to keep
 // every module within the repository's file-size lint budget.
+#[path = "release_expected_head_tests.rs"]
+mod expected_head;
 #[path = "release_extra_files_tests.rs"]
 mod extra_files;
 #[path = "release_guard_tests.rs"]

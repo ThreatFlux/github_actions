@@ -74,6 +74,7 @@ Options:
 - `--fail-on-findings`: make `policy` exit non-zero when it finds script usage or policy violations
 - `--extra-files`: comma-separated files to stage into the release commit alongside the version rewrites
 - `--phase`: `all` (default), `bump` to commit the version bump without tagging it, or `tag` to release the version the manifest already holds
+- `--expected-head`: optional exact branch commit that passed validation; fail before release analysis or writes if the branch head differs
 
 Command behavior:
 
@@ -142,6 +143,8 @@ cargo run -- release \
 3. Rewrites the version across workspace member manifests, internal dependency pins, and `Cargo.lock`.
 4. Creates the release commit directly on the base branch (fast-forward only — if the branch advanced past the analyzed head, the run skips cleanly), the `vX.Y.Z` tag (annotated by default so provenance checks like `git cat-file -t` pass; `--tag-style lightweight` opts out), an optional moving major alias tag (`--update-major-alias`), and the GitHub Release with grouped release notes: Breaking Changes, Features, and Bug Fixes. A release with none of those (for example `--bump patch` over `ci:`, `build:`, `chore:`, and `docs:` commits) lists its other conventional commits under Maintenance instead, leaving out the tool's own `chore: release vX.Y.Z` bump commit.
 5. Writes release notes to `--notes-file` and `released`/`version`/`tag`/`commit`/`release-url`/`notes-file` outputs to `$GITHUB_OUTPUT` when set.
+
+Automation that gates a specific commit should pass `--expected-head <full-commit-sha>` (action input `expected-head`). The publisher rejects a different branch head before reading release history or preparing writes, then retains its mid-run race checks. The reusable release workflow forwards the exact commit accepted by its validation gate for writes; read-only PR dry runs retain their existing preview behavior. Direct CLI and library callers can omit the guard for the existing manual release behavior; library callers can opt in with `ReleasePublisher::release_at_head` without changing `ReleaseOptions`.
 
 Release mode requires a token with `contents: write` on the target repository. The `workflow` scope is not required because release commits only touch Cargo manifests.
 
@@ -220,6 +223,7 @@ prebuilt image, so it starts in seconds instead of compiling from source.
 | `check-scripts` | `policy` | `true` | Report explicit Bash/sh and Python usage in `run:` and `shell:` blocks. |
 | `check-policies` | `policy` | `true` | Report unpinned actions, permission, and job timeout findings. |
 | `fail-on-findings` | `policy` | `false` | Fail the action when the scan reports any finding. |
+| `expected-head` | `release` | none | Exact validated branch commit; reject a different branch head before release analysis or writes. |
 | `bump` | `release` | `auto` | `auto`, `major`, `minor`, or `patch`. |
 | `tag-prefix` | `release` | `v` | Prefix for release tags. |
 | `tag-style` | `release` | `annotated` | `annotated` or `lightweight`. |
@@ -468,8 +472,8 @@ so `ghcr.io/threatflux/github_actions:0.7.2` cannot exist before `v0.7.2` does.
 
 | Phase | Trigger | What it does |
 |---|---|---|
-| 1 — bump | `CI`, `Security`, and `Docker` all green on the head | Pins the runtime to the head's image so this run executes a current binary, then `phase: bump` commits the version bump and stops. Dispatches `docker.yml` with `release-prep=true`. |
-| 2 — tag | `docker.yml` hands off after build, scan, and sign | Resolves the new image's digest, **verifies its `--version` equals the manifest version**, gives the digest its `:X.Y.Z`, `:X.Y`, and `:X` tags, rewrites both Dockerfile pins, then `phase: tag` stages those pins into the commit it tags. |
+| 1 — bump | `CI`, `Security`, and `Docker` all green on the exact head | Pins the runtime to the head's image so this run executes a current binary, then `phase: bump` commits the version bump and stops. Dispatches full `ci.yml`, `security.yml`, and `docker.yml` (`release-prep=true`) runs for that version commit. |
+| 2 — tag | `docker.yml` hands off after build, scan, signing, and SBOM; all three workflows must succeed on the exact current head | Resolves the new image's digest, **verifies its `--version` equals the manifest version**, gives the digest its `:X.Y.Z`, `:X.Y`, and `:X` tags, rewrites both Dockerfile pins, then `phase: tag` stages those pins into the commit it tags. |
 
 Consequences worth knowing:
 
@@ -482,22 +486,36 @@ Consequences worth knowing:
   digest already produces the version tags, and rebuilding would move them to a
   digest the release does not pin.
 - **The version commit is pushed with `GITHUB_TOKEN`, so it starts no
-  workflows.** Both the image build and the handoff back are explicit
-  dispatches, which are exempt from that suppression.
+  push workflows.** Full CI, Security, the image build, and the handoff back
+  use explicit dispatches, which are exempt from that suppression.
 - **A committed-but-untagged version is the resumable state.** Phase detection
   reads the manifest version at `main` and checks whether its tag exists, so any
   later run — the weekly cron, a push, or a manual dispatch — finishes a release
   that stalled after phase 1 rather than bumping again. `workflow_dispatch`
   accepts an explicit `phase` to force either half.
-- **Phase 2 is not gated on CI and Security runs** for its target, because no
-  workflow runs for a token-pushed commit. Its gate is the registry: the image
-  must exist and must report the version being tagged.
+- **Both phases require successful CI, Security, and Docker runs on their
+  exact current head.** The most recently updated push or manually dispatched
+  run of each workflow is authoritative, with creation time and run ID breaking
+  ties; a failed rerun blocks release. CI runs on every main push, including
+  documentation-only changes. PR and scheduled
+  runs cannot substitute. The tag phase can wait up to ten minutes for the
+  Docker handoff run to finish, and also requires the image/version proof.
+  An ordinary main merge after the version bump needs its own successful
+  checks. Both release calls pass that validated SHA as `expected-head`, so
+  a subsequent branch advance is rejected before the publisher writes.
 
 Consumer repositories do not need any of this. The reusable workflow below
 releases in a single pass, which is correct for a repository that does not
 package its own release into an image it then runs.
 
 ## Reusable Auto Release Workflow
+
+Before a writing release, the workflow checks the immutable runtime pin from
+its own action checkout and verifies that the binary supports `--expected-head`.
+This happens before creating an App token. An unreleased workflow ref whose
+runtime still predates the guard refuses writes; consumers should pin the
+completed release SHA after its runtime pins have been updated. Read-only dry
+runs remain available during that publication cycle.
 
 For Cargo repositories that want the whole release gate — required-workflow
 checks, optional GitHub App authentication, and downstream workflow dispatches

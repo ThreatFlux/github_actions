@@ -39,6 +39,11 @@ pub struct ReleaseArgs {
     #[arg(long, env = "INPUT_BASE-BRANCH")]
     pub base_branch: Option<String>,
 
+    /// Exact branch head validated by the caller; fail before preparing a
+    /// release when the branch has advanced. Omit for manual release analysis.
+    #[arg(long, env = "INPUT_EXPECTED-HEAD")]
+    pub expected_head: Option<String>,
+
     /// Version bump strategy.
     #[arg(long, env = "INPUT_BUMP", value_enum, default_value_t = BumpArg::Auto)]
     pub bump: BumpArg,
@@ -162,7 +167,7 @@ pub fn run_release(args: ReleaseArgs, github_api_base_url: Option<String>) -> Re
     )?;
     let (owner, repo_name) = resolve_repository(args.owner.as_deref(), args.repo_name.as_deref())?;
     let publisher = ReleasePublisher::new(github);
-    let report = publisher.release(&ReleaseOptions {
+    let options = ReleaseOptions {
         repo_root: args.repo,
         owner,
         repo: repo_name,
@@ -181,7 +186,12 @@ pub fn run_release(args: ReleaseArgs, github_api_base_url: Option<String>) -> Re
             .filter(|file| !file.as_os_str().is_empty())
             .collect(),
         phase: args.phase.phase(),
-    })?;
+    };
+    let report = match args.expected_head.as_deref().map(str::trim).filter(|head| !head.is_empty())
+    {
+        Some(expected_head) => publisher.release_at_head(&options, expected_head)?,
+        None => publisher.release(&options)?,
+    };
 
     if let Some(notes) = &report.notes {
         fs::write(&args.notes_file, notes).with_context(|| {
