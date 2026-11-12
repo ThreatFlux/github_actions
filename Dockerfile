@@ -51,7 +51,7 @@ RUN apk add --no-cache \
     ca-certificates=20261020-r0 \
     cmake=4.2.3-r0 \
     linux-headers=7.0.0-r1 \
-    perl=5.42.2-r1 \
+    perl=5.42.3-r0 \
     pkgconf=2.5.1-r0 \
     tini-static=0.19.0-r3
 

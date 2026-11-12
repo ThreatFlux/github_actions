@@ -160,21 +160,24 @@ jobs:
           TRIGGER_EVENT: ${{ github.event.workflow_run.event }}
           TRIGGER_BRANCH: ${{ github.event.workflow_run.head_branch }}
           CURRENT_REF: ${{ github.ref }}
+          DRY_RUN: ${{ inputs.dry-run }}
         run: |
           set -euo pipefail
-          if [[ "$EVENT_NAME" == workflow_run && ( "$TRIGGER_CONCLUSION" != success || "$TRIGGER_REPOSITORY" != "$GITHUB_REPOSITORY" || "$TRIGGER_EVENT" != push || "$TRIGGER_BRANCH" != main ) ]]; then
+          if [[ "$DRY_RUN" != true && "$EVENT_NAME" == workflow_run && ( "$TRIGGER_CONCLUSION" != success || "$TRIGGER_REPOSITORY" != "$GITHUB_REPOSITORY" || "$TRIGGER_EVENT" != push || "$TRIGGER_BRANCH" != main ) ]]; then
             echo "should-release=false" >> "$GITHUB_OUTPUT"
             exit 0
           fi
-          if [[ "$EVENT_NAME" != workflow_run && "$CURRENT_REF" != refs/heads/main ]]; then
+          if [[ "$DRY_RUN" != true && "$EVENT_NAME" != workflow_run && "$CURRENT_REF" != refs/heads/main ]]; then
             echo "should-release=false" >> "$GITHUB_OUTPUT"
             exit 0
           fi
-          main_sha="$(gh api "repos/$GITHUB_REPOSITORY/commits/main" --jq .sha)"
-          if [[ "$main_sha" != "$TARGET_SHA" ]]; then
-            echo "main advanced; refusing to release stale $TARGET_SHA"
-            echo "should-release=false" >> "$GITHUB_OUTPUT"
-            exit 0
+          if [[ "$DRY_RUN" != true ]]; then
+            main_sha="$(gh api "repos/$GITHUB_REPOSITORY/commits/main" --jq .sha)"
+            if [[ "$main_sha" != "$TARGET_SHA" ]]; then
+              echo "main advanced; refusing to release stale $TARGET_SHA"
+              echo "should-release=false" >> "$GITHUB_OUTPUT"
+              exit 0
+            fi
           fi
           if [[ -z "$REQUIRED_WORKFLOWS" ]]; then
             echo "should-release=true" >> "$GITHUB_OUTPUT"

@@ -42,6 +42,7 @@ class ReleaseGateTests(unittest.TestCase):
                 TRIGGER_EVENT="push",
                 TRIGGER_BRANCH="main",
                 CURRENT_REF="refs/heads/main",
+                DRY_RUN="false",
                 FAKE_MAIN_SHA=SHA,
                 FAKE_CONCLUSION="success",
             )
@@ -76,4 +77,16 @@ class ReleaseGateTests(unittest.TestCase):
         self.assertEqual(
             self.gate(EVENT_NAME="workflow_dispatch", CURRENT_REF="refs/heads/feature"),
             "should-release=false",
+        )
+
+    def test_read_only_pr_dry_run_can_compute_its_version(self):
+        self.assertEqual(
+            self.gate(
+                EVENT_NAME="pull_request",
+                CURRENT_REF="refs/pull/123/merge",
+                DRY_RUN="true",
+                REQUIRED_WORKFLOWS="",
+                FAKE_MAIN_SHA="b" * 40,
+            ),
+            "should-release=true",
         )
