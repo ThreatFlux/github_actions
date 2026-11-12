@@ -74,6 +74,7 @@ Options:
 - `--fail-on-findings`: make `policy` exit non-zero when it finds script usage or policy violations
 - `--extra-files`: comma-separated files to stage into the release commit alongside the version rewrites
 - `--phase`: `all` (default), `bump` to commit the version bump without tagging it, or `tag` to release the version the manifest already holds
+- `--expected-head`: optional exact branch commit that passed validation; fail before release analysis or writes if the branch head differs
 
 Command behavior:
 
@@ -142,6 +143,8 @@ cargo run -- release \
 3. Rewrites the version across workspace member manifests, internal dependency pins, and `Cargo.lock`.
 4. Creates the release commit directly on the base branch (fast-forward only — if the branch advanced past the analyzed head, the run skips cleanly), the `vX.Y.Z` tag (annotated by default so provenance checks like `git cat-file -t` pass; `--tag-style lightweight` opts out), an optional moving major alias tag (`--update-major-alias`), and the GitHub Release with grouped release notes: Breaking Changes, Features, and Bug Fixes. A release with none of those (for example `--bump patch` over `ci:`, `build:`, `chore:`, and `docs:` commits) lists its other conventional commits under Maintenance instead, leaving out the tool's own `chore: release vX.Y.Z` bump commit.
 5. Writes release notes to `--notes-file` and `released`/`version`/`tag`/`commit`/`release-url`/`notes-file` outputs to `$GITHUB_OUTPUT` when set.
+
+Automation that gates a specific commit should pass `--expected-head <full-commit-sha>` (action input `expected-head`). The publisher rejects a different branch head before reading release history or preparing writes, then retains its mid-run race checks. The reusable release workflow forwards the exact commit accepted by its validation gate. Direct CLI and library callers can omit the guard for the existing manual release behavior; library callers can opt in with `ReleasePublisher::release_at_head` without changing `ReleaseOptions`.
 
 Release mode requires a token with `contents: write` on the target repository. The `workflow` scope is not required because release commits only touch Cargo manifests.
 
@@ -220,6 +223,7 @@ prebuilt image, so it starts in seconds instead of compiling from source.
 | `check-scripts` | `policy` | `true` | Report explicit Bash/sh and Python usage in `run:` and `shell:` blocks. |
 | `check-policies` | `policy` | `true` | Report unpinned actions, permission, and job timeout findings. |
 | `fail-on-findings` | `policy` | `false` | Fail the action when the scan reports any finding. |
+| `expected-head` | `release` | none | Exact validated branch commit; reject a different branch head before release analysis or writes. |
 | `bump` | `release` | `auto` | `auto`, `major`, `minor`, or `patch`. |
 | `tag-prefix` | `release` | `v` | Prefix for release tags. |
 | `tag-style` | `release` | `annotated` | `annotated` or `lightweight`. |

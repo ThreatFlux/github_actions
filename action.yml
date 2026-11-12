@@ -94,6 +94,10 @@ inputs:
     default: "false"
 
   # Release inputs (release only).
+  expected-head:
+    description: Exact branch commit validated by the caller. Fail before release analysis or writes if the branch head differs. Leave empty for manual release analysis. (release only)
+    required: false
+    default: ""
   bump:
     description: Version bump strategy. Use auto, major, minor, or patch. Leave empty to use the default (auto, derived from conventional commits). (release only)
     required: false

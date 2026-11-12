@@ -232,6 +232,29 @@ impl ReleasePublisher {
     /// Analyze the commits since the latest release tag and release, propose,
     /// or (on a dry run) report the next version according to `options`.
     pub fn release(&self, options: &ReleaseOptions) -> Result<ReleaseReport> {
+        self.release_with_expected_head(options, None)
+    }
+
+    /// Release only if the branch still points at the exact commit validated
+    /// by the caller. Reject a mismatch before reading release history or
+    /// preparing any writes; the existing mid-run race checks still apply.
+    pub fn release_at_head(
+        &self,
+        options: &ReleaseOptions,
+        expected_head: &str,
+    ) -> Result<ReleaseReport> {
+        anyhow::ensure!(
+            !expected_head.trim().is_empty(),
+            "expected release head must not be empty"
+        );
+        self.release_with_expected_head(options, Some(expected_head))
+    }
+
+    fn release_with_expected_head(
+        &self,
+        options: &ReleaseOptions,
+        expected_head: Option<&str>,
+    ) -> Result<ReleaseReport> {
         self.github.ensure_token()?;
         if options.create_pr {
             if options.phase != ReleasePhase::All {
@@ -241,7 +264,7 @@ impl ReleasePublisher {
             }
             validate_release_branch(&options.release_branch)?;
         }
-        let analysis = self.analyze(options)?;
+        let analysis = self.analyze(options, expected_head)?;
         analysis.ensure_manifest_not_behind_latest_tag()?;
         if options.phase == ReleasePhase::Tag {
             return self.release_manifest_version(options, analysis);
@@ -373,7 +396,7 @@ impl ReleasePublisher {
     /// Read the branch head, the manifest version, the latest release tag, and
     /// the commits since that tag (or the recent history before the first
     /// release).
-    fn analyze(&self, options: &ReleaseOptions) -> Result<Analysis> {
+    fn analyze(&self, options: &ReleaseOptions, expected_head: Option<&str>) -> Result<Analysis> {
         let owner = &options.owner;
         let repo = &options.repo;
         let branch = match options.base_branch.as_deref().map(str::trim) {
@@ -381,6 +404,12 @@ impl ReleasePublisher {
             _ => self.github.default_branch(owner, repo)?,
         };
         let head_sha = self.github.branch_head_sha(owner, repo, &branch)?;
+        if let Some(expected) = expected_head {
+            anyhow::ensure!(
+                head_sha == expected,
+                "release branch '{branch}' head {head_sha} does not match expected head {expected}; validate the current head before releasing"
+            );
+        }
 
         let current_version = versioning::current_version(&options.repo_root)?;
         let current = Version::parse(&current_version).with_context(|| {
