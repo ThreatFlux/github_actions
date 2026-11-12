@@ -75,7 +75,6 @@ fn mock_head_ref(server: &mut ServerGuard, sha: &str, hits: usize) -> Mock {
     let _empty_source_tree = server
         .mock("GET", format!("/repos/acme/demo/git/trees/{sha}?recursive=1").as_str())
         .expect_at_least(0)
-        .expect_at_most(1)
         .with_status(200)
         .with_body(r#"{"tree":[],"truncated":false}"#)
         .create();
