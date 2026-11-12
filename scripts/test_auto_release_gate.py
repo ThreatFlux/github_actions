@@ -2,10 +2,11 @@
 
 import json
 import os
-import subprocess
 import tempfile
 import unittest
 from pathlib import Path
+
+from test_reusable_release_gate import run_gate_script
 
 WORKFLOW = Path(__file__).resolve().parents[1] / ".github/workflows/auto-release.yml"
 SHA = "a" * 40
@@ -56,13 +57,7 @@ class AutoReleaseGateTests(unittest.TestCase):
                 FAKE_MAIN_SHA=main_sha,
                 FAKE_HISTORIES=str(history_path),
             )
-            result = subprocess.run(
-                ["bash", "-c", script],
-                env=env,
-                capture_output=True,
-                text=True,
-                check=False,
-            )
+            result = run_gate_script(script, env)
             self.assertEqual(result.returncode, 0, result.stderr)
             return output.read_text(encoding="utf-8").strip()
 
@@ -130,13 +125,7 @@ class AutoReleaseGateTests(unittest.TestCase):
                         PHASE="tag",
                         GITHUB_OUTPUT=str(output),
                     )
-                    result = subprocess.run(
-                        ["bash", "-c", script],
-                        env=env,
-                        capture_output=True,
-                        text=True,
-                        check=False,
-                    )
+                    result = run_gate_script(script, env)
                     self.assertEqual(result.returncode, 0, result.stderr)
                     self.assertEqual(
                         output.read_text().strip(), f"should_release={expected}"
@@ -175,13 +164,7 @@ class AutoReleaseGateTests(unittest.TestCase):
                         FAKE_MAIN_SHA=main_sha,
                         DISPATCH_LOG=str(log),
                     )
-                    result = subprocess.run(
-                        ["bash", "-c", script],
-                        env=env,
-                        capture_output=True,
-                        text=True,
-                        check=False,
-                    )
+                    result = run_gate_script(script, env)
                     self.assertEqual(result.returncode, 0, result.stderr)
                     actual = log.read_text().splitlines() if log.exists() else []
                     self.assertEqual(actual, expected)

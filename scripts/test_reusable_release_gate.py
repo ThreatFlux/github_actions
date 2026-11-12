@@ -6,8 +6,17 @@ import tempfile
 import unittest
 from pathlib import Path
 
-WORKFLOW = Path(__file__).resolve().parents[1] / ".github/workflows/reusable-auto-release.yml"
+WORKFLOW = (
+    Path(__file__).resolve().parents[1] / ".github/workflows/reusable-auto-release.yml"
+)
 SHA = "a" * 40
+
+
+def run_gate_script(script, env):
+    """Run a checked-in workflow step against a test-owned fake GitHub CLI."""
+    return subprocess.run(
+        ["bash", "-c", script], env=env, capture_output=True, text=True, check=False
+    )
 
 
 class ReleaseGateTests(unittest.TestCase):
@@ -20,7 +29,7 @@ class ReleaseGateTests(unittest.TestCase):
             root = Path(directory)
             gh = root / "gh"
             gh.write_text(
-                '#!/usr/bin/env bash\n'
+                "#!/usr/bin/env bash\n"
                 'if [[ "$1" == api ]]; then echo "$FAKE_MAIN_SHA"; exit 0; fi\n'
                 '[[ " $* " == *" --branch=main "* ]] || exit 21\n'
                 '[[ " $* " == *" --event=push "* ]] || exit 22\n'
@@ -47,9 +56,7 @@ class ReleaseGateTests(unittest.TestCase):
                 FAKE_CONCLUSION="success",
             )
             env.update(overrides)
-            result = subprocess.run(
-                ["bash", "-c", script], env=env, capture_output=True, text=True, check=False
-            )
+            result = run_gate_script(script, env)
             self.assertEqual(result.returncode, 0, result.stderr)
             return output.read_text(encoding="utf-8").strip()
 
@@ -57,13 +64,17 @@ class ReleaseGateTests(unittest.TestCase):
         self.assertEqual(self.gate(), "should-release=true")
 
     def test_pr_run_cannot_substitute_for_main_push(self):
-        self.assertEqual(self.gate(TRIGGER_EVENT="pull_request"), "should-release=false")
+        self.assertEqual(
+            self.gate(TRIGGER_EVENT="pull_request"), "should-release=false"
+        )
 
     def test_other_branch_cannot_release(self):
         self.assertEqual(self.gate(TRIGGER_BRANCH="feature"), "should-release=false")
 
     def test_fork_main_cannot_release(self):
-        self.assertEqual(self.gate(TRIGGER_REPOSITORY="someone/fork"), "should-release=false")
+        self.assertEqual(
+            self.gate(TRIGGER_REPOSITORY="someone/fork"), "should-release=false"
+        )
 
     def test_main_advance_stops_stale_release(self):
         self.assertEqual(self.gate(FAKE_MAIN_SHA="b" * 40), "should-release=false")
@@ -71,7 +82,9 @@ class ReleaseGateTests(unittest.TestCase):
     def test_missing_or_failed_required_push_run_blocks_release(self):
         for conclusion in ["", "failure", "cancelled"]:
             with self.subTest(conclusion=conclusion):
-                self.assertEqual(self.gate(FAKE_CONCLUSION=conclusion), "should-release=false")
+                self.assertEqual(
+                    self.gate(FAKE_CONCLUSION=conclusion), "should-release=false"
+                )
 
     def test_manual_dispatch_from_feature_branch_is_refused(self):
         self.assertEqual(
@@ -91,10 +104,11 @@ class ReleaseGateTests(unittest.TestCase):
             "should-release=true",
         )
 
-
     def test_release_action_binds_writes_but_keeps_pr_dry_run_preview(self):
         source = WORKFLOW.read_text(encoding="utf-8")
-        release = source.split("      - name: Release\n", 1)[1].split("      - name:", 1)[0]
+        release = source.split("      - name: Release\n", 1)[1].split(
+            "      - name:", 1
+        )[0]
         # Together with the real shell-gate PR dry-run above and the Rust
         # empty-input -> publisher regression, verify the actual action wiring:
         # dry-run=true passes the supported empty optional input, while writes
