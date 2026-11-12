@@ -229,6 +229,80 @@ fn stale_owned_path_lock_version_fails_closed_instead_of_publishing_a_partial_bu
 }
 
 #[test]
+fn required_owned_path_cannot_keep_a_registry_only_lock_entry() {
+    let (repo, tracked) = fixture("[dependencies]\ndemo = { path = \"..\", version = \"0.2.3\" }");
+    write(
+        repo.path(),
+        "fuzz/Cargo.lock",
+        "version = 4\n[[package]]\nname = \"demo\"\nversion = \"0.2.3\"\nsource = \"registry+https://github.com/rust-lang/crates.io-index\"\n",
+    );
+    let Err(error) = plan_version_rewrite_in_tree(repo.path(), "0.3.0", &tracked) else {
+        panic!("required current path package must have a local lock entry");
+    };
+    assert!(error.to_string().contains("stale or ambiguous owned path package 'demo'"));
+}
+
+fn optional_owned_fixture() -> (TempDir, BTreeSet<String>) {
+    let (repo, mut tracked) = fixture("[dependencies]\ndemo = { path = \"../crates/a\" }");
+    write(
+        repo.path(),
+        "Cargo.toml",
+        "[workspace]\nmembers = [\"crates/*\"]\n[workspace.package]\nversion = \"0.2.3\"\n",
+    );
+    write(
+        repo.path(),
+        "crates/a/Cargo.toml",
+        &(ROOT.to_owned()
+            + "[dependencies]\nhelper = { path = \"../b\", version = \"0.2.3\", optional = true }\n"),
+    );
+    write(
+        repo.path(),
+        "crates/b/Cargo.toml",
+        "[package]\nname = \"helper\"\nversion = \"0.2.3\"\n",
+    );
+    tracked
+        .extend(["crates/a/Cargo.toml", "crates/b/Cargo.toml"].into_iter().map(ToOwned::to_owned));
+    (repo, tracked)
+}
+
+#[test]
+fn inactive_optional_owned_edge_can_be_absent_from_a_dependency_only_lock_graph() {
+    let (repo, tracked) = optional_owned_fixture();
+    let rewrite = plan_version_rewrite_in_tree(repo.path(), "0.3.0", &tracked)
+        .expect("uncertain optional activation remains optional");
+    let lock = updated(&rewrite, "fuzz/Cargo.lock");
+    assert!(lock.contains("name = \"demo\"\nversion = \"0.3.0\""));
+    assert!(!lock.contains("name = \"helper\""));
+}
+
+#[test]
+fn inactive_optional_owned_identity_cannot_relabel_an_actual_historical_path_copy() {
+    let (repo, mut tracked) = optional_owned_fixture();
+    let consumer = repo.path().join("fuzz/Cargo.toml");
+    let contents = fs::read_to_string(&consumer).expect("consumer").replace(
+        "[dependencies]\n",
+        "[dependencies]\nhistorical = { package = \"helper\", path = \"../historical\" }\n",
+    );
+    fs::write(consumer, contents).expect("historical dependency");
+    write(
+        repo.path(),
+        "historical/Cargo.toml",
+        "[package]\nname = \"helper\"\nversion = \"0.2.3\"\n",
+    );
+    write(
+        repo.path(),
+        "fuzz/Cargo.lock",
+        &(LOCK.to_owned() + "\n[[package]]\nname = \"helper\"\nversion = \"0.2.3\"\n"),
+    );
+    tracked.insert("historical/Cargo.toml".to_owned());
+    let Err(error) = plan_version_rewrite_in_tree(repo.path(), "0.3.0", &tracked) else {
+        panic!("same-identity optional ownership must not guess at a lock entry");
+    };
+    assert!(error.to_string().contains("ambiguous reachable local path identity 'helper 0.2.3'"));
+    assert!(error.to_string().contains("refusing to relabel a historical package copy"));
+}
+
+#[test]
 fn owned_path_closure_updates_both_workspace_members_in_the_nested_lock() {
     let (repo, mut tracked) = fixture("[dependencies]\ndemo = { path = \"../crates/a\" }");
     write(
