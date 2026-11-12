@@ -269,7 +269,9 @@ jobs:
         uses: ./.release-action
         with:
           command: release
-          expected-head: ${{ needs.check.outputs.target-sha }}
+          # PR dry runs intentionally analyze a checkout that can differ from
+          # main. Bind writes to the validated head without blocking that preview.
+          expected-head: ${{ !inputs.dry-run && needs.check.outputs.target-sha || '' }}
           token: ${{ steps.github-app-token.outputs.token || secrets.release-token || github.token }}
           bump: ${{ inputs.bump }}
           tag-prefix: ${{ inputs.tag-prefix }}

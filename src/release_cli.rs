@@ -187,7 +187,8 @@ pub fn run_release(args: ReleaseArgs, github_api_base_url: Option<String>) -> Re
             .collect(),
         phase: args.phase.phase(),
     };
-    let report = match args.expected_head.as_deref() {
+    let report = match args.expected_head.as_deref().map(str::trim).filter(|head| !head.is_empty())
+    {
         Some(expected_head) => publisher.release_at_head(&options, expected_head)?,
         None => publisher.release(&options)?,
     };
