@@ -14,8 +14,16 @@ SHA = "a" * 40
 
 def run_gate_script(script, env):
     """Run a checked-in workflow step against a test-owned fake GitHub CLI."""
-    return subprocess.run(
-        ["bash", "-c", script], env=env, capture_output=True, text=True, check=False
+    # Only checked-in workflow steps and test-owned fixtures reach stdin. Keep
+    # the executable/argv constant; this intentionally tests the actual shell.
+    return subprocess.run(  # nosec B603: intentional workflow replay in tests
+        ["bash"],
+        input=script,
+        shell=False,
+        env=env,
+        capture_output=True,
+        text=True,
+        check=False,
     )
 
 
