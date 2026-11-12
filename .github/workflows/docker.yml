@@ -344,7 +344,7 @@ jobs:
 
       - name: Upload AMD64 results with existing analysis identity
         if: always() && matrix.arch == 'amd64' && hashFiles('trivy-results.sarif') != ''
-        uses: github/codeql-action/upload-sarif@9b3254085494b55a0f7c4c2b3d2d52cc712ce370 # v4.39.1
+        uses: github/codeql-action/upload-sarif@33d7b85da1a04171e211befe2c739303b9a4c066 # v4.39.3
         env:
           CODEQL_ACTION_ANALYSIS_KEY: .github/workflows/docker.yml:scan
         with:
@@ -354,7 +354,7 @@ jobs:
 
       - name: Upload independent ARM64 results
         if: always() && matrix.arch == 'arm64' && hashFiles('trivy-results.sarif') != ''
-        uses: github/codeql-action/upload-sarif@9b3254085494b55a0f7c4c2b3d2d52cc712ce370 # v4.39.1
+        uses: github/codeql-action/upload-sarif@33d7b85da1a04171e211befe2c739303b9a4c066 # v4.39.3
         with:
           sarif_file: trivy-results.sarif
           category: docker-arm64
@@ -447,7 +447,7 @@ jobs:
       - name: Generate SBOM
         uses: anchore/sbom-action@66cbf4bc1f1c0d2edc94016e65bc221b6bb0ad6c # v0.24.3
         with:
-          syft-version: v1.55.0
+          syft-version: v1.57.1
           image: ${{ env.REGISTRY }}/${{ needs.build.outputs.image_name }}:${{ steps.sha.outputs.short }}
           artifact-name: sbom.spdx.json
           format: spdx-json

@@ -42,7 +42,7 @@ jobs:
       - name: Install cargo-audit
         uses: taiki-e/install-action@cfdb7ed4ccc7c7dce37759eae89dc5674b469b39 # v2.90.3
         with:
-          tool: cargo-audit@0.22.2
+          tool: cargo-audit@0.23.0
 
       - name: Run security audit
         run: cargo audit
@@ -127,7 +127,7 @@ jobs:
       - name: Install cargo-cyclonedx
         uses: taiki-e/install-action@cfdb7ed4ccc7c7dce37759eae89dc5674b469b39 # v2.90.3
         with:
-          tool: cargo-cyclonedx@0.5.9
+          tool: cargo-cyclonedx@0.5.10
 
       - name: Generate SBOM
         run: make sbom BINARY_NAME="${BINARY_NAME}" SBOM_MANIFEST_PATH="${SBOM_MANIFEST_PATH}"
@@ -181,7 +181,7 @@ jobs:
             --report-path gitleaks.sarif
 
       - name: Upload Gitleaks results
-        uses: github/codeql-action/upload-sarif@9b3254085494b55a0f7c4c2b3d2d52cc712ce370 # v4.39.1
+        uses: github/codeql-action/upload-sarif@33d7b85da1a04171e211befe2c739303b9a4c066 # v4.39.3
         with:
           sarif_file: gitleaks.sarif
         if: always() && hashFiles('gitleaks.sarif') != ''
