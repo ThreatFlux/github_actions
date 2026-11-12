@@ -450,6 +450,27 @@ fn release_expected_head_remains_optional_for_manual_calls_and_empty_action_inpu
     });
 }
 
+/// Parse the same release invocation for mock publishers, deliberately
+/// bypassing main's `INPUT_*` cleanup to exercise `run_release`'s own boundary.
+fn mock_release_args(repo_root: &std::path::Path) -> ReleaseArgs {
+    let mut args = release_args(Cli::parse_from([
+        "bin",
+        "release",
+        "--owner",
+        "acme",
+        "--repo-name",
+        "demo",
+        "--base-branch",
+        "main",
+        "--token",
+        "ghp_testtoken",
+    ]));
+    args.repo = repo_root.to_path_buf();
+    args.notes_file = repo_root.join("notes.md");
+    args.github_output = Some(repo_root.join("outputs"));
+    args
+}
+
 #[test]
 fn action_expected_head_reaches_the_publisher_before_any_output_write() {
     with_env(&[("INPUT_EXPECTED-HEAD", "validatedsha")], || {
@@ -461,21 +482,7 @@ fn action_expected_head_reaches_the_publisher_before_any_output_write() {
             .with_body(r#"{"object":{"sha":"advancedsha"}}"#)
             .create();
         let no_mutation = server.mock("POST", mockito::Matcher::Any).expect(0).create();
-        let mut args = release_args(parse(&[
-            "bin",
-            "release",
-            "--owner",
-            "acme",
-            "--repo-name",
-            "demo",
-            "--base-branch",
-            "main",
-            "--token",
-            "ghp_testtoken",
-        ]));
-        args.repo = temp_dir.path().to_path_buf();
-        args.notes_file = temp_dir.path().join("notes.md");
-        args.github_output = Some(temp_dir.path().join("outputs"));
+        let args = mock_release_args(temp_dir.path());
 
         let error = super::release_cli::run_release(args, Some(server.url()))
             .expect_err("action must reject an unvalidated head");
@@ -516,25 +523,9 @@ fn empty_action_expected_head_allows_read_only_release_analysis_without_startup_
                 .with_body(r#"{"total_commits":1,"commits":[{"sha":"chore","commit":{"message":"chore: tidy"},"parents":[{}]}]}"#)
                 .create();
             let no_mutation = server.mock("POST", mockito::Matcher::Any).expect(0).create();
-            // Deliberately bypass main's INPUT_* cleanup: run_release also
-            // treats an omitted optional Docker action input as no guard.
-            let mut args = release_args(Cli::parse_from([
-                "bin",
-                "release",
-                "--owner",
-                "acme",
-                "--repo-name",
-                "demo",
-                "--base-branch",
-                "main",
-                "--token",
-                "ghp_testtoken",
-                "--dry-run",
-            ]));
+            let mut args = mock_release_args(temp_dir.path());
             assert_eq!(args.expected_head.as_deref(), Some(expected));
-            args.repo = temp_dir.path().to_path_buf();
-            args.notes_file = temp_dir.path().join("notes.md");
-            args.github_output = Some(temp_dir.path().join("outputs"));
+            args.dry_run = true;
 
             super::release_cli::run_release(args, Some(server.url()))
                 .expect("read-only release analysis");
