@@ -157,11 +157,27 @@ jobs:
           EVENT_NAME: ${{ github.event_name }}
           TRIGGER_CONCLUSION: ${{ github.event.workflow_run.conclusion }}
           TRIGGER_REPOSITORY: ${{ github.event.workflow_run.head_repository.full_name }}
+          TRIGGER_EVENT: ${{ github.event.workflow_run.event }}
+          TRIGGER_BRANCH: ${{ github.event.workflow_run.head_branch }}
+          CURRENT_REF: ${{ github.ref }}
+          DRY_RUN: ${{ inputs.dry-run }}
         run: |
           set -euo pipefail
-          if [[ "$EVENT_NAME" == workflow_run && ( "$TRIGGER_CONCLUSION" != success || "$TRIGGER_REPOSITORY" != "$GITHUB_REPOSITORY" ) ]]; then
+          if [[ "$DRY_RUN" != true && "$EVENT_NAME" == workflow_run && ( "$TRIGGER_CONCLUSION" != success || "$TRIGGER_REPOSITORY" != "$GITHUB_REPOSITORY" || "$TRIGGER_EVENT" != push || "$TRIGGER_BRANCH" != main ) ]]; then
             echo "should-release=false" >> "$GITHUB_OUTPUT"
             exit 0
+          fi
+          if [[ "$DRY_RUN" != true && "$EVENT_NAME" != workflow_run && "$CURRENT_REF" != refs/heads/main ]]; then
+            echo "should-release=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          if [[ "$DRY_RUN" != true ]]; then
+            main_sha="$(gh api "repos/$GITHUB_REPOSITORY/commits/main" --jq .sha)"
+            if [[ "$main_sha" != "$TARGET_SHA" ]]; then
+              echo "main advanced; refusing to release stale $TARGET_SHA"
+              echo "should-release=false" >> "$GITHUB_OUTPUT"
+              exit 0
+            fi
           fi
           if [[ -z "$REQUIRED_WORKFLOWS" ]]; then
             echo "should-release=true" >> "$GITHUB_OUTPUT"
@@ -171,7 +187,7 @@ jobs:
           for workflow in "${workflows[@]}"; do
             workflow="$(xargs <<< "$workflow")"
             [[ -n "$workflow" ]] || continue
-            conclusion="$(gh run list --workflow="$workflow" --commit="$TARGET_SHA" --limit=1 --json conclusion --jq '.[0].conclusion // ""')"
+            conclusion="$(gh run list --repo="$GITHUB_REPOSITORY" --workflow="$workflow" --branch=main --event=push --commit="$TARGET_SHA" --limit=1 --json conclusion --jq '.[0].conclusion // ""')"
             if [[ "$conclusion" != success ]]; then
               echo "Required workflow '$workflow' is '$conclusion' for $TARGET_SHA"
               echo "should-release=false" >> "$GITHUB_OUTPUT"
