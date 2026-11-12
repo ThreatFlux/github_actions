@@ -112,6 +112,50 @@ class ReleaseGateTests(unittest.TestCase):
             "should-release=true",
         )
 
+    def runtime_capability(self, help_text, immutable=True):
+        source = WORKFLOW.read_text(encoding="utf-8")
+        step = source.split(
+            "      - name: Verify validated-head runtime capability\n", 1
+        )[1]
+        script = step.split("        run: |\n", 1)[1].split("\n      #", 1)[0]
+        script = "\n".join(line[10:] for line in script.splitlines())
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            runtime = root / "runtime"
+            runtime.mkdir()
+            image = "ghcr.io/threatflux/github_actions:0.7.9"
+            if immutable:
+                image += "@sha256:" + "a" * 64
+            (runtime / "Dockerfile").write_text(
+                "FROM " + image + "\n", encoding="utf-8"
+            )
+            docker = root / "docker"
+            docker.write_text(
+                '#!/usr/bin/env bash\necho "$FAKE_HELP"\n', encoding="utf-8"
+            )
+            docker.chmod(0o755)
+            env = dict(
+                os.environ,
+                ACTION_ROOT=str(root),
+                FAKE_HELP=help_text,
+                PATH=str(root) + os.pathsep + os.environ["PATH"],
+            )
+            return run_gate_script(script, env)
+
+    def test_older_runtime_cannot_silently_ignore_expected_head(self):
+        result = self.runtime_capability("Options: --bump --phase --dry-run")
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("cannot enforce expected-head", result.stderr)
+
+    def test_guard_capable_immutable_runtime_is_accepted(self):
+        result = self.runtime_capability("Options: --expected-head <EXPECTED_HEAD>")
+        self.assertEqual(result.returncode, 0, result.stderr)
+
+    def test_runtime_capability_check_refuses_a_mutable_image(self):
+        result = self.runtime_capability("--expected-head", immutable=False)
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("immutable GHCR runtime pin", result.stderr)
+
     def test_release_action_binds_writes_but_keeps_pr_dry_run_preview(self):
         source = WORKFLOW.read_text(encoding="utf-8")
         release = source.split("      - name: Release\n", 1)[1].split(

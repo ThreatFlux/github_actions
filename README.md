@@ -510,6 +510,13 @@ package its own release into an image it then runs.
 
 ## Reusable Auto Release Workflow
 
+Before a writing release, the workflow checks the immutable runtime pin from
+its own action checkout and verifies that the binary supports `--expected-head`.
+This happens before creating an App token. An unreleased workflow ref whose
+runtime still predates the guard refuses writes; consumers should pin the
+completed release SHA after its runtime pins have been updated. Read-only dry
+runs remain available during that publication cycle.
+
 For Cargo repositories that want the whole release gate — required-workflow
 checks, optional GitHub App authentication, and downstream workflow dispatches
 — call the reusable workflow instead of wiring the action yourself:
