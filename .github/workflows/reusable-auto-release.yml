@@ -269,6 +269,7 @@ jobs:
         uses: ./.release-action
         with:
           command: release
+          expected-head: ${{ needs.check.outputs.target-sha }}
           token: ${{ steps.github-app-token.outputs.token || secrets.release-token || github.token }}
           bump: ${{ inputs.bump }}
           tag-prefix: ${{ inputs.tag-prefix }}
