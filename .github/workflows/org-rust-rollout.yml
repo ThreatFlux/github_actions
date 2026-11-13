@@ -73,8 +73,7 @@ jobs:
     needs: plan
     if: >-
       github.ref == 'refs/heads/main' && needs.plan.outputs.enabled == 'true' &&
-      (github.event_name == 'push' ||
-      (github.event_name == 'workflow_dispatch' && !inputs.dry_run && !inputs.probe_workflows_permission))
+      github.event_name == 'workflow_dispatch' && !inputs.dry_run && !inputs.probe_workflows_permission
     runs-on: ubuntu-latest
     timeout-minutes: 15
     strategy:

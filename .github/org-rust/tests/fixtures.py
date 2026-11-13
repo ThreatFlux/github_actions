@@ -204,7 +204,7 @@ class FakeGitHub:
                 "user": {"login": BOT},
                 "head": {"ref": payload["head"], "repo": {"id": 123}, "sha": COMMIT},
             }
-            self.pulls = [pull]
+            self.pulls.append(pull)
             return pull
         raise AssertionError(path)
 

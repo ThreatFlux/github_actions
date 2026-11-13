@@ -20,6 +20,9 @@ digests. Missing images, different compiler metadata, wrong architectures and
 digest/size mismatches stop the proposal. A same-compiler official image rebuild
 may propose new image digests when the compiler metadata stays exactly unchanged.
 A reviewed policy PR must merge before target repository updates are possible.
+After activation, scheduled discovery may open that central policy PR. Its merge
+starts a read-only rollout plan; operators explicitly dispatch the pilot subset
+and, after reviewing its hosted results, the remaining targets.
 
 [Rust Rollout](../workflows/org-rust-rollout.yml) emits a read-only plan containing
 actual repository IDs, current default-branch commits/trees, selected old/new blob
@@ -65,14 +68,16 @@ Activation follows these steps:
 2. Run the main read-only plan. Initial current Rust 1.100.0 targets should be
    genuine no-ops once their independently reviewed upgrades are accepted.
 3. Review that source-bound plan, then enable `writes_enabled` in a normal policy
-   PR. A merged policy change runs the plan and scoped write path; manual
-   `dry_run: false` also exercises explicit write mode.
+   PR. Rust Rollout's policy pushes and scheduled runs remain read-only. Only an
+   explicit main dispatch with `dry_run: false` invokes the scoped write path.
 4. Prove repeated current-target write-mode no-ops with zero mutations. Do not
    create empty/canary PRs or bump a compiler merely to demonstrate the writer.
 5. Verify the installed Workflows capability as above before claiming future
    changed-compiler fanout is fully operational. Start changed rollouts with a
-   representative library and SDK, review their diffs/full hosted results, then
-   expand to the remaining allowlist through the same subset input.
+   representative library and SDK by supplying `repositories`, review their
+   diffs/full hosted results, then explicitly dispatch the remaining subset or
+   the full allowlist. Merging a changed target policy does not fan out PRs
+   before this pilot review.
 
 ## Branch ownership, signing and recovery
 

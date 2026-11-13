@@ -104,6 +104,38 @@ class ControlTests(unittest.TestCase):
         self.assertEqual(second["status"], "existing-proposal")
         self.assertEqual(count, len(self.github.writes))
 
+    def test_target_head_advance_after_existing_proof_blocks_reuse(self):
+        write_proposal(self.github, self.config, self.row, CENTRAL_SOURCE)
+        original = control.existing_proposal
+        count = len(self.github.writes)
+
+        def advance(*arguments):
+            result = original(*arguments)
+            self.github.source = "e" * 40
+            return result
+
+        with mock.patch.object(
+            control, "existing_proposal", side_effect=advance
+        ), self.assertRaises(PolicyError):
+            write_proposal(self.github, self.config, self.row, CENTRAL_SOURCE)
+        self.assertEqual(count, len(self.github.writes))
+
+    def test_foreign_fork_namespace_pr_does_not_block_or_get_changed(self):
+        foreign = {
+            "user": {"login": "contributor"},
+            "head": {
+                "ref": branch_name(self.config),
+                "repo": {"id": 456},
+                "sha": "f" * 40,
+            },
+        }
+        self.github.pulls = [copy.deepcopy(foreign)]
+        result = write_proposal(self.github, self.config, self.row, CENTRAL_SOURCE)
+        self.assertEqual(result["status"], "proposed")
+        self.assertEqual(self.github.pulls[0], foreign)
+        self.assertEqual(len(self.github.pulls), 2)
+        self.assertEqual(self.github.pulls[-1]["head"]["repo"]["id"], 123)
+
     def test_human_owned_branch_and_pr_are_preserved(self):
         self.github.branch = SOURCE
         with self.assertRaises(PolicyError):

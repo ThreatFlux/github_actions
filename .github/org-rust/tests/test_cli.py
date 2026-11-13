@@ -160,6 +160,16 @@ class CliTests(unittest.TestCase):
         self.assertIn("repositories: github_actions", discovery)
         self.assertIn("permission-pull-requests: write", discovery)
 
+    def test_rollout_push_only_plans_and_manual_dispatch_controls_pilot_expansion(self):
+        root = Path(__file__).resolve().parents[2]
+        rollout = (root / "workflows/org-rust-rollout.yml").read_text()
+        gate = rollout.split("  apply:", 1)[1].split("    runs-on:", 1)[0]
+        self.assertIn("github.event_name == 'workflow_dispatch'", gate)
+        self.assertIn("!inputs.dry_run", gate)
+        self.assertNotIn("github.event_name == 'push'", gate)
+        self.assertNotIn("github.event_name == 'schedule'", gate)
+        self.assertIn("paths: [.github/org-rust/policy.json]", rollout)
+
     def test_committed_catalog_is_explicit_and_keeps_compatibility_inputs_out(self):
         config = json.loads(
             (Path(__file__).resolve().parents[1] / "policy.json").read_text()

@@ -250,12 +250,17 @@ def branch_name(policy, policy_only=False):
     )
 
 
-def existing_proposal(github, policy, row, branch):
+def candidate_proposal(github, policy, row, branch):
     repository = row["repository"]
     pulls = github.pages(
         f"/repos/{repository}/pulls?state=open&base={row['default_branch']}"
     )
-    ours = [pull for pull in pulls if pull["head"]["ref"].startswith(NAMESPACE)]
+    ours = [
+        pull
+        for pull in pulls
+        if (pull["head"].get("repo") or {}).get("id") == row["repository_id"]
+        and pull["head"]["ref"].startswith(NAMESPACE)
+    ]
     if not ours:
         return None
     if len(ours) != 1 or ours[0]["head"]["ref"] != branch:
@@ -270,6 +275,14 @@ def existing_proposal(github, policy, row, branch):
         raise PolicyError(
             "Existing toolchain branch is not owned by the configured App"
         )
+    return pull
+
+
+def existing_proposal(github, policy, row, branch):
+    pull = candidate_proposal(github, policy, row, branch)
+    if pull is None:
+        return None
+    repository = row["repository"]
     ref = github.api(f"/repos/{repository}/git/ref/heads/{branch}")
     if ref["object"]["sha"] != pull["head"]["sha"]:
         raise PolicyError("Existing proposal head moved concurrently")
@@ -385,19 +398,20 @@ def pull_payload(row, branch, policy, policy_commit):
 def write_proposal(github, policy, row, policy_commit, central_github=None):
     central = central_github or github
     central_main(central, policy_commit)
+    repository = row["repository"]
+    item = next(
+        item for item in policy["repositories"] if item["repository"] == repository
+    )
     branch = branch_name(policy, row.get("policy_only", False))
     existing = existing_proposal(github, policy, row, branch)
     if existing:
+        unchanged_head(github, item, row["source_sha"])
         central_main(central, policy_commit)
         return existing
-    repository = row["repository"]
     if github.api(f"/repos/{repository}/git/ref/heads/{branch}", missing=True):
         raise PolicyError(
             "An existing branch has no verified owned proposal; preserve it"
         )
-    item = next(
-        item for item in policy["repositories"] if item["repository"] == repository
-    )
     unchanged_head(github, item, row["source_sha"])
     central_main(central, policy_commit)
     github.api(
