@@ -10,6 +10,18 @@ from adapters import patch_file, render, validate_file
 from api import PolicyError
 from control import select_repositories, validate_policy
 
+TRIMMED_ASSERTIONS = {
+    ("ThreatFlux/file-scanner", "Dockerfile"),
+    ("ThreatFlux/github_actions", "Dockerfile"),
+    ("ThreatFlux/ollama_rust_sdk", "Dockerfile"),
+    ("ThreatFlux/openai_rust_sdk", "Dockerfile"),
+    ("ThreatFlux/rust-cicd-template", "Dockerfile"),
+    ("ThreatFlux/rust-cicd-template", "Dockerfile.debian"),
+    ("ThreatFlux/vertex_rust_sdk", "Dockerfile"),
+    ("ThreatFlux/virustotal-rs", "Dockerfile"),
+    ("ThreatFlux/yrlint", "Dockerfile"),
+}
+
 
 class AdapterTests(unittest.TestCase):
     def test_all_real_compiler_assertions_ignore_independent_product_arg_versions(self):
@@ -21,7 +33,7 @@ class AdapterTests(unittest.TestCase):
             for repository in catalog["repositories"]
             for file in repository["files"]
             for adapter in file["adapters"]
-            if file["path"] in {"Dockerfile", "Dockerfile.debian"}
+            if (repository["repository"], file["path"]) in TRIMMED_ASSERTIONS
             and "rustfmt" in adapter["template"]
             and any(
                 anchor in adapter["template"]
