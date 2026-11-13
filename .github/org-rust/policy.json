@@ -4,7 +4,8 @@
   "writes_enabled": false,
   "app": {
     "id": 5205173,
-    "slug": "threatflux-automation"
+    "slug": "threatflux-automation",
+    "client_id": "Iv23liKqGk6HjSZl41QE"
   },
   "target": {
     "stable": {

@@ -24,7 +24,11 @@ def fingerprint(value):
 def validate_policy(policy):
     if policy.get("schema_version") != 1 or policy.get("organization") != "ThreatFlux":
         raise PolicyError("Only the reviewed ThreatFlux policy is supported")
-    if policy["app"] != {"id": 5205173, "slug": "threatflux-automation"}:
+    if policy["app"] != {
+        "id": 5205173,
+        "slug": "threatflux-automation",
+        "client_id": "Iv23liKqGk6HjSZl41QE",
+    }:
         raise PolicyError("Unexpected automation App identity")
     if type(policy.get("writes_enabled")) is not bool:
         raise PolicyError("Write activation must be a reviewed Boolean policy field")
@@ -193,53 +197,51 @@ def central_main(github, expected):
         )
 
 
-def app_access(github, policy, row, slug):
-    if slug != policy["app"]["slug"]:
-        raise PolicyError("Minted App token has an unexpected provider identity")
-    app = github.api("/apps/" + slug)
-    if (
-        app["id"] != policy["app"]["id"]
-        or app["owner"]["login"] != policy["organization"]
+def app_identifier(policy, value):
+    if value not in {str(policy["app"]["id"]), policy["app"]["client_id"]}:
+        raise PolicyError("Configured App identifier differs from the reviewed mapping")
+    return value
+
+
+def app_access(github, policy, row, identity):
+    app_identifier(policy, identity["identifier"])
+    if identity["slug"] != policy["app"]["slug"] or not re.fullmatch(
+        r"[1-9][0-9]{0,19}", identity["installation_id"]
     ):
-        raise PolicyError("Automation App identity changed")
-    if row["needs_workflows_write"] and app["permissions"].get("workflows") != "write":
+        raise PolicyError("Minted App token has an unexpected provider identity")
+    required = "write" if row["needs_workflows_write"] else ""
+    if identity["workflows"] != required:
         raise PolicyError(
-            "Changed workflow selectors require an explicit maintainer grant of App Workflows: write"
+            "Completed token mint must request exactly the required Workflows permission"
         )
     installed = github.pages("/installation/repositories", "repositories")
-    if {repo["id"] for repo in installed} != {row["repository_id"]}:
+    if len(installed) != 1 or installed[0]["id"] != row["repository_id"]:
         raise PolicyError(
             "App token must be scoped to exactly this public target repository"
         )
     return {
-        "id": app["id"],
-        "slug": slug,
-        "permissions": app["permissions"],
+        "id": policy["app"]["id"],
+        "slug": identity["slug"],
+        "installation_id": int(identity["installation_id"]),
+        "requested_workflows_permission": required,
+        "identity_evidence": "Reviewed identifier and pinned JWT-action installation outputs",
+        "capability_evidence": "Successful explicit token mint and exact IAT repository scope readback",
         "scoped_repository_id": row["repository_id"],
     }
 
 
-def capability_profile(github, policy, report):
-    app = github.api("/apps/" + policy["app"]["slug"])
-    if (
-        app["id"] != policy["app"]["id"]
-        or app["owner"]["login"] != policy["organization"]
-    ):
-        raise PolicyError("Automation App identity changed")
-    report["app_profile"] = {
-        "id": app["id"],
-        "slug": app["slug"],
-        "permissions": app["permissions"],
+def capability_requirements(policy, report):
+    report["reviewed_app_identity"] = dict(policy["app"], owner=policy["organization"])
+    report["installed_capability"] = {
+        "status": "UNVERIFIED",
+        "reason": "Read-only planning never queries private App metadata or mints credentials",
+        "workflows_write_required_by": [
+            row["repository"]
+            for row in report["repositories"]
+            if row["needs_workflows_write"]
+        ],
+        "acceptance": "Successful scoped token mint with explicit permissions and provider/scope readback",
     }
-    capable = app["permissions"].get("workflows") == "write"
-    blocked = [
-        row["repository"]
-        for row in report["repositories"]
-        if row["needs_workflows_write"] and not capable
-    ]
-    report["workflow_write_profile_configured"] = capable
-    report["blocked_workflow_permission_repositories"] = blocked
-    report["complete"] = report["complete"] and not blocked
     return report
 
 

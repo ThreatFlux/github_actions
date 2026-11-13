@@ -30,6 +30,9 @@ identities and precise proposed bytes. It accepts `organization` (currently only
 `ThreatFlux`), an optional comma-separated subset of public allowlist repository
 names, and `dry_run` (default true). The plan job uses only the read-only
 `GITHUB_TOKEN`; it never mints the App key or checks out or executes target code.
+The source plan's `complete` field describes verified repository inputs and
+proposed bytes. Its separate `installed_capability.status` stays `UNVERIFIED`:
+read-only planning does not query private App metadata or claim permission grants.
 
 Each declared adapter binds one value span to its exact literal context and
 workflow field/job scope. Only those spans change. Compiler and image references
@@ -49,10 +52,18 @@ token is restricted to one selected public repository and explicitly requests
 Contents write, Pull requests write and Metadata read. Workflows write is
 requested only when the actual proposed paths include `.github/workflows/`;
 providing the explicit permission map prevents inherited broad App permissions.
-The writer verifies the App ID/slug and the one-repository installation scope.
+Before minting, the trusted job binds the resolved App variable to either the
+reviewed numeric App ID or its exact nonsecret client-ID mapping in the policy.
+After a successful mint, the writer verifies the pinned JWT-authenticated
+action's App slug and positive installation ID and reads the token's exact
+one-repository installation scope. It does not call the private App-profile
+endpoint with a read-only or installation token. The completed pinned action's
+explicit permission request, together with provider/scope readback, is the
+installed-capability evidence; a profile alone cannot grant that evidence.
 Policy-discovery PRs request no workflow permission and are scoped only here.
 
-The current App profile does not grant Workflows write. Actual compiler updates
+The owner-verified App profile at initial deployment did not grant Workflows write.
+Actual compiler updates
 that modify workflow selectors are therefore blocked until a maintainer grants
 that repository permission and approves it for the installation. This program
 never changes App permissions, organization settings or token scopes itself.
