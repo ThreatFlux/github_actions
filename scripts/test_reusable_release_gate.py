@@ -326,6 +326,17 @@ class ReleaseGateTests(unittest.TestCase):
             "should-release=false",
         )
 
+    def test_manual_release_fails_when_required_history_could_be_truncated(self):
+        runs = [self.run_record(databaseId=index) for index in range(100)]
+        self.assertEqual(
+            self.gate(runs=runs, EVENT_NAME="workflow_dispatch", expected_returncode=1),
+            "should-release=false",
+        )
+        self.assertEqual(
+            self.gate(runs=runs, EVENT_NAME="workflow_dispatch", DRY_RUN="true"),
+            "should-release=false",
+        )
+
     def test_read_only_pr_dry_run_can_compute_its_version(self):
         self.assertEqual(
             self.gate(

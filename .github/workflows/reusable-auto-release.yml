@@ -220,6 +220,10 @@ jobs:
             if [[ "$(jq 'length' <<< "$runs")" -ge 100 ]]; then
               echo "Required workflow '$workflow' history needs complete pagination; refusing an ambiguous gate"
               echo "should-release=false" >> "$GITHUB_OUTPUT"
+              if [[ "$EVENT_NAME" == workflow_dispatch && "$DRY_RUN" != true ]]; then
+                echo "::error::The manual release was not performed because its required-check history is incomplete."
+                exit 1
+              fi
               exit 0
             fi
             # Completion time cannot order attempts. First runs use creation;
