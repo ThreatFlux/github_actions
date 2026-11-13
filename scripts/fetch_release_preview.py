@@ -146,9 +146,13 @@ def read_blob(api, repository, entry):
         or entry["size"] != len(data)
     ):
         raise PreviewError("GitHub blob byte size does not match its declared size")
-    # Git object IDs require SHA-1 framing; HTTPS and the pinned commit provide trust.
+    # Git's object format requires SHA-1, not a new security signature. Verified
+    # HTTPS and the exact commit/tree bind these bytes to the trusted GitHub API.
     framed = b"blob " + str(len(data)).encode("ascii") + b"\0" + data
-    if hashlib.sha1(framed, usedforsecurity=False).hexdigest() != entry["sha"]:
+    digest = hashlib.sha1(  # nosemgrep: insecure-hash-algorithm-sha1
+        framed, usedforsecurity=False
+    ).hexdigest()
+    if digest != entry["sha"]:
         raise PreviewError("Git blob content hash does not match its object identity")
     return data
 

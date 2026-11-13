@@ -25,7 +25,10 @@ PREFIX = f"/repos/{REPOSITORY}/git"
 
 def blob_fixture(data):
     framed = b"blob " + str(len(data)).encode("ascii") + b"\0" + data
-    sha = hashlib.sha1(framed, usedforsecurity=False).hexdigest()
+    # Fixture IDs must use Git's object format; the known-vector test binds it.
+    sha = hashlib.sha1(  # nosemgrep: insecure-hash-algorithm-sha1
+        framed, usedforsecurity=False
+    ).hexdigest()
     encoded = base64.b64encode(data).decode("ascii")
     return sha, {
         "sha": sha,
