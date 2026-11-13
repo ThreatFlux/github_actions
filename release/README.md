@@ -122,6 +122,9 @@ pull-request merge preview gates on the actual PR head's CI while analyzing
 the merge revision's manifests and lockfiles. Configured write checks must be
 main-push runs, and every write must target the exact current main SHA.
 Missing, pending, failed, or potentially truncated histories stop the gate.
+First attempts use creation time and reruns use their latest start time;
+completion time never determines recency. Any eligible in-flight run or
+ambiguous timestamp blocks the gate, and tied latest attempts must all succeed.
 `dispatch-workflows` is a
 comma-separated list of workflow files to run after a release; set
 `dispatch-version-workflow` when one of them accepts a `version` input. These

@@ -18,6 +18,8 @@ def run_record(
     conclusion="success",
     created="2026-11-12T00:00:00Z",
     updated=None,
+    attempt=1,
+    started=None,
 ):
     return {
         "event": event,
@@ -25,6 +27,8 @@ def run_record(
         "conclusion": conclusion,
         "createdAt": created,
         "updatedAt": updated or created,
+        "attempt": attempt,
+        "startedAt": started or created,
         "databaseId": 1,
     }
 
@@ -46,6 +50,7 @@ class AutoReleaseGateTests(unittest.TestCase):
                 'if [[ "$1" == api ]]; then echo "$FAKE_MAIN_SHA"; exit 0; fi\n'
                 '[[ " $* " == *" --branch=main "* ]] || exit 21\n'
                 '[[ " $* " == *" --commit=$TARGET_SHA "* ]] || exit 22\n'
+                '[[ " $* " == *"attempt,startedAt,createdAt"* ]] || exit 23\n'
                 'for arg in "$@"; do\n'
                 '  case "$arg" in --workflow=*) workflow="${arg#--workflow=}"; workflow="${workflow%.yml}";; esac\n'
                 "done\n"
@@ -129,9 +134,94 @@ class AutoReleaseGateTests(unittest.TestCase):
         self.assertEqual(self.gate(histories=histories), "all_passed=false")
 
     def test_recent_failed_attempt_of_an_older_run_supersedes_success(self):
-        rerun = run_record(conclusion="failure", updated="2026-11-12T02:00:00Z")
+        rerun = run_record(
+            conclusion="failure", attempt=2, started="2026-11-12T02:00:00Z"
+        )
         newer_run = run_record(created="2026-11-12T01:00:00Z")
         histories = self.histories_with("security", [newer_run, rerun])
+        self.assertEqual(self.gate(histories=histories), "all_passed=false")
+
+    def test_late_older_success_cannot_mask_a_newer_failure_or_pending_run(self):
+        older = run_record(updated="2026-11-12T03:00:00Z")
+        for status, conclusion in (("completed", "failure"), ("queued", "")):
+            with self.subTest(status=status):
+                newer = run_record(
+                    status=status,
+                    conclusion=conclusion,
+                    created="2026-11-12T01:00:00Z",
+                    updated="2026-11-12T02:00:00Z",
+                )
+                histories = self.histories_with("ci", [newer, older])
+                self.assertEqual(self.gate(histories=histories), "all_passed=false")
+
+    def test_late_older_failure_does_not_supersede_a_newer_first_attempt(self):
+        older = run_record(conclusion="failure", updated="2026-11-12T03:00:00Z")
+        newer = run_record(created="2026-11-12T01:00:00Z")
+        histories = self.histories_with("ci", [older, newer])
+        self.assertEqual(self.gate(histories=histories), "all_passed=true")
+
+    def test_delayed_first_attempt_start_does_not_reorder_validation(self):
+        older = run_record(started="2026-11-12T03:00:00Z")
+        newer = run_record(conclusion="failure", created="2026-11-12T01:00:00Z")
+        histories = self.histories_with("ci", [newer, older])
+        self.assertEqual(self.gate(histories=histories), "all_passed=false")
+
+    def test_newer_second_attempt_can_supersede_a_failed_newer_run(self):
+        rerun = run_record(attempt=2, started="2026-11-12T02:00:00Z")
+        newer_run = run_record(conclusion="failure", created="2026-11-12T01:00:00Z")
+        histories = self.histories_with("security", [newer_run, rerun])
+        self.assertEqual(self.gate(histories=histories), "all_passed=true")
+
+    def test_any_inflight_attempt_blocks_even_with_a_stale_rerun_start(self):
+        newer = run_record(created="2026-11-12T01:00:00Z")
+        for status in ("queued", "requested", "waiting", "in_progress", "pending"):
+            with self.subTest(status=status):
+                rerun = run_record(status=status, conclusion="", attempt=2)
+                histories = self.histories_with("docker", [newer, rerun])
+                self.assertEqual(self.gate(histories=histories), "all_passed=false")
+
+    def test_untrusted_inflight_event_does_not_block_valid_main_checks(self):
+        foreign = run_record(event="pull_request", status="queued", conclusion="")
+        histories = self.histories_with("ci", [foreign, run_record()])
+        self.assertEqual(self.gate(histories=histories), "all_passed=true")
+
+    def test_tied_latest_validation_times_require_every_result_to_pass(self):
+        for conclusion, expected in (("failure", "false"), ("success", "true")):
+            with self.subTest(conclusion=conclusion):
+                tied = run_record(conclusion=conclusion)
+                passed = run_record()
+                passed["databaseId"] = 2
+                histories = self.histories_with("security", [tied, passed])
+                self.assertEqual(
+                    self.gate(histories=histories), f"all_passed={expected}"
+                )
+
+    def test_missing_or_invalid_attempt_metadata_fails_closed(self):
+        mutations = [
+            ("attempt", None),
+            ("attempt", "2"),
+            ("attempt", 0),
+            ("attempt", 1.5),
+            ("createdAt", None),
+            ("createdAt", "not-a-date"),
+        ]
+        for field, value in mutations:
+            with self.subTest(field=field, value=value):
+                invalid = run_record()
+                invalid[field] = value
+                histories = self.histories_with("ci", [invalid])
+                self.assertEqual(self.gate(histories=histories), "all_passed=false")
+
+    def test_missing_invalid_or_predating_rerun_start_fails_closed(self):
+        for start in (None, "not-a-date", "2026-11-11T23:59:59Z"):
+            with self.subTest(start=start):
+                invalid = run_record(attempt=2)
+                invalid["startedAt"] = start
+                histories = self.histories_with("security", [invalid])
+                self.assertEqual(self.gate(histories=histories), "all_passed=false")
+
+    def test_full_history_window_fails_closed_instead_of_hiding_old_reruns(self):
+        histories = self.histories_with("ci", [run_record() for _ in range(100)])
         self.assertEqual(self.gate(histories=histories), "all_passed=false")
 
     def test_main_advance_requires_new_validation(self):
@@ -143,20 +233,21 @@ class AutoReleaseGateTests(unittest.TestCase):
         script = step.split("        run: |\n", 1)[1].split("\n  release:", 1)[0]
         script = "\n".join(line[10:] for line in script.splitlines())
         for all_passed, expected in (("false", "false"), ("true", "true")):
-            with self.subTest(all_passed=all_passed):
-                with tempfile.TemporaryDirectory() as directory:
-                    output = Path(directory) / "output"
-                    env = dict(
-                        os.environ,
-                        ALL_PASSED=all_passed,
-                        PHASE="tag",
-                        GITHUB_OUTPUT=str(output),
-                    )
-                    result = run_gate_script(script, env)
-                    self.assertEqual(result.returncode, 0, result.stderr)
-                    self.assertEqual(
-                        output.read_text().strip(), f"should_release={expected}"
-                    )
+            with self.subTest(
+                all_passed=all_passed
+            ), tempfile.TemporaryDirectory() as directory:
+                output = Path(directory) / "output"
+                env = dict(
+                    os.environ,
+                    ALL_PASSED=all_passed,
+                    PHASE="tag",
+                    GITHUB_OUTPUT=str(output),
+                )
+                result = run_gate_script(script, env)
+                self.assertEqual(result.returncode, 0, result.stderr)
+                self.assertEqual(
+                    output.read_text().strip(), f"should_release={expected}"
+                )
 
     def test_version_bump_starts_all_required_workflows(self):
         source = WORKFLOW.read_text(encoding="utf-8")
@@ -169,29 +260,30 @@ class AutoReleaseGateTests(unittest.TestCase):
             (SHA, ["ci.yml", "security.yml", "docker.yml"]),
             ("b" * 40, []),
         ):
-            with self.subTest(main_sha=main_sha):
-                with tempfile.TemporaryDirectory() as directory:
-                    root = Path(directory)
-                    gh = root / "gh"
-                    gh.write_text(
-                        "#!/usr/bin/env bash\n"
-                        'if [[ "$1" == api ]]; then echo "$FAKE_MAIN_SHA"; exit 0; fi\n'
-                        '[[ "$1 $2" == "workflow run" ]] || exit 21\n'
-                        'echo "$3" >> "$DISPATCH_LOG"\n',
-                        encoding="utf-8",
-                    )
-                    gh.chmod(0o755)
-                    log = root / "dispatches"
-                    env = dict(
-                        os.environ,
-                        PATH=str(root) + os.pathsep + os.environ["PATH"],
-                        COMMIT=SHA,
-                        VERSION="0.8.0",
-                        GITHUB_REPOSITORY="ThreatFlux/github_actions",
-                        FAKE_MAIN_SHA=main_sha,
-                        DISPATCH_LOG=str(log),
-                    )
-                    result = run_gate_script(script, env)
-                    self.assertEqual(result.returncode, 0, result.stderr)
-                    actual = log.read_text().splitlines() if log.exists() else []
-                    self.assertEqual(actual, expected)
+            with self.subTest(
+                main_sha=main_sha
+            ), tempfile.TemporaryDirectory() as directory:
+                root = Path(directory)
+                gh = root / "gh"
+                gh.write_text(
+                    "#!/usr/bin/env bash\n"
+                    'if [[ "$1" == api ]]; then echo "$FAKE_MAIN_SHA"; exit 0; fi\n'
+                    '[[ "$1 $2" == "workflow run" ]] || exit 21\n'
+                    'echo "$3" >> "$DISPATCH_LOG"\n',
+                    encoding="utf-8",
+                )
+                gh.chmod(0o755)
+                log = root / "dispatches"
+                env = dict(
+                    os.environ,
+                    PATH=str(root) + os.pathsep + os.environ["PATH"],
+                    COMMIT=SHA,
+                    VERSION="0.8.0",
+                    GITHUB_REPOSITORY="ThreatFlux/github_actions",
+                    FAKE_MAIN_SHA=main_sha,
+                    DISPATCH_LOG=str(log),
+                )
+                result = run_gate_script(script, env)
+                self.assertEqual(result.returncode, 0, result.stderr)
+                actual = log.read_text().splitlines() if log.exists() else []
+                self.assertEqual(actual, expected)

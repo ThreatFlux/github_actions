@@ -45,6 +45,7 @@ class ReleaseGateTests(unittest.TestCase):
             'query_sha="$TARGET_SHA"\n'
             'if [[ "$DRY_RUN" == true && "$EVENT_NAME" == pull_request ]]; then query_sha="$PR_HEAD_SHA"; fi\n'
             '[[ " $* " == *" --commit=$query_sha "* ]] || exit 24\n'
+            '[[ " $* " == *"startedAt"* && " $* " == *"attempt"* ]] || exit 27\n'
             'if [[ "$DRY_RUN" == true ]]; then\n'
             '  [[ " $* " != *" --branch="* && " $* " != *" --event="* ]] || exit 25\n'
             "else\n"
@@ -65,9 +66,15 @@ class ReleaseGateTests(unittest.TestCase):
             "status": "completed",
             "conclusion": "success",
             "createdAt": "2026-11-12T12:00:00Z",
+            "startedAt": "2026-11-12T12:00:00Z",
+            "attempt": 1,
             "updatedAt": "2026-11-12T12:00:00Z",
         }
         record.update(overrides)
+        if "createdAt" in overrides:
+            for field in ["startedAt", "updatedAt"]:
+                if field not in overrides:
+                    record[field] = record["createdAt"]
         return record
 
     def gate(self, runs=None, **overrides):
@@ -213,12 +220,81 @@ class ReleaseGateTests(unittest.TestCase):
                     latest = self.run_record(
                         status=status,
                         conclusion=conclusion,
+                        attempt=2,
+                        startedAt="2026-11-12T16:00:00Z",
                         updatedAt="2026-11-12T16:00:00Z",
                     )
                     self.assertEqual(
                         self.gate(runs=[latest, success], DRY_RUN=dry_run),
                         "should-release=false",
                     )
+
+    def test_late_older_completion_cannot_mask_newer_pending_or_failed_run(self):
+        older = self.run_record(
+            startedAt="2026-11-12T15:00:00Z",
+            updatedAt="2026-11-12T18:00:00Z",
+        )
+        for status, conclusion in [("queued", None), ("completed", "failure")]:
+            newer = self.run_record(
+                databaseId=2,
+                createdAt="2026-11-12T14:00:00Z",
+                startedAt="2026-11-12T14:00:00Z",
+                updatedAt="2026-11-12T14:00:00Z",
+                status=status,
+                conclusion=conclusion,
+            )
+            for dry_run in ["true", "false"]:
+                with self.subTest(status=status, dry_run=dry_run):
+                    self.assertEqual(
+                        self.gate(runs=[newer, older], DRY_RUN=dry_run),
+                        "should-release=false",
+                    )
+
+    def test_late_older_failure_does_not_mask_newer_completed_success(self):
+        older = self.run_record(conclusion="failure", updatedAt="2026-11-12T18:00:00Z")
+        newer = self.run_record(databaseId=2, createdAt="2026-11-12T14:00:00Z")
+        self.assertEqual(self.gate(runs=[older, newer]), "should-release=true")
+
+    def test_any_inflight_attempt_blocks_until_its_outcome_is_known(self):
+        newer = self.run_record(databaseId=2, createdAt="2026-11-12T14:00:00Z")
+        for attempt in [1, 2]:
+            older = self.run_record(status="queued", conclusion=None, attempt=attempt)
+            with self.subTest(attempt=attempt):
+                self.assertEqual(self.gate(runs=[older, newer]), "should-release=false")
+
+    def test_completed_rerun_is_ordered_by_its_new_start_not_old_creation(self):
+        rerun = self.run_record(attempt=2, startedAt="2026-11-12T16:00:00Z")
+        newer_run = self.run_record(
+            databaseId=2,
+            conclusion="failure",
+            createdAt="2026-11-12T14:00:00Z",
+            updatedAt="2026-11-12T18:00:00Z",
+        )
+        self.assertEqual(self.gate(runs=[newer_run, rerun]), "should-release=true")
+
+    def test_ambiguous_latest_timestamp_requires_every_tied_attempt_to_succeed(self):
+        success = self.run_record(databaseId=2)
+        for conclusion, expected in [("failure", "false"), ("success", "true")]:
+            other = self.run_record(conclusion=conclusion)
+            with self.subTest(conclusion=conclusion):
+                self.assertEqual(
+                    self.gate(runs=[other, success]), f"should-release={expected}"
+                )
+
+    def test_missing_or_invalid_attempt_time_fails_closed(self):
+        for changes in [
+            {"attempt": None},
+            {"attempt": 0},
+            {"attempt": 1.5},
+            {"createdAt": "invalid"},
+            {"attempt": 2, "startedAt": None},
+            {"attempt": 2, "startedAt": "2026-11-12T11:00:00Z"},
+        ]:
+            with self.subTest(changes=changes):
+                self.assertEqual(
+                    self.gate(runs=[self.run_record(**changes)]),
+                    "should-release=false",
+                )
 
     def test_missing_required_history_blocks_dry_run(self):
         self.assertEqual(self.gate(runs=[], DRY_RUN="true"), "should-release=false")

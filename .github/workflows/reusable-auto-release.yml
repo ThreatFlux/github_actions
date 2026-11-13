@@ -203,7 +203,7 @@ jobs:
             filters=()
             if [[ "$DRY_RUN" != true ]]; then filters+=(--branch=main --event=push); fi
             runs="$(gh run list --repo="$GITHUB_REPOSITORY" --workflow="$workflow" "${filters[@]}" --commit="$ci_sha" --limit=100 \
-              --json databaseId,event,headSha,headBranch,status,conclusion,createdAt,updatedAt)"
+              --json databaseId,event,headSha,headBranch,status,conclusion,createdAt,startedAt,attempt)"
             # Refuse a potentially truncated history instead of accepting an
             # older success whose newer failed rerun may be outside this page.
             if [[ "$(jq 'length' <<< "$runs")" -ge 100 ]]; then
@@ -211,12 +211,32 @@ jobs:
               echo "should-release=false" >> "$GITHUB_OUTPUT"
               exit 0
             fi
+            # Completion time cannot order attempts. First runs use creation;
+            # reruns use run_started_at, which resets for the latest attempt.
+            # Wait for every eligible in-flight run and fail closed on ties.
             status="$(jq -r --arg sha "$ci_sha" --argjson preview "$DRY_RUN" '
+              def timestamp:
+                if type == "string" then (try fromdateiso8601 catch null) else null end;
+              def attempt_time:
+                (.createdAt | timestamp) as $created
+                | if (.attempt | type) != "number" then null
+                  elif .attempt < 1 or .attempt != (.attempt | floor) then null
+                  elif .attempt == 1 then $created
+                  else (.startedAt | timestamp) as $started
+                    | if ($created | type) == "number" and ($started | type) == "number" and $started >= $created
+                      then $started else null end
+                  end;
               [.[] | select(.headSha == $sha and
                 (if $preview then (.event == "push" or .event == "pull_request" or .event == "workflow_dispatch")
                  else (.event == "push" and .headBranch == "main") end))]
-              | sort_by(.updatedAt, .createdAt, .databaseId) | last
-              | if . == null then "missing" else (.status + ":" + (.conclusion // "")) end' <<< "$runs")"
+              | map(. + {attempt_time: attempt_time})
+              | if length == 0 then "missing"
+                elif any(.[]; .status != "completed") then "in-flight"
+                elif any(.[]; .attempt_time == null) then "ambiguous-attempt-time"
+                else (map(.attempt_time) | max) as $latest
+                  | [.[] | select(.attempt_time == $latest)]
+                  | if all(.[]; .conclusion == "success") then "completed:success" else "completed:failure" end
+                end' <<< "$runs")"
             if [[ "$status" != completed:success ]]; then
               echo "Required workflow '$workflow' is '$status' for $ci_sha"
               echo "should-release=false" >> "$GITHUB_OUTPUT"

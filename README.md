@@ -631,6 +631,10 @@ What a dry run does, in either mode:
   be successful main-push runs, and every write must target the exact current
   main SHA. Missing, pending, failed, or potentially truncated required
   histories stop the gate with a diagnostic.
+  First attempts are ordered by creation time and reruns by their latest
+  attempt start, never by completion time. Any eligible in-flight run or
+  ambiguous attempt timestamp blocks the gate; tied latest attempts must all
+  succeed.
 - **Reads only.** The action reads the default branch (when `base-branch` is
   empty), the base branch head, the tag list, the commits since the highest
   `<tag-prefix>X.Y.Z` tag (the commit list when there is none), and whether
