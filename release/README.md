@@ -1,7 +1,7 @@
 # ThreatFlux Auto Release Action (deprecated)
 
 > **Deprecated.** This sub-action has been folded into the root action. Use
-> `ThreatFlux/github_actions@v0` with `command: release` instead â€” same inputs,
+> `ThreatFlux/github_actions@v0` with `command: release` instead — same inputs,
 > same outputs, same behavior. See
 > [Migrating to the Unified Action](../README.md#migrating-to-the-unified-action)
 > in the root README, including the version-skew note that applies while the
@@ -14,7 +14,7 @@
 Automatic Cargo releases on merge to main: bump the version from
 [Conventional Commits](https://www.conventionalcommits.org/), rewrite
 `Cargo.toml`/`Cargo.lock`, and create the release commit, tag, and GitHub
-Release with generated notes â€” entirely through the GitHub REST API. No `git`,
+Release with generated notes — entirely through the GitHub REST API. No `git`,
 `gh`, or `cargo` binaries run at release time, and the action starts in
 seconds because it pulls a prebuilt image instead of compiling from source.
 
@@ -88,7 +88,7 @@ jobs:
         run: echo "Released ${{ steps.release.outputs.tag }} -> ${{ steps.release.outputs.release-url }}"
 ```
 
-Merges whose commits are only `chore:`/`docs:`/etc. produce no release â€” the
+Merges whose commits are only `chore:`/`docs:`/etc. produce no release — the
 action exits successfully with `released=false`. That no-op is also what stops
 release commits from triggering an endless release loop.
 
@@ -258,7 +258,7 @@ tag-triggered (`on: push: tags:`) workflows. Pick one of:
 
 1. **Same-workflow chaining (no extra secrets):** run follow-on jobs in the
    same workflow gated on `needs.release.outputs.released == 'true'`, or
-   dispatch tag pipelines explicitly â€” `workflow_dispatch` is exempt from the
+   dispatch tag pipelines explicitly — `workflow_dispatch` is exempt from the
    suppression rule:
 
    ```yaml
@@ -279,7 +279,7 @@ tag-triggered (`on: push: tags:`) workflows. Pick one of:
 
 The action pushes the release commit directly to the base branch
 (fast-forward only). On a protected branch, add a bypass for the identity the
-token represents â€” for rulesets, add the GitHub Actions app (or your GitHub
+token represents — for rulesets, add the GitHub Actions app (or your GitHub
 App) to the bypass list. A PR-based fallback mode is on the roadmap.
 
 ## Concurrency and Races

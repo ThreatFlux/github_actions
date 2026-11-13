@@ -242,23 +242,27 @@ jobs:
       release-pr-url: ${{ steps.release.outputs.release-pr-url }}
       release-branch: ${{ steps.release.outputs.release-branch }}
     steps:
-      - name: Checkout preview target
-        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          persist-credentials: false
-          ref: ${{ needs.check.outputs.target-sha }}
       - name: Checkout the action at the workflow ref
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           repository: ${{ job.workflow_repository || 'ThreatFlux/github_actions' }}
           ref: ${{ job.workflow_sha }}
-          path: .release-action
           persist-credentials: false
+      # Keep the candidate in a separate directory. Only the action and
+      # scripts from this workflow's immutable ref are ever executed; the
+      # candidate supplies manifest/lockfile data to the read-only analyzer.
+      - name: Checkout preview target as data
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          ref: ${{ needs.check.outputs.target-sha }}
+          path: .preview-target
       - name: Compute release preview
         id: release
-        uses: ./.release-action
+        uses: ./
         with:
           command: release
+          repo: .preview-target
           token: ${{ github.token }}
           expected-head: ''
           bump: ${{ inputs.bump }}
@@ -269,7 +273,7 @@ jobs:
           create-pr: ${{ inputs.create-pr }}
           release-branch: ${{ inputs.release-branch }}
       - name: Show the downstream dispatch plan (dry run)
-        if: inputs.dispatch-workflows != ''
+        if: inputs.dry-run && inputs.dispatch-workflows != ''
         env:
           RELEASED_BY: ${{ inputs.github-app-id != '' && 'github-app' || 'github-token' }}
           DISPATCH_FOR_APP_RELEASE: ${{ inputs.dispatch-on-app-token }}
@@ -279,7 +283,7 @@ jobs:
           VERSION_WORKFLOW: ${{ inputs.dispatch-version-workflow }}
         run: |
           echo "Plan only: assuming complete write credentials. An App ID selects the App policy; release-token and GITHUB_TOKEN use the same dispatch policy. No write credentials are read, validated or minted by this preview."
-          python3 .release-action/scripts/dispatch_release_workflows.py --plan-only \
+          python3 scripts/dispatch_release_workflows.py --plan-only \
             --repository "${GITHUB_REPOSITORY}" --released-by "${RELEASED_BY}" \
             --dispatch-for-app-release "${DISPATCH_FOR_APP_RELEASE}" --tag "${TAG}" --version "${VERSION}" \
             --workflows "${DISPATCH_WORKFLOWS}" --version-workflow "${VERSION_WORKFLOW}"

@@ -30,6 +30,32 @@ def run_gate_script(script, env):
 
 class ReleaseGateTests(unittest.TestCase):
     @staticmethod
+    def write_fake_gh(root):
+        """Make GitHub queries assert their repository, commit, and event scope."""
+        gh = root / "gh"
+        gh.write_text(
+            "#!/usr/bin/env bash\n"
+            'if [[ "$1" == api ]]; then\n'
+            '  [[ "$DRY_RUN" != true ]] || exit 20\n'
+            '  [[ "$2" == repos/ThreatFlux/example/commits/main ]] || exit 21\n'
+            '  echo "$FAKE_MAIN_SHA"; exit 0\n'
+            "fi\n"
+            '[[ "$1 $2" == "run list" ]] || exit 22\n'
+            '[[ " $* " == *" --repo=ThreatFlux/example "* ]] || exit 23\n'
+            'query_sha="$TARGET_SHA"\n'
+            'if [[ "$DRY_RUN" == true && "$EVENT_NAME" == pull_request ]]; then query_sha="$PR_HEAD_SHA"; fi\n'
+            '[[ " $* " == *" --commit=$query_sha "* ]] || exit 24\n'
+            'if [[ "$DRY_RUN" == true ]]; then\n'
+            '  [[ " $* " != *" --branch="* && " $* " != *" --event="* ]] || exit 25\n'
+            "else\n"
+            '  [[ " $* " == *" --branch=main "* && " $* " == *" --event=push "* ]] || exit 26\n'
+            "fi\n"
+            'printf "%s\\n" "$FAKE_RUNS_JSON"\n',
+            encoding="utf-8",
+        )
+        gh.chmod(0o755)
+
+    @staticmethod
     def run_record(**overrides):
         record = {
             "databaseId": 1,
@@ -51,28 +77,7 @@ class ReleaseGateTests(unittest.TestCase):
         script = "\n".join(line[10:] for line in script.splitlines())
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
-            gh = root / "gh"
-            gh.write_text(
-                "#!/usr/bin/env bash\n"
-                'if [[ "$1" == api ]]; then\n'
-                '  [[ "$DRY_RUN" != true ]] || exit 20\n'
-                '  [[ "$2" == repos/ThreatFlux/example/commits/main ]] || exit 21\n'
-                '  echo "$FAKE_MAIN_SHA"; exit 0\n'
-                "fi\n"
-                '[[ "$1 $2" == "run list" ]] || exit 22\n'
-                '[[ " $* " == *" --repo=ThreatFlux/example "* ]] || exit 23\n'
-                'query_sha="$TARGET_SHA"\n'
-                'if [[ "$DRY_RUN" == true && "$EVENT_NAME" == pull_request ]]; then query_sha="$PR_HEAD_SHA"; fi\n'
-                '[[ " $* " == *" --commit=$query_sha "* ]] || exit 24\n'
-                'if [[ "$DRY_RUN" == true ]]; then\n'
-                '  [[ " $* " != *" --branch="* && " $* " != *" --event="* ]] || exit 25\n'
-                "else\n"
-                '  [[ " $* " == *" --branch=main "* && " $* " == *" --event=push "* ]] || exit 26\n'
-                "fi\n"
-                'printf "%s\\n" "$FAKE_RUNS_JSON"\n',
-                encoding="utf-8",
-            )
-            gh.chmod(0o755)
+            self.write_fake_gh(root)
             output = root / "output"
             env = dict(os.environ)
             env.update(
@@ -308,6 +313,16 @@ class ReleaseGateTests(unittest.TestCase):
         self.assertIn("dispatch_release_workflows.py --plan-only", preview)
         self.assertNotIn("gh workflow run", preview)
         self.assertNotIn("GH_TOKEN:", preview)
+        trusted_checkout, candidate_checkout = preview.split(
+            "      - name: Checkout preview target as data\n", 1
+        )
+        self.assertIn("ref: ${{ job.workflow_sha }}", trusted_checkout)
+        self.assertNotIn("path: .release-action", trusted_checkout)
+        self.assertIn("path: .preview-target", candidate_checkout)
+        self.assertIn("uses: ./\n", candidate_checkout)
+        self.assertIn("repo: .preview-target", candidate_checkout)
+        self.assertNotIn("uses: ./.preview-target", candidate_checkout)
+        self.assertNotIn("python3 .preview-target/", candidate_checkout)
         for permission in ["actions", "contents", "pull-requests"]:
             self.assertIn(f"{permission}: read", preview)
         self.assertIn("ref: ${{ needs.check.outputs.target-sha }}", source)
