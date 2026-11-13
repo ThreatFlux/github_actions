@@ -50,7 +50,11 @@ def policy():
         "schema_version": 1,
         "organization": "ThreatFlux",
         "writes_enabled": True,
-        "app": {"id": 5205173, "slug": "threatflux-automation"},
+        "app": {
+            "id": 5205173,
+            "slug": "threatflux-automation",
+            "client_id": "Iv23liKqGk6HjSZl41QE",
+        },
         "target": target(),
         "accepted_states": [],
         "repositories": [
@@ -84,6 +88,24 @@ def upgraded(version="1.101.0"):
     return value
 
 
+def app_identity(workflows="write"):
+    return {
+        "identifier": "5205173",
+        "slug": "threatflux-automation",
+        "installation_id": "37",
+        "workflows": workflows,
+    }
+
+
+def app_environment(workflows=""):
+    return {
+        "GITHUB_APP_IDENTIFIER": "5205173",
+        "GITHUB_APP_SLUG": "threatflux-automation",
+        "GITHUB_APP_INSTALLATION_ID": "37",
+        "GITHUB_APP_WORKFLOWS_PERMISSION": workflows,
+    }
+
+
 class FakeGitHub:
     def __init__(self, files=None):
         self.files = files or {
@@ -95,11 +117,6 @@ class FakeGitHub:
         self.pulls = []
         self.writes = []
         self.reads = []
-        self.permissions = {
-            "contents": "write",
-            "pull_requests": "write",
-            "workflows": "write",
-        }
         self.installed_ids = [123]
         self.verified = True
         self.author = BOT
@@ -150,12 +167,9 @@ class FakeGitHub:
         if payload is not None:
             return self.mutate(path, payload)
         if path == "/apps/threatflux-automation":
-            return {
-                "id": 5205173,
-                "slug": "threatflux-automation",
-                "owner": {"login": "ThreatFlux"},
-                "permissions": self.permissions,
-            }
+            raise PolicyError(
+                "Private App metadata is unavailable to read-only/IAT tokens"
+            )
         if path == "/repos/" + REPOSITORY:
             return {
                 "id": 123,

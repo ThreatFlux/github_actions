@@ -12,10 +12,33 @@ from unittest import mock
 
 import fixtures
 from api import DockerBlobRedirect, GitHub, NoRedirect, PolicyError, fetch, object_id
+from control import app_access
 from targets import RustImages, stable_channel
 
 
 class SourceTests(unittest.TestCase):
+    def test_iat_scope_read_keeps_authentication_without_private_app_profile_requests(
+        self,
+    ):
+        token = secrets.token_hex(16)
+        response = json.dumps(
+            {"total_count": 1, "repositories": [{"id": 123}]}
+        ).encode()
+        with mock.patch("api.fetch", return_value=(response, {})) as request:
+            proof = app_access(
+                GitHub(token),
+                fixtures.policy(),
+                {"repository_id": 123, "needs_workflows_write": True},
+                fixtures.app_identity(),
+            )
+        request.assert_called_once_with(
+            "https://api.github.com/installation/repositories?per_page=100&page=1",
+            token,
+            None,
+        )
+        self.assertEqual(proof["installation_id"], 37)
+        self.assertEqual(proof["requested_workflows_permission"], "write")
+
     def test_http_failure_reports_public_endpoint_and_numeric_rate_headers_only(self):
         secret = secrets.token_hex(16)
         url = (

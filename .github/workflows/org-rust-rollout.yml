@@ -92,6 +92,7 @@ jobs:
       - name: Require exact reviewed current main before minting credentials
         env:
           GH_TOKEN: ${{ github.token }}
+          GITHUB_APP_IDENTIFIER: ${{ vars.TF_AUTOMATION_APP_ID }}
           POLICY_SHA: ${{ github.workflow_sha }}
         run: python3 .github/org-rust/cli.py preflight --expected-policy-commit "$POLICY_SHA" --output central-source.json
       - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
@@ -115,6 +116,9 @@ jobs:
           GH_TOKEN: ${{ steps.app.outputs.token }}
           CENTRAL_GH_TOKEN: ${{ github.token }}
           GITHUB_APP_SLUG: ${{ steps.app.outputs.app-slug }}
+          GITHUB_APP_IDENTIFIER: ${{ vars.TF_AUTOMATION_APP_ID }}
+          GITHUB_APP_INSTALLATION_ID: ${{ steps.app.outputs.installation-id }}
+          GITHUB_APP_WORKFLOWS_PERMISSION: ${{ matrix.target.needs_workflows_write && 'write' || '' }}
           POLICY_SHA: ${{ github.workflow_sha }}
           REPOSITORY: ${{ matrix.target.repository }}
         run: >-
@@ -153,6 +157,7 @@ jobs:
       - name: Require exact reviewed main
         env:
           GH_TOKEN: ${{ github.token }}
+          GITHUB_APP_IDENTIFIER: ${{ vars.TF_AUTOMATION_APP_ID }}
           POLICY_SHA: ${{ github.workflow_sha }}
         run: python3 .github/org-rust/cli.py preflight --expected-policy-commit "$POLICY_SHA" --output central-source.json
       - name: Request the actual installed capability without ref writes
@@ -170,6 +175,9 @@ jobs:
         env:
           GH_TOKEN: ${{ steps.app.outputs.token }}
           GITHUB_APP_SLUG: ${{ steps.app.outputs.app-slug }}
+          GITHUB_APP_IDENTIFIER: ${{ vars.TF_AUTOMATION_APP_ID }}
+          GITHUB_APP_INSTALLATION_ID: ${{ steps.app.outputs.installation-id }}
+          GITHUB_APP_WORKFLOWS_PERMISSION: write
           POLICY_SHA: ${{ github.workflow_sha }}
           REPOSITORY: ${{ matrix.target.repository }}
         run: >-

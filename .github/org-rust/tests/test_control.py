@@ -4,12 +4,20 @@ import copy
 import unittest
 from unittest import mock
 
-from fixtures import CENTRAL_SOURCE, COMMIT, SOURCE, FakeGitHub, policy, upgraded
+from fixtures import (
+    CENTRAL_SOURCE,
+    COMMIT,
+    SOURCE,
+    FakeGitHub,
+    app_identity,
+    policy,
+    upgraded,
+)
 from api import PolicyError
 from control import (
     app_access,
     branch_name,
-    capability_profile,
+    capability_requirements,
     plan,
     repository_plan,
     write_proposal,
@@ -65,32 +73,71 @@ class ControlTests(unittest.TestCase):
             plan(self.github, self.config, "ThreatFlux", "", actual)
         self.assertEqual(self.github.writes, [])
 
-    def test_public_profile_is_not_treated_as_an_installed_token_grant(self):
+    def test_private_profile_is_unneeded_but_exact_installed_scope_is_required(self):
         self.github.installed_ids = [123, 456]
         with self.assertRaises(PolicyError):
-            app_access(self.github, self.config, self.row, "threatflux-automation")
-        self.github.installed_ids = [123]
-        self.github.permissions.pop("workflows")
+            app_access(self.github, self.config, self.row, app_identity())
+        self.github.installed_ids = [123, 123]
         with self.assertRaises(PolicyError):
-            app_access(self.github, self.config, self.row, "threatflux-automation")
+            app_access(self.github, self.config, self.row, app_identity())
+        self.github.installed_ids = [123]
         noop = dict(self.row, needs_workflows_write=False)
         self.assertEqual(
-            app_access(self.github, self.config, noop, "threatflux-automation")[
+            app_access(self.github, self.config, noop, app_identity(""))[
                 "scoped_repository_id"
             ],
             123,
         )
+        self.assertFalse(any(path.startswith("/apps/") for path in self.github.reads))
 
-    def test_changed_workflow_permission_block_is_reported_before_mutations(self):
-        self.github.permissions.pop("workflows")
+    def test_readonly_capability_is_unverified_even_when_source_plan_is_complete(self):
         report = plan(self.github, self.config, "ThreatFlux", "", self.config["target"])
-        capability_profile(self.github, self.config, report)
-        self.assertFalse(report["complete"])
+        capability_requirements(self.config, report)
+        self.assertTrue(report["complete"])
+        self.assertEqual(report["installed_capability"]["status"], "UNVERIFIED")
         self.assertEqual(
-            report["blocked_workflow_permission_repositories"],
+            report["installed_capability"]["workflows_write_required_by"],
             [self.item["repository"]],
         )
+        self.assertFalse(any(path.startswith("/apps/") for path in self.github.reads))
         self.assertEqual(self.github.writes, [])
+
+    def test_numeric_or_client_identifier_maps_to_the_same_reviewed_app(self):
+        for value in ["5205173", "Iv23liKqGk6HjSZl41QE"]:
+            identity = dict(app_identity(), identifier=value)
+            proof = app_access(self.github, self.config, self.row, identity)
+            self.assertEqual(proof["id"], 5205173)
+            self.assertEqual(proof["installation_id"], 37)
+
+    def test_wrong_app_outputs_or_missing_required_permission_block_before_iat_reads(
+        self,
+    ):
+        variants = [
+            {"identifier": "another-app"},
+            {"identifier": "5205174"},
+            {"slug": "another-app"},
+            {"installation_id": ""},
+            {"installation_id": "0"},
+            {"installation_id": "-1"},
+            {"installation_id": "37\n"},
+            {"workflows": ""},
+            {"workflows": "read"},
+        ]
+        with mock.patch.object(self.github, "pages") as request:
+            for changed in variants:
+                with self.subTest(changed=changed), self.assertRaises(PolicyError):
+                    app_access(
+                        self.github,
+                        self.config,
+                        self.row,
+                        dict(app_identity(), **changed),
+                    )
+        request.assert_not_called()
+
+    def test_unnecessary_workflow_grant_is_not_accepted_for_noop_or_policy_writer(self):
+        row = dict(self.row, needs_workflows_write=False)
+        with self.assertRaises(PolicyError):
+            app_access(self.github, self.config, row, app_identity("write"))
 
     def test_signed_commit_uses_expected_head_and_never_forces_main(self):
         result = write_proposal(self.github, self.config, self.row, CENTRAL_SOURCE)

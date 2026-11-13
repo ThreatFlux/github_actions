@@ -10,7 +10,7 @@ from pathlib import Path
 from types import SimpleNamespace
 from unittest import mock
 
-from fixtures import CENTRAL_SOURCE, FakeGitHub, policy, target
+from fixtures import CENTRAL_SOURCE, FakeGitHub, app_environment, policy, target
 import cli
 from api import PolicyError
 from control import plan
@@ -36,7 +36,7 @@ class CliTests(unittest.TestCase):
         prior = self.plan_fixture(config, github)
         environment = {
             "CENTRAL_GH_TOKEN": secrets.token_hex(16),
-            "GITHUB_APP_SLUG": "threatflux-automation",
+            **app_environment(),
         }
         with mock.patch.object(
             cli, "trusted_plan", return_value=prior
@@ -51,6 +51,85 @@ class CliTests(unittest.TestCase):
         self.assertEqual(result["mutations"], 0)
         self.assertEqual(result["app_access"]["scoped_repository_id"], 123)
         self.assertEqual(github.writes, [])
+
+    def test_readonly_plan_emits_unverified_capability_without_private_app_request(
+        self,
+    ):
+        config, github = policy(), FakeGitHub()
+        config["writes_enabled"] = False
+        with mock.patch.object(
+            cli, "official_target", return_value=config["target"]
+        ), mock.patch.object(cli, "emit") as emit, mock.patch.object(
+            cli, "outputs"
+        ), mock.patch.dict(
+            os.environ, {}, clear=True
+        ):
+            cli.read_plan(self.arguments(), config, github)
+        result = emit.call_args.args[1]
+        self.assertTrue(result["complete"])
+        self.assertFalse(result["writes_enabled"])
+        self.assertEqual(result["installed_capability"]["status"], "UNVERIFIED")
+        self.assertEqual(github.writes, [])
+        self.assertFalse(any(path.startswith("/apps/") for path in github.reads))
+
+    def test_private_app_probe_uses_successful_mint_receipt_and_scope_readback(self):
+        config, github = policy(), FakeGitHub()
+        with mock.patch.dict(
+            os.environ, app_environment("write"), clear=True
+        ), mock.patch.object(cli, "emit") as emit:
+            cli.probe(self.arguments(), config, github)
+        result = emit.call_args.args[1]
+        self.assertEqual(result["status"], "scoped-workflows-token-readback")
+        self.assertEqual(
+            result["app_access"]["requested_workflows_permission"], "write"
+        )
+        self.assertEqual(result["app_access"]["installation_id"], 37)
+        self.assertEqual(github.writes, [])
+
+    def test_central_policy_writer_uses_same_private_app_boundary(self):
+        config, github = policy(), FakeGitHub()
+        row = {"repository_id": 123, "needs_workflows_write": False}
+        with mock.patch.object(
+            cli, "trusted_plan", return_value={"changed": True}
+        ), mock.patch.object(
+            cli, "validated_refresh", return_value=config
+        ), mock.patch.object(
+            cli, "central_policy_row", return_value=row
+        ), mock.patch.object(
+            cli, "write_proposal", return_value={"status": "proposed"}
+        ) as writer, mock.patch.object(
+            cli, "emit"
+        ) as emit, mock.patch.dict(
+            os.environ, app_environment(), clear=True
+        ):
+            cli.apply_refresh(self.arguments(), config, github)
+        self.assertEqual(emit.call_args.args[1]["app_access"]["id"], 5205173)
+        self.assertEqual(
+            emit.call_args.args[1]["app_access"]["requested_workflows_permission"], ""
+        )
+        writer.assert_called_once()
+
+    def test_preflight_rejects_unreviewed_configured_app_before_any_credential_step(
+        self,
+    ):
+        args = self.arguments(command="preflight", policy="unused")
+        for value in ["5205173", "Iv23liKqGk6HjSZl41QE", "another-app", ""]:
+            with mock.patch.object(
+                cli, "arguments", return_value=args
+            ), mock.patch.object(cli, "load", return_value=policy()), mock.patch.object(
+                cli, "GitHub", return_value=FakeGitHub()
+            ), mock.patch.object(
+                cli, "emit"
+            ) as emit, mock.patch.dict(
+                os.environ, {"GITHUB_APP_IDENTIFIER": value}, clear=True
+            ):
+                if value in {"5205173", "Iv23liKqGk6HjSZl41QE"}:
+                    cli.main()
+                    emit.assert_called_once()
+                else:
+                    with self.assertRaises(PolicyError):
+                        cli.main()
+                    emit.assert_not_called()
 
     def test_cross_run_expired_or_other_policy_plan_never_reaches_writes(self):
         config, github = policy(), FakeGitHub()
@@ -146,6 +225,7 @@ class CliTests(unittest.TestCase):
         tests = (root / "workflows/org-rust-tests.yml").read_text()
         readonly = rollout.split("  apply:", 1)[0]
         self.assertNotIn("secrets.", readonly)
+        self.assertNotIn("GITHUB_APP_IDENTIFIER", readonly)
         self.assertNotIn("pull_request:", rollout + discovery)
         self.assertNotIn("secrets.", tests)
         self.assertIn("github.ref == 'refs/heads/main'", rollout)
@@ -159,6 +239,34 @@ class CliTests(unittest.TestCase):
         self.assertNotIn("permission-actions:", rollout + discovery)
         self.assertIn("repositories: github_actions", discovery)
         self.assertIn("permission-pull-requests: write", discovery)
+
+    def test_each_credential_site_binds_reviewed_identifier_before_pinned_jwt_mint(
+        self,
+    ):
+        root = Path(__file__).resolve().parents[2] / "workflows"
+        rollout = (root / "org-rust-rollout.yml").read_text()
+        discovery = (root / "org-rust-policy.yml").read_text()
+        jobs = [
+            rollout.split("  apply:", 1)[1].split("  permission-probe:", 1)[0],
+            rollout.split("  permission-probe:", 1)[1],
+            discovery.split("  propose:", 1)[1],
+        ]
+        for job in jobs:
+            before, after = job.split("uses: actions/create-github-app-token@", 1)
+            self.assertIn("cli.py preflight", before)
+            self.assertIn(
+                "GITHUB_APP_IDENTIFIER: ${{ vars.TF_AUTOMATION_APP_ID }}", before
+            )
+            self.assertTrue(
+                after.startswith("64ab729a6294000f5aa4a4bc0b73d1f32bc45510")
+            )
+            self.assertIn("client-id: ${{ vars.TF_AUTOMATION_APP_ID }}", after)
+            self.assertIn("GITHUB_APP_SLUG: ${{ steps.app.outputs.app-slug }}", after)
+            self.assertIn(
+                "GITHUB_APP_INSTALLATION_ID: ${{ steps.app.outputs.installation-id }}",
+                after,
+            )
+            self.assertNotIn("continue-on-error:", job)
 
     def test_rollout_push_only_plans_and_manual_dispatch_controls_pilot_expansion(self):
         root = Path(__file__).resolve().parents[2]

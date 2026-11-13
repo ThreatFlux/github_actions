@@ -12,7 +12,8 @@ from control import (
     CENTRAL,
     POLICY_PATH,
     app_access,
-    capability_profile,
+    app_identifier,
+    capability_requirements,
     central_main,
     fingerprint,
     plan,
@@ -64,7 +65,7 @@ def read_plan(args, policy, github):
         ),
         args,
     )
-    capability_profile(github, policy, result)
+    capability_requirements(policy, result)
     emit(args.output, result)
     matrix = [
         {
@@ -81,9 +82,16 @@ def read_plan(args, policy, github):
         }
     )
     if not result["complete"]:
-        raise PolicyError(
-            "Changed workflow selectors require maintainer App permission and installation approval; no writes were started"
-        )
+        raise PolicyError("The read-only repository source plan is incomplete")
+
+
+def minted_identity():
+    return {
+        "identifier": os.environ["GITHUB_APP_IDENTIFIER"],
+        "slug": os.environ["GITHUB_APP_SLUG"],
+        "installation_id": os.environ["GITHUB_APP_INSTALLATION_ID"],
+        "workflows": os.environ["GITHUB_APP_WORKFLOWS_PERMISSION"],
+    }
 
 
 def trusted_plan(args, policy):
@@ -129,7 +137,7 @@ def apply(args, policy, github):
         raise PolicyError("Target moved or proposal changed after the read-only plan")
     central = GitHub(os.environ["CENTRAL_GH_TOKEN"])
     central_main(central, args.expected_policy_commit)
-    provider = app_access(github, policy, row, os.environ["GITHUB_APP_SLUG"])
+    provider = app_access(github, policy, row, minted_identity())
     result = {
         "repository": row["repository"],
         "source_sha": row["source_sha"],
@@ -235,7 +243,7 @@ def apply_refresh(args, policy, github):
         return
     proposed = validated_refresh(github, policy, prior)
     row = central_policy_row(github, policy, proposed)
-    provider = app_access(github, policy, row, os.environ["GITHUB_APP_SLUG"])
+    provider = app_access(github, policy, row, minted_identity())
     result = write_proposal(github, proposed, row, args.expected_policy_commit)
     emit(
         args.output,
@@ -255,7 +263,7 @@ def probe(args, policy, github):
         )
     metadata, source = repository_source(github, selected[0])
     row = {"repository_id": metadata["id"], "needs_workflows_write": True}
-    provider = app_access(github, policy, row, os.environ["GITHUB_APP_SLUG"])
+    provider = app_access(github, policy, row, minted_identity())
     emit(
         args.output,
         {
@@ -304,6 +312,7 @@ def main():
     }
     if args.command == "preflight":
         central_main(github, args.expected_policy_commit)
+        app_identifier(policy, os.environ.get("GITHUB_APP_IDENTIFIER"))
         emit(
             args.output,
             {"status": "exact-current-main", "source_sha": args.expected_policy_commit},
