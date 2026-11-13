@@ -1,15 +1,71 @@
 """Exercise sequential Rust upgrades while retaining compatibility identities."""
 
 import copy
+import json
 import unittest
+from pathlib import Path
 
 from fixtures import CI, policy, target, upgraded
-from adapters import patch_file, validate_file
+from adapters import patch_file, render, validate_file
 from api import PolicyError
 from control import select_repositories, validate_policy
 
+TRIMMED_ASSERTIONS = {
+    ("ThreatFlux/file-scanner", "Dockerfile"),
+    ("ThreatFlux/github_actions", "Dockerfile"),
+    ("ThreatFlux/ollama_rust_sdk", "Dockerfile"),
+    ("ThreatFlux/openai_rust_sdk", "Dockerfile"),
+    ("ThreatFlux/rust-cicd-template", "Dockerfile"),
+    ("ThreatFlux/rust-cicd-template", "Dockerfile.debian"),
+    ("ThreatFlux/vertex_rust_sdk", "Dockerfile"),
+    ("ThreatFlux/virustotal-rs", "Dockerfile"),
+    ("ThreatFlux/yrlint", "Dockerfile"),
+}
+
 
 class AdapterTests(unittest.TestCase):
+    def test_all_real_compiler_assertions_ignore_independent_product_arg_versions(self):
+        catalog = json.loads(
+            Path(__file__).resolve().parents[1].joinpath("policy.json").read_text()
+        )
+        assertions = [
+            adapter
+            for repository in catalog["repositories"]
+            for file in repository["files"]
+            for adapter in file["adapters"]
+            if (repository["repository"], file["path"]) in TRIMMED_ASSERTIONS
+            and "rustfmt" in adapter["template"]
+            and any(
+                anchor in adapter["template"]
+                for anchor in [
+                    "'^rustc @@RUST_VALUE@@ '",
+                    "= @@RUST_VALUE@@\n",
+                    '= "@@RUST_VALUE@@"\n',
+                ]
+            )
+        ]
+        self.assertEqual(len(assertions), 9)
+        suffix = "\nARG VERSION=9.8.7\nARG BUILD_DATE=2026-11-13\n"
+        for adapter in assertions:
+            context = adapter["template"].replace("@@RUST_plain@@", "1.100.0")
+            self.assertNotIn("ARG VERSION", context)
+            original = (
+                context.replace("@@RUST_VALUE@@", render("1.100.0", adapter["kind"]))
+                + suffix
+            )
+            expected = (
+                context.replace("@@RUST_VALUE@@", render("1.101.0", adapter["kind"]))
+                + suffix
+            )
+            with self.subTest(template=adapter["template"]):
+                self.assertEqual(patch_file(original, [adapter], upgraded()), expected)
+                with self.assertRaises(PolicyError):
+                    patch_file(
+                        original.replace("rustfmt", "unexpected-component"),
+                        [adapter],
+                        upgraded(),
+                    )
+
     def test_same_number_msrv_beta_nightly_and_cargo_floor_stay_unchanged(self):
         config = upgraded()
         adapters = config["repositories"][0]["files"][0]["adapters"]

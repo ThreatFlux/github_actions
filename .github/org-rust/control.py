@@ -126,9 +126,12 @@ def planned_file(github, repository, file, tree, policy):
         if not parent or parent["type"] != "tree" or parent["mode"] != "040000":
             raise PolicyError("Maintained input has a non-directory parent")
     original = github.blob(repository, entry)
-    proposed = patch_file(original.decode("utf-8"), file["adapters"], policy).encode(
-        "utf-8"
-    )
+    try:
+        proposed = patch_file(
+            original.decode("utf-8"), file["adapters"], policy
+        ).encode("utf-8")
+    except PolicyError as error:
+        raise PolicyError(f"{repository}:{path}: {error}") from error
     if proposed == original:
         return None
     return {

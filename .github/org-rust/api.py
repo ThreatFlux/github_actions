@@ -46,6 +46,19 @@ class DockerBlobRedirect(urllib.request.HTTPRedirectHandler):
         )
 
 
+def http_failure(url, error):
+    target = urlsplit(url)
+    endpoint = (target.hostname or "<unknown host>") + target.path
+    if control_characters(endpoint):
+        endpoint = "<invalid public endpoint>"
+    details = [f"HTTPS request failed at {endpoint}: status={error.code}"]
+    for name in ["X-RateLimit-Remaining", "X-RateLimit-Reset", "Retry-After"]:
+        value = error.headers.get(name) if error.headers else None
+        if isinstance(value, str) and re.fullmatch(r"[0-9]{1,20}", value):
+            details.append(f"{name.lower()}={value}")
+    return PolicyError("; ".join(details))
+
+
 def fetch(url, token=None, payload=None, accept="application/json", public_blob=False):
     if not url.startswith("https://"):
         raise PolicyError("Only HTTPS requests are supported")
@@ -69,7 +82,7 @@ def fetch(url, token=None, payload=None, accept="application/json", public_blob=
     except urllib.error.HTTPError as error:
         if error.code == 404:
             return None, {"status": 404}
-        raise PolicyError(f"HTTPS request failed with status {error.code}") from error
+        raise http_failure(url, error) from error
 
 
 def object_id(data):
