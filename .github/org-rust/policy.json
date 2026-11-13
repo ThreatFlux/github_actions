@@ -1,0 +1,2988 @@
+{
+  "schema_version": 1,
+  "organization": "ThreatFlux",
+  "writes_enabled": false,
+  "app": {
+    "id": 5205173,
+    "slug": "threatflux-automation"
+  },
+  "target": {
+    "stable": {
+      "version": "1.100.0",
+      "date": "2026-11-12",
+      "manifest_url": "https://static.rust-lang.org/dist/channel-rust-stable.toml",
+      "manifest_sha256": "3051e859570f64a8c5acb9d09e87425db52c7d97287c67e8f6d57d7d34ef9258",
+      "release_url": "https://github.com/rust-lang/rust/releases/tag/1.100.0",
+      "published_at": "2026-11-12T18:19:42Z"
+    },
+    "images": {
+      "alpine3.24": {
+        "reference": "rust:1.100.0-alpine3.24@sha256:de1e0058543a81ed7b046629167db587c67a94bdf37cce14eb27f0ec83baaffb",
+        "index_digest": "sha256:de1e0058543a81ed7b046629167db587c67a94bdf37cce14eb27f0ec83baaffb",
+        "platforms": [
+          {
+            "platform": "linux/amd64",
+            "manifest_digest": "sha256:cfbeb9c8c956f048a081ae034a7c8ffbd60242f3ff76b645d3a41523f665f761",
+            "config_digest": "sha256:25c86c2c6b0d88ae0efc8294382f73963ac0a5ee0d7b5b942505b034b8300836"
+          },
+          {
+            "platform": "linux/arm64",
+            "manifest_digest": "sha256:18b6dc7bc111bde4e2fccf6c4ec95cc4a3486b41e4b090e9b0202eba9540023e",
+            "config_digest": "sha256:bf99d57d5849fd556734962fa0b62a46d1c3c23d9be5d20e52a9e3a8691d906e"
+          }
+        ]
+      },
+      "bookworm": {
+        "reference": "rust:1.100.0-bookworm@sha256:ade39a710ef85f3506cffcfec3e8a24ba090badef1dff2fb798f71d878833fea",
+        "index_digest": "sha256:ade39a710ef85f3506cffcfec3e8a24ba090badef1dff2fb798f71d878833fea",
+        "platforms": [
+          {
+            "platform": "linux/amd64",
+            "manifest_digest": "sha256:198cd28b4ba92b20fe849d5d8b119ace1bd28423d9e82e9c4de5ee1300d453a0",
+            "config_digest": "sha256:9a1b4f2e690d8ffe0b1dae1a72750318928a9b5d94ebf7539dbb4f4c765104da"
+          },
+          {
+            "platform": "linux/arm64",
+            "manifest_digest": "sha256:7dabf6d6fc774b4a25df2c10bd97cd9dfd444d1e3667bb607d29b31b4cd54d8c",
+            "config_digest": "sha256:43186a73cb7c990ee832ea0ab6cdaca434c61bd708e215298b3cb7ccce4e8a82"
+          }
+        ]
+      },
+      "slim-trixie": {
+        "reference": "rust:1.100.0-slim-trixie@sha256:e9d95b74296f7126a83ae3d041aeaba1ff4c478f13abc5cc034fcf7c131c3d4a",
+        "index_digest": "sha256:e9d95b74296f7126a83ae3d041aeaba1ff4c478f13abc5cc034fcf7c131c3d4a",
+        "platforms": [
+          {
+            "platform": "linux/amd64",
+            "manifest_digest": "sha256:4b68057dc8c103af4fa66b5cd29f21b18afec79fadfcd8fb91e295e939f0690c",
+            "config_digest": "sha256:a5dfbb6ea0391a9c8373a4329d9f53d092d746a17aea8aa744b9b7187f0033b6"
+          },
+          {
+            "platform": "linux/arm64",
+            "manifest_digest": "sha256:11acfd0f07018a7c60d33b5e95618275feb39e465c4fbc9a73b438b1ee1e43ce",
+            "config_digest": "sha256:4c378312b6e03005c4d6885352bf14e82d5a25c4141dc02ded9cb86b999dc862"
+          }
+        ]
+      },
+      "trixie": {
+        "reference": "rust:1.100.0-trixie@sha256:e19840879045c951c905d0eaa9887f3439c62000e429963371b376bac8d38c31",
+        "index_digest": "sha256:e19840879045c951c905d0eaa9887f3439c62000e429963371b376bac8d38c31",
+        "platforms": [
+          {
+            "platform": "linux/amd64",
+            "manifest_digest": "sha256:ebc54bef33ec8f9a5cd05799366010f35efbb73b354fb4f2cb086ec6b9460ef5",
+            "config_digest": "sha256:8fc1fffca677434f4d714847e4166988b30251ffd369f97a6957f988847d54b4"
+          },
+          {
+            "platform": "linux/arm64",
+            "manifest_digest": "sha256:66431732f567e2fd1301ecfbdc124ac32989c8953afeac895577cb114117454c",
+            "config_digest": "sha256:65630931ba8c125ada0ab8cdfc8ee3f62f9636b139b2445c09e0c8f3840a8731"
+          }
+        ]
+      }
+    }
+  },
+  "accepted_states": [],
+  "repositories": [
+    {
+      "repository": "ThreatFlux/FluxEncrypt",
+      "id": 1051050592,
+      "default_branch": "main",
+      "reviewed_source_sha": "2def20de63125fac9a79011643a6bdb3d4915375",
+      "files": [
+        {
+          "path": ".github/workflows/ci.yml",
+          "mode": "100644",
+          "adapters": [
+            {
+              "kind": "plain",
+              "template": "      matrix:\n        rust:\n        - @@RUST_VALUE@@\n        - beta\n        - nightly\n",
+              "count": 1,
+              "job": "test"
+            },
+            {
+              "kind": "plain",
+              "template": "    - uses: dtolnay/rust-toolchain@683b588c487a69d01f6c6ddf40f036ff682cc2c8  # v1\n      with:\n        toolchain: @@RUST_VALUE@@\n        components: rustfmt\n    - run: cargo fmt --all -- --check\n",
+              "count": 1,
+              "job": "fmt"
+            },
+            {
+              "kind": "plain",
+              "template": "    - uses: dtolnay/rust-toolchain@683b588c487a69d01f6c6ddf40f036ff682cc2c8  # v1\n      with:\n        toolchain: @@RUST_VALUE@@\n        components: clippy\n    - name: Cache dependencies\n",
+              "count": 1,
+              "job": "clippy"
+            },
+            {
+              "kind": "plain",
+              "template": "          ~/.cargo/git\n          target\n        key: ${{ runner.os }}-${{ runner.arch }}-${{ github.job }}-rust-@@RUST_VALUE@@-${{ hashFiles('**/Cargo.lock') }}\n    - run: cargo clippy --locked --all-targets --all-features --workspace -- -D warnings\n\n",
+              "count": 1,
+              "job": "clippy"
+            },
+            {
+              "kind": "plain",
+              "template": "    - uses: dtolnay/rust-toolchain@683b588c487a69d01f6c6ddf40f036ff682cc2c8  # v1\n      with:\n        toolchain: @@RUST_VALUE@@\n        components: llvm-tools-preview\n    - name: Install cargo-llvm-cov\n",
+              "count": 1,
+              "job": "coverage"
+            },
+            {
+              "kind": "plain",
+              "template": "    - uses: dtolnay/rust-toolchain@683b588c487a69d01f6c6ddf40f036ff682cc2c8  # v1\n      with:\n        toolchain: @@RUST_VALUE@@\n        targets: ${{ matrix.target }}\n    - name: Cache dependencies\n",
+              "count": 1,
+              "job": "cross-compile-linux"
+            },
+            {
+              "kind": "plain",
+              "template": "          ~/.cargo/git\n          target\n        key: ${{ runner.os }}-${{ runner.arch }}-${{ github.job }}-rust-@@RUST_VALUE@@-${{ matrix.target }}-${{ hashFiles('**/Cargo.lock') }}\n    - name: Install cross\n      run: cargo install cross --version 0.2.5 --locked\n",
+              "count": 1,
+              "job": "cross-compile-linux"
+            },
+            {
+              "kind": "plain",
+              "template": "        shell: bash\n    env:\n      RUSTUP_TOOLCHAIN: @@RUST_VALUE@@\n      CARGO_TARGET_X86_64_PC_WINDOWS_GNU_LINKER: 'C:\\mingw64\\bin\\gcc.exe'\n      CC_x86_64_pc_windows_gnu: 'C:\\mingw64\\bin\\gcc.exe'\n",
+              "count": 1,
+              "job": "windows-gnu"
+            },
+            {
+              "kind": "plain",
+              "template": "    - uses: dtolnay/rust-toolchain@683b588c487a69d01f6c6ddf40f036ff682cc2c8  # v1\n      with:\n        toolchain: @@RUST_VALUE@@\n        targets: x86_64-pc-windows-gnu\n    - name: Show compiler and linker versions\n",
+              "count": 1,
+              "job": "windows-gnu"
+            },
+            {
+              "kind": "plain",
+              "template": "          ~/.cargo/git\n          target\n        key: ${{ runner.os }}-${{ runner.arch }}-${{ github.job }}-rust-@@RUST_VALUE@@-x86_64-pc-windows-gnu-${{ hashFiles('**/Cargo.lock') }}\n    - name: Build Windows GNU\n      run: cargo build --locked --target x86_64-pc-windows-gnu --workspace --all-features\n",
+              "count": 1,
+              "job": "windows-gnu"
+            },
+            {
+              "kind": "plain",
+              "template": "    - uses: dtolnay/rust-toolchain@683b588c487a69d01f6c6ddf40f036ff682cc2c8  # v1\n      with:\n        toolchain: @@RUST_VALUE@@\n        targets: ${{ matrix.target }}\n    - name: Cache dependencies\n",
+              "count": 1,
+              "job": "cross-compile-macos"
+            },
+            {
+              "kind": "plain",
+              "template": "          ~/.cargo/git\n          target\n        key: ${{ runner.os }}-${{ runner.arch }}-${{ github.job }}-rust-@@RUST_VALUE@@-${{ matrix.target }}-${{ hashFiles('**/Cargo.lock') }}\n    - name: Build\n      env:\n",
+              "count": 1,
+              "job": "cross-compile-macos"
+            },
+            {
+              "kind": "plain",
+              "template": "    - uses: dtolnay/rust-toolchain@683b588c487a69d01f6c6ddf40f036ff682cc2c8  # v1\n      with:\n        toolchain: @@RUST_VALUE@@\n    - name: Cache dependencies\n      uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9  # v6.1.0\n",
+              "count": 1,
+              "job": "benchmark"
+            },
+            {
+              "kind": "plain",
+              "template": "          ~/.cargo/git\n          target\n        key: ${{ runner.os }}-${{ runner.arch }}-${{ github.job }}-rust-@@RUST_VALUE@@-${{ hashFiles('**/Cargo.lock') }}\n    - name: Run benchmarks\n      shell: bash\n",
+              "count": 1,
+              "job": "benchmark"
+            },
+            {
+              "kind": "plain",
+              "template": "    - uses: dtolnay/rust-toolchain@683b588c487a69d01f6c6ddf40f036ff682cc2c8  # v1\n      with:\n        toolchain: @@RUST_VALUE@@\n    - uses: taiki-e/install-action@cfdb7ed4ccc7c7dce37759eae89dc5674b469b39  # v2.90.3\n      with:\n",
+              "count": 1,
+              "job": "features"
+            },
+            {
+              "kind": "plain",
+              "template": "      uses: dtolnay/rust-toolchain@683b588c487a69d01f6c6ddf40f036ff682cc2c8  # v1\n      with:\n        toolchain: @@RUST_VALUE@@\n    - name: Verify fixed persisted secrets and rollback compatibility\n      run: |\n",
+              "count": 1,
+              "job": "legacy-secret-compatibility"
+            }
+          ]
+        },
+        {
+          "path": ".github/workflows/codeql.yml",
+          "mode": "100644",
+          "adapters": [
+            {
+              "kind": "plain",
+              "template": "      uses: dtolnay/rust-toolchain@683b588c487a69d01f6c6ddf40f036ff682cc2c8  # v1\n      with:\n        toolchain: @@RUST_VALUE@@\n\n    - name: Cache dependencies\n",
+              "count": 1,
+              "job": "analyze"
+            },
+            {
+              "kind": "plain",
+              "template": "          ~/.cargo/git\n          target\n        key: ${{ runner.os }}-${{ runner.arch }}-${{ github.job }}-rust-@@RUST_VALUE@@-${{ hashFiles('**/Cargo.lock') }}\n\n    - name: Build\n",
+              "count": 1,
+              "job": "analyze"
+            }
+          ]
+        },
+        {
+          "path": ".github/workflows/docs.yml",
+          "mode": "100644",
+          "adapters": [
+            {
+              "kind": "plain",
+              "template": "      uses: dtolnay/rust-toolchain@683b588c487a69d01f6c6ddf40f036ff682cc2c8  # v1\n      with:\n        toolchain: @@RUST_VALUE@@\n\n    - name: Cache dependencies\n",
+              "count": 1,
+              "job": "docs"
+            },
+            {
+              "kind": "plain",
+              "template": "          ~/.cargo/git\n          target\n        key: ${{ runner.os }}-${{ runner.arch }}-${{ github.job }}-rust-@@RUST_VALUE@@-${{ hashFiles('**/Cargo.lock') }}\n\n    - name: Build documentation\n",
+              "count": 1,
+              "job": "docs"
+            },
+            {
+              "kind": "plain",
+              "template": "      uses: dtolnay/rust-toolchain@683b588c487a69d01f6c6ddf40f036ff682cc2c8  # v1\n      with:\n        toolchain: @@RUST_VALUE@@\n\n    - name: Cache dependencies\n",
+              "count": 1,
+              "job": "check_examples"
+            },
+            {
+              "kind": "plain",
+              "template": "          ~/.cargo/git\n          target\n        key: ${{ runner.os }}-${{ runner.arch }}-${{ github.job }}-rust-@@RUST_VALUE@@-${{ hashFiles('**/Cargo.lock') }}\n\n    - name: Compile and run all examples\n",
+              "count": 1,
+              "job": "check_examples"
+            }
+          ]
+        },
+        {
+          "path": ".github/workflows/release.yml",
+          "mode": "100644",
+          "adapters": [
+            {
+              "kind": "plain",
+              "template": "  RUST_VERSION: @@RUST_VALUE@@\n",
+              "count": 1,
+              "job": "RUST_VERSION"
+            }
+          ]
+        },
+        {
+          "path": ".github/workflows/security.yml",
+          "mode": "100644",
+          "adapters": [
+            {
+              "kind": "plain",
+              "template": "      uses: dtolnay/rust-toolchain@683b588c487a69d01f6c6ddf40f036ff682cc2c8  # v1\n      with:\n        toolchain: @@RUST_VALUE@@\n\n    - name: Cache dependencies\n",
+              "count": 1,
+              "job": "security_audit"
+            },
+            {
+              "kind": "plain",
+              "template": "          ~/.cargo/git\n          target\n        key: ${{ runner.os }}-${{ runner.arch }}-${{ github.job }}-rust-@@RUST_VALUE@@-${{ hashFiles('**/Cargo.lock') }}\n\n    - name: Enforce private-RSA advisory scope\n",
+              "count": 1,
+              "job": "security_audit"
+            },
+            {
+              "kind": "plain",
+              "template": "      uses: dtolnay/rust-toolchain@683b588c487a69d01f6c6ddf40f036ff682cc2c8  # v1\n      with:\n        toolchain: @@RUST_VALUE@@\n\n    - name: Cache dependencies\n",
+              "count": 1,
+              "job": "supply_chain_security"
+            },
+            {
+              "kind": "plain",
+              "template": "          ~/.cargo/git\n          target\n        key: ${{ runner.os }}-${{ runner.arch }}-${{ github.job }}-rust-@@RUST_VALUE@@-${{ hashFiles('**/Cargo.lock') }}\n\n    - name: Install cargo-geiger\n",
+              "count": 1,
+              "job": "supply_chain_security"
+            },
+            {
+              "kind": "plain",
+              "template": "    - name: Run cargo geiger (unsafe code detection)\n      env:\n        RUSTUP_TOOLCHAIN: @@RUST_VALUE@@\n        CARGO_TARGET_DIR: ${{ github.workspace }}/target/geiger\n      run: |\n",
+              "count": 1,
+              "job": "supply_chain_security"
+            }
+          ]
+        },
+        {
+          "path": "Dockerfile",
+          "mode": "100644",
+          "adapters": [
+            {
+              "kind": "image:alpine3.24",
+              "template": "# into a static PIE. Use Alpine's maintained musl archive, not Rust's bundled\n# CRT, and prove the selected libc from the linker map on every architecture.\nFROM @@RUST_VALUE@@ AS builder\n\nENV RUST_VERSION=@@RUST_plain@@\n",
+              "count": 1
+            },
+            {
+              "kind": "plain",
+              "template": "FROM @@IMAGE_alpine3.24@@ AS builder\n\nENV RUST_VERSION=@@RUST_VALUE@@\nRUN rustup toolchain install @@RUST_plain@@ --profile minimal --no-self-update --component clippy --component rustfmt && \\\n    rustup default @@RUST_plain@@ && \\\n",
+              "count": 1
+            },
+            {
+              "kind": "plain",
+              "template": "\nENV RUST_VERSION=@@RUST_plain@@\nRUN rustup toolchain install @@RUST_VALUE@@ --profile minimal --no-self-update --component clippy --component rustfmt && \\\n    rustup default @@RUST_plain@@ && \\\n    rustc --version | grep -E '^rustc @@RUST_escaped@@ ' && \\\n",
+              "count": 1
+            },
+            {
+              "kind": "plain",
+              "template": "ENV RUST_VERSION=@@RUST_plain@@\nRUN rustup toolchain install @@RUST_plain@@ --profile minimal --no-self-update --component clippy --component rustfmt && \\\n    rustup default @@RUST_VALUE@@ && \\\n    rustc --version | grep -E '^rustc @@RUST_escaped@@ ' && \\\n    cargo --version\n",
+              "count": 1
+            },
+            {
+              "kind": "escaped",
+              "template": "RUN rustup toolchain install @@RUST_plain@@ --profile minimal --no-self-update --component clippy --component rustfmt && \\\n    rustup default @@RUST_plain@@ && \\\n    rustc --version | grep -E '^rustc @@RUST_VALUE@@ ' && \\\n    cargo --version\nRUN apk add --no-cache build-base binutils cmake perl tini-static\n",
+              "count": 1
+            }
+          ]
+        },
+        {
+          "path": "docker/Dockerfile",
+          "mode": "100644",
+          "adapters": [
+            {
+              "kind": "image:alpine3.24",
+              "template": "# into a static PIE. Use Alpine's maintained musl archive, not Rust's bundled\n# CRT, and prove the selected libc from the linker map on every architecture.\nFROM @@RUST_VALUE@@ AS builder\n\nENV RUST_VERSION=@@RUST_plain@@\n",
+              "count": 1
+            },
+            {
+              "kind": "plain",
+              "template": "FROM @@IMAGE_alpine3.24@@ AS builder\n\nENV RUST_VERSION=@@RUST_VALUE@@\nRUN rustup toolchain install @@RUST_plain@@ --profile minimal --no-self-update --component clippy --component rustfmt && \\\n    rustup default @@RUST_plain@@ && \\\n",
+              "count": 1
+            },
+            {
+              "kind": "plain",
+              "template": "\nENV RUST_VERSION=@@RUST_plain@@\nRUN rustup toolchain install @@RUST_VALUE@@ --profile minimal --no-self-update --component clippy --component rustfmt && \\\n    rustup default @@RUST_plain@@ && \\\n    rustc --version | grep -E '^rustc @@RUST_escaped@@ ' && \\\n",
+              "count": 1
+            },
+            {
+              "kind": "plain",
+              "template": "ENV RUST_VERSION=@@RUST_plain@@\nRUN rustup toolchain install @@RUST_plain@@ --profile minimal --no-self-update --component clippy --component rustfmt && \\\n    rustup default @@RUST_VALUE@@ && \\\n    rustc --version | grep -E '^rustc @@RUST_escaped@@ ' && \\\n    cargo --version\n",
+              "count": 1
+            },
+            {
+              "kind": "escaped",
+              "template": "RUN rustup toolchain install @@RUST_plain@@ --profile minimal --no-self-update --component clippy --component rustfmt && \\\n    rustup default @@RUST_plain@@ && \\\n    rustc --version | grep -E '^rustc @@RUST_VALUE@@ ' && \\\n    cargo --version\nRUN apk add --no-cache build-base binutils cmake perl tini-static\n",
+              "count": 1
+            }
+          ]
+        },
+        {
+          "path": "docker/Dockerfile.alpine",
+          "mode": "100644",
+          "adapters": [
+            {
+              "kind": "image:alpine3.24",
+              "template": "# Stable upstream images are pinned to their multi-platform manifest digests.\nFROM @@RUST_VALUE@@ AS builder\n\nENV RUST_VERSION=@@RUST_plain@@\n",
+              "count": 1
+            },
+            {
+              "kind": "plain",
+              "template": "FROM @@IMAGE_alpine3.24@@ AS builder\n\nENV RUST_VERSION=@@RUST_VALUE@@\nRUN rustup toolchain install @@RUST_plain@@ --profile minimal --no-self-update --component clippy --component rustfmt && \\\n    rustup default @@RUST_plain@@ && \\\n",
+              "count": 1
+            },
+            {
+              "kind": "plain",
+              "template": "\nENV RUST_VERSION=@@RUST_plain@@\nRUN rustup toolchain install @@RUST_VALUE@@ --profile minimal --no-self-update --component clippy --component rustfmt && \\\n    rustup default @@RUST_plain@@ && \\\n    rustc --version | grep -E '^rustc @@RUST_escaped@@ ' && \\\n",
+              "count": 1
+            },
+            {
+              "kind": "plain",
+              "template": "ENV RUST_VERSION=@@RUST_plain@@\nRUN rustup toolchain install @@RUST_plain@@ --profile minimal --no-self-update --component clippy --component rustfmt && \\\n    rustup default @@RUST_VALUE@@ && \\\n    rustc --version | grep -E '^rustc @@RUST_escaped@@ ' && \\\n    cargo --version\n",
+              "count": 1
+            },
+            {
+              "kind": "escaped",
+              "template": "RUN rustup toolchain install @@RUST_plain@@ --profile minimal --no-self-update --component clippy --component rustfmt && \\\n    rustup default @@RUST_plain@@ && \\\n    rustc --version | grep -E '^rustc @@RUST_VALUE@@ ' && \\\n    cargo --version\n# Distribution packages receive security updates during builds.\n",
+              "count": 1
+            }
+          ]
+        },
+        {
+          "path": "rust-toolchain.toml",
+          "mode": "100644",
+          "adapters": [
+            {
+              "kind": "plain",
+              "template": "[toolchain]\nchannel = \"@@RUST_VALUE@@\"\nprofile = \"minimal\"\ncomponents = [\"clippy\", \"rustfmt\"]\n",
+              "count": 1
+            }
+          ]
+        }
+      ],
+      "preserved_roles": [
+        "Cargo rust-version and MSRV",
+        "beta and nightly",
+        "legacy, fuzz, vendor and historical fixtures"
+      ]
+    },
+    {
+      "repository": "ThreatFlux/FluxPrompt",
+      "id": 1050819923,
+      "default_branch": "main",
+      "reviewed_source_sha": "ab1be407c29571667a9d89ae0b4063df61dfb4d2",
+      "files": [
+        {
+          "path": ".github/workflows/ci.yml",
+          "mode": "100644",
+          "adapters": [
+            {
+              "kind": "plain",
+              "template": "  RUSTUP_TOOLCHAIN: \"@@RUST_VALUE@@\"\n",
+              "count": 1,
+              "job": "RUSTUP_TOOLCHAIN"
+            },
+            {
+              "kind": "plain",
+              "template": "  test:\n    name: Test Suite (Rust @@RUST_VALUE@@)\n    runs-on: ubuntu-latest\n    timeout-minutes: 60\n",
+              "count": 1,
+              "job": "test"
+            },
+            {
+              "kind": "plain",
+              "template": "        uses: dtolnay/rust-toolchain@683b588c487a69d01f6c6ddf40f036ff682cc2c8 # v1\n        with:\n          toolchain: \"@@RUST_VALUE@@\"\n          components: rustfmt, clippy\n\n",
+              "count": 1,
+              "job": "test"
+            },
+            {
+              "kind": "plain",
+              "template": "        with:\n          path: target\n          key: ${{ runner.os }}-cargo-build-@@RUST_VALUE@@-${{ hashFiles('**/Cargo.lock') }}\n\n      - name: Check formatting\n",
+              "count": 1,
+              "job": "test"
+            },
+            {
+              "kind": "plain",
+              "template": "        include:\n          - os: ubuntu-latest\n            rust: \"@@RUST_VALUE@@\"\n            run_lib_tests: false\n          - os: ubuntu-latest\n",
+              "count": 1,
+              "job": "compatibility"
+            },
+            {
+              "kind": "plain",
+              "template": "            run_lib_tests: false\n          - os: windows-latest\n            rust: \"@@RUST_VALUE@@\"\n            run_lib_tests: true\n          - os: macos-latest\n",
+              "count": 1,
+              "job": "compatibility"
+            },
+            {
+              "kind": "plain",
+              "template": "            run_lib_tests: true\n          - os: macos-latest\n            rust: \"@@RUST_VALUE@@\"\n            run_lib_tests: true\n    steps:\n",
+              "count": 1,
+              "job": "compatibility"
+            },
+            {
+              "kind": "plain",
+              "template": "        uses: dtolnay/rust-toolchain@683b588c487a69d01f6c6ddf40f036ff682cc2c8 # v1\n        with:\n          toolchain: \"@@RUST_VALUE@@\"\n          components: llvm-tools-preview\n\n",
+              "count": 1,
+              "job": "coverage"
+            },
+            {
+              "kind": "plain",
+              "template": "        uses: dtolnay/rust-toolchain@683b588c487a69d01f6c6ddf40f036ff682cc2c8 # v1\n        with:\n          toolchain: \"@@RUST_VALUE@@\"\n\n      - name: Verify selected Rust compiler\n",
+              "count": 1,
+              "job": "benchmarks"
+            }
+          ]
+        },
+        {
+          "path": ".github/workflows/codeql.yml",
+          "mode": "100644",
+          "adapters": [
+            {
+              "kind": "plain",
+              "template": "  RUSTUP_TOOLCHAIN: \"@@RUST_VALUE@@\"\n\njobs:\n",
+              "count": 1,
+              "job": "RUSTUP_TOOLCHAIN"
+            },
+            {
+              "kind": "plain",
+              "template": "        uses: dtolnay/rust-toolchain@683b588c487a69d01f6c6ddf40f036ff682cc2c8 # v1\n        with:\n          toolchain: @@RUST_VALUE@@\n\n      - name: Verify selected Rust compiler\n",
+              "count": 1,
+              "job": "analyze"
+            }
+          ]
+        },
+        {
+          "path": ".github/workflows/docs.yml",
+          "mode": "100644",
+          "adapters": [
+            {
+              "kind": "plain",
+              "template": "  RUSTUP_TOOLCHAIN: \"@@RUST_VALUE@@\"\n",
+              "count": 1,
+              "job": "RUSTUP_TOOLCHAIN"
+            },
+            {
+              "kind": "plain",
+              "template": "        uses: dtolnay/rust-toolchain@683b588c487a69d01f6c6ddf40f036ff682cc2c8 # v1\n        with:\n          toolchain: @@RUST_VALUE@@\n\n      - name: Verify selected Rust compiler\n",
+              "count": 1,
+              "job": "build-docs"
+            }
+          ]
+        },
+        {
+          "path": ".github/workflows/release.yml",
+          "mode": "100644",
+          "adapters": [
+            {
+              "kind": "plain",
+              "template": "  RUST_VERSION: \"@@RUST_VALUE@@\"\n",
+              "count": 1,
+              "job": "RUST_VERSION"
+            },
+            {
+              "kind": "plain",
+              "template": "  RUSTUP_TOOLCHAIN: \"@@RUST_VALUE@@\"\n",
+              "count": 1,
+              "job": "RUSTUP_TOOLCHAIN"
+            }
+          ]
+        },
+        {
+          "path": ".github/workflows/security.yml",
+          "mode": "100644",
+          "adapters": [
+            {
+              "kind": "plain",
+              "template": "  RUSTUP_TOOLCHAIN: \"@@RUST_VALUE@@\"\n\njobs:\n",
+              "count": 1,
+              "job": "RUSTUP_TOOLCHAIN"
+            },
+            {
+              "kind": "plain",
+              "template": "        uses: dtolnay/rust-toolchain@683b588c487a69d01f6c6ddf40f036ff682cc2c8 # v1\n        with:\n          toolchain: @@RUST_VALUE@@\n\n      - name: Verify selected Rust compiler\n",
+              "count": 1,
+              "job": "audit"
+            },
+            {
+              "kind": "plain",
+              "template": "        uses: dtolnay/rust-toolchain@683b588c487a69d01f6c6ddf40f036ff682cc2c8 # v1\n        with:\n          toolchain: @@RUST_VALUE@@\n\n      - name: Verify selected Rust compiler\n",
+              "count": 1,
+              "job": "cargo-deny"
+            },
+            {
+              "kind": "plain",
+              "template": "        uses: dtolnay/rust-toolchain@683b588c487a69d01f6c6ddf40f036ff682cc2c8 # v1\n        with:\n          toolchain: @@RUST_VALUE@@\n\n      - name: Verify selected Rust compiler\n",
+              "count": 1,
+              "job": "cargo-semver-checks"
+            },
+            {
+              "kind": "plain",
+              "template": "        with:\n          baseline-rev: ${{ github.event.pull_request.base.sha }}\n          rust-toolchain: @@RUST_VALUE@@\n",
+              "count": 1,
+              "job": "cargo-semver-checks"
+            }
+          ]
+        },
+        {
+          "path": "rust-toolchain.toml",
+          "mode": "100644",
+          "adapters": [
+            {
+              "kind": "plain",
+              "template": "[toolchain]\nchannel = \"@@RUST_VALUE@@\"\ncomponents = [\"clippy\", \"rustfmt\"]\nprofile = \"minimal\"\n",
+              "count": 1
+            }
+          ]
+        }
+      ],
+      "preserved_roles": [
+        "Cargo rust-version and MSRV",
+        "beta and nightly",
+        "legacy, fuzz, vendor and historical fixtures"
+      ]
+    },
+    {
+      "repository": "ThreatFlux/anthropic_rust_sdk",
+      "id": 1047206279,
+      "default_branch": "main",
+      "reviewed_source_sha": "2c15f4e111802fb546ecf7b22ef60ad221febfbd",
+      "files": [
+        {
+          "path": ".github/workflows/ci.yml",
+          "mode": "100644",
+          "adapters": [
+            {
+              "kind": "plain",
+              "template": "  RUSTUP_TOOLCHAIN: @@RUST_VALUE@@\n",
+              "count": 1,
+              "job": "RUSTUP_TOOLCHAIN"
+            },
+            {
+              "kind": "plain",
+              "template": "      matrix:\n        os: [ubuntu-latest, windows-latest, macos-latest]\n        rust: [@@RUST_VALUE@@, beta, nightly]\n        exclude:\n          # Exclude some combinations to save CI time\n",
+              "count": 1,
+              "job": "test"
+            },
+            {
+              "kind": "plain",
+              "template": "\n      - name: Check formatting\n        if: matrix.rust == '@@RUST_VALUE@@'\n        run: cargo fmt --all -- --check\n\n",
+              "count": 1,
+              "job": "test"
+            },
+            {
+              "kind": "plain",
+              "template": "\n      - name: Run clippy\n        if: matrix.rust == '@@RUST_VALUE@@'\n        run: cargo clippy --all-targets --all-features -- -D warnings\n\n",
+              "count": 1,
+              "job": "test"
+            }
+          ]
+        },
+        {
+          "path": ".github/workflows/release.yml",
+          "mode": "100644",
+          "adapters": [
+            {
+              "kind": "plain",
+              "template": "  RUST_VERSION: @@RUST_VALUE@@\n",
+              "count": 1,
+              "job": "RUST_VERSION"
+            }
+          ]
+        },
+        {
+          "path": "Dockerfile",
+          "mode": "100644",
+          "adapters": [
+            {
+              "kind": "plain",
+              "template": "# Install requested components as root before any source is built.\n\n# Verified Rust @@RUST_VALUE@@ on Debian 13 (trixie); multi-arch index digest\nFROM @@IMAGE_trixie@@ AS builder\n\n",
+              "count": 1
+            },
+            {
+              "kind": "image:trixie",
+              "template": "\n# Verified Rust @@RUST_plain@@ on Debian 13 (trixie); multi-arch index digest\nFROM @@RUST_VALUE@@ AS builder\n\n# Install the source-requested components as root before unprivileged builds.\n",
+              "count": 1
+            },
+            {
+              "kind": "plain",
+              "template": "\n# Install the source-requested components as root before unprivileged builds.\nENV RUST_VERSION=@@RUST_VALUE@@\nRUN rustup component add --toolchain @@RUST_plain@@ rustfmt clippy \\\n    && rustup default @@RUST_plain@@ \\\n",
+              "count": 1
+            },
+            {
+              "kind": "plain",
+              "template": "# Install the source-requested components as root before unprivileged builds.\nENV RUST_VERSION=@@RUST_plain@@\nRUN rustup component add --toolchain @@RUST_VALUE@@ rustfmt clippy \\\n    && rustup default @@RUST_plain@@ \\\n    && test \"$(rustc --version | cut -d ' ' -f 2)\" = \"@@RUST_plain@@\"\n",
+              "count": 1
+            },
+            {
+              "kind": "plain",
+              "template": "ENV RUST_VERSION=@@RUST_plain@@\nRUN rustup component add --toolchain @@RUST_plain@@ rustfmt clippy \\\n    && rustup default @@RUST_VALUE@@ \\\n    && test \"$(rustc --version | cut -d ' ' -f 2)\" = \"@@RUST_plain@@\"\n\n",
+              "count": 1
+            },
+            {
+              "kind": "plain",
+              "template": "RUN rustup component add --toolchain @@RUST_plain@@ rustfmt clippy \\\n    && rustup default @@RUST_plain@@ \\\n    && test \"$(rustc --version | cut -d ' ' -f 2)\" = \"@@RUST_VALUE@@\"\n\n# tini is installed here so the runtime stage can copy it out: distroless ships\n",
+              "count": 1
+            }
+          ]
+        },
+        {
+          "path": "rust-toolchain.toml",
+          "mode": "100644",
+          "adapters": [
+            {
+              "kind": "plain",
+              "template": "[toolchain]\nchannel = \"@@RUST_VALUE@@\"\nprofile = \"minimal\"\ncomponents = [\"rustfmt\", \"clippy\"]\n",
+              "count": 1
+            }
+          ]
+        }
+      ],
+      "preserved_roles": [
+        "Cargo rust-version and MSRV",
+        "beta and nightly",
+        "legacy, fuzz, vendor and historical fixtures"
+      ]
+    },
+    {
+      "repository": "ThreatFlux/file-scanner",
+      "id": 992695372,
+      "default_branch": "main",
+      "reviewed_source_sha": "1ca94d0b8eb7b8f803d519687e190dcf7a465992",
+      "files": [
+        {
+          "path": ".github/workflows/ci.yml",
+          "mode": "100644",
+          "adapters": [
+            {
+              "kind": "plain",
+              "template": "        id: cache-key\n        run: |\n          echo \"key=${WORKFLOW_VALUE_0}-rust-@@RUST_VALUE@@-cargo-${WORKFLOW_VALUE_1}-${WORKFLOW_VALUE_2}\" >> \"$GITHUB_OUTPUT\"\n\n        env:\n",
+              "count": 1,
+              "job": "build-cache"
+            },
+            {
+              "kind": "plain",
+              "template": "          components: rustfmt, clippy\n\n          toolchain: @@RUST_VALUE@@\n      - name: Install sccache\n        uses: mozilla-actions/sccache-action@fc920bf0ec8de6ee65d409111f7ec508035751ba # v0.0.11\n",
+              "count": 1,
+              "job": "build-cache"
+            },
+            {
+              "kind": "plain",
+              "template": "          key: target-debug0-${{ steps.cache-key.outputs.key }}-build\n          restore-keys: |\n            target-debug0-${{ runner.os }}-rust-@@RUST_VALUE@@-cargo-\n\n      - name: Monitor disk space during build\n",
+              "count": 1,
+              "job": "build-cache"
+            },
+            {
+              "kind": "plain",
+              "template": "          components: rustfmt, clippy\n\n          toolchain: @@RUST_VALUE@@\n      - name: Install sccache\n        uses: mozilla-actions/sccache-action@fc920bf0ec8de6ee65d409111f7ec508035751ba # v0.0.11\n",
+              "count": 1,
+              "job": "lint"
+            },
+            {
+              "kind": "plain",
+              "template": "          key: target-debug0-${{ needs.build-cache.outputs.cache-key }}-build\n          restore-keys: |\n            target-debug0-${{ runner.os }}-rust-@@RUST_VALUE@@-cargo-\n\n      - name: Check formatting\n",
+              "count": 1,
+              "job": "lint"
+            },
+            {
+              "kind": "plain",
+              "template": "        os: [ubuntu-latest, macos-latest]\n        rust:\n          - @@RUST_VALUE@@\n          - beta\n    env:\n",
+              "count": 1,
+              "job": "test"
+            },
+            {
+              "kind": "plain",
+              "template": "      - uses: dtolnay/rust-toolchain@683b588c487a69d01f6c6ddf40f036ff682cc2c8 # v1\n        with:\n          toolchain: \"@@RUST_VALUE@@\"\n      - name: Verify actual reviewed public-key modules against OpenSSL vectors\n        run: cargo test --manifest-path ci/yara-crypto-compat/Cargo.toml --locked --all-features\n",
+              "count": 1,
+              "job": "yara-crypto-compat"
+            },
+            {
+              "kind": "plain",
+              "template": "        uses: dtolnay/rust-toolchain@683b588c487a69d01f6c6ddf40f036ff682cc2c8 # v1\n        with:\n          toolchain: @@RUST_VALUE@@\n      - name: Install sccache\n        uses: mozilla-actions/sccache-action@fc920bf0ec8de6ee65d409111f7ec508035751ba # v0.0.11\n",
+              "count": 1,
+              "job": "integration-test"
+            },
+            {
+              "kind": "plain",
+              "template": "          key: target-debug0-${{ needs.build-cache.outputs.cache-key }}-build\n          restore-keys: |\n            target-debug0-${{ runner.os }}-rust-@@RUST_VALUE@@-cargo-\n\n      - name: Make scripts executable\n",
+              "count": 1,
+              "job": "integration-test"
+            },
+            {
+              "kind": "plain",
+              "template": "          components: llvm-tools-preview\n\n          toolchain: @@RUST_VALUE@@\n      - name: Install sccache\n        uses: mozilla-actions/sccache-action@fc920bf0ec8de6ee65d409111f7ec508035751ba # v0.0.11\n",
+              "count": 1,
+              "job": "coverage"
+            },
+            {
+              "kind": "plain",
+              "template": "          restore-keys: |\n            target-debug0-${{ needs.build-cache.outputs.cache-key }}-build\n            target-debug0-${{ runner.os }}-rust-@@RUST_VALUE@@-cargo-\n\n      - name: Install cargo-llvm-cov (faster than tarpaulin)\n",
+              "count": 1,
+              "job": "coverage"
+            },
+            {
+              "kind": "plain",
+              "template": "        uses: dtolnay/rust-toolchain@683b588c487a69d01f6c6ddf40f036ff682cc2c8 # v1\n        with:\n          toolchain: @@RUST_VALUE@@\n      - name: Install cargo-audit\n        run: |\n",
+              "count": 1,
+              "job": "security-audit"
+            },
+            {
+              "kind": "plain",
+              "template": "        uses: dtolnay/rust-toolchain@683b588c487a69d01f6c6ddf40f036ff682cc2c8 # v1\n        with:\n          toolchain: @@RUST_VALUE@@\n      - name: Install sccache\n        uses: mozilla-actions/sccache-action@fc920bf0ec8de6ee65d409111f7ec508035751ba # v0.0.11\n",
+              "count": 1,
+              "job": "benchmark"
+            },
+            {
+              "kind": "plain",
+              "template": "          restore-keys: |\n            target-debug0-${{ needs.build-cache.outputs.cache-key }}-build\n            target-debug0-${{ runner.os }}-rust-@@RUST_VALUE@@-cargo-\n\n      - name: Run benchmarks\n",
+              "count": 1,
+              "job": "benchmark"
+            },
+            {
+              "kind": "plain",
+              "template": "        uses: dtolnay/rust-toolchain@683b588c487a69d01f6c6ddf40f036ff682cc2c8 # v1\n        with:\n          toolchain: @@RUST_VALUE@@\n      - name: Cache cargo build\n        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0\n",
+              "count": 1,
+              "job": "mcp-test"
+            },
+            {
+              "kind": "plain",
+              "template": "          key: target-debug0-${{ needs.build-cache.outputs.cache-key }}-build\n          restore-keys: |\n            target-debug0-${{ runner.os }}-rust-@@RUST_VALUE@@-cargo-\n\n      - name: Build release binary\n",
+              "count": 1,
+              "job": "mcp-test"
+            }
+          ]
+        },
+        {
+          "path": ".github/workflows/performance.yml",
+          "mode": "100644",
+          "adapters": [
+            {
+              "kind": "plain",
+              "template": "        uses: dtolnay/rust-toolchain@683b588c487a69d01f6c6ddf40f036ff682cc2c8 # v1\n        with:\n          toolchain: @@RUST_VALUE@@\n      - name: Install system dependencies\n        run: |\n",
+              "count": 1,
+              "job": "benchmark"
+            },
+            {
+              "kind": "plain",
+              "template": "        uses: dtolnay/rust-toolchain@683b588c487a69d01f6c6ddf40f036ff682cc2c8 # v1\n        with:\n          toolchain: @@RUST_VALUE@@\n      - name: Install Valgrind\n        run: |\n",
+              "count": 1,
+              "job": "memory-profiling"
+            },
+            {
+              "kind": "plain",
+              "template": "        uses: dtolnay/rust-toolchain@683b588c487a69d01f6c6ddf40f036ff682cc2c8 # v1\n        with:\n          toolchain: @@RUST_VALUE@@\n      - name: Clean build timing\n        run: |\n",
+              "count": 1,
+              "job": "compile-time-benchmark"
+            }
+          ]
+        },
+        {
+          "path": ".github/workflows/release.yml",
+          "mode": "100644",
+          "adapters": [
+            {
+              "kind": "plain",
+              "template": "  RUST_VERSION: @@RUST_VALUE@@\n",
+              "count": 1,
+              "job": "RUST_VERSION"
+            },
+            {
+              "kind": "plain",
+              "template": "  RUSTUP_TOOLCHAIN: @@RUST_VALUE@@\n  # The crate is threatflux-file-scanner (crates.io treats - and _ alike, so the\n  # unrelated file_scanner crate owns the file-scanner name); the binary, the\n",
+              "count": 1,
+              "job": "RUSTUP_TOOLCHAIN"
+            }
+          ]
+        },
+        {
+          "path": ".github/workflows/security.yml",
+          "mode": "100644",
+          "adapters": [
+            {
+              "kind": "plain",
+              "template": "        uses: dtolnay/rust-toolchain@683b588c487a69d01f6c6ddf40f036ff682cc2c8 # v1\n        with:\n          toolchain: @@RUST_VALUE@@\n      - name: Cache cargo registry\n        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0\n",
+              "count": 1,
+              "job": "security-audit"
+            },
+            {
+              "kind": "plain",
+              "template": "        uses: dtolnay/rust-toolchain@683b588c487a69d01f6c6ddf40f036ff682cc2c8 # v1\n        with:\n          toolchain: @@RUST_VALUE@@\n      - name: Install build dependencies\n        run: |\n",
+              "count": 1,
+              "job": "codeql-analysis"
+            },
+            {
+              "kind": "plain",
+              "template": "        uses: dtolnay/rust-toolchain@683b588c487a69d01f6c6ddf40f036ff682cc2c8 # v1\n        with:\n          toolchain: @@RUST_VALUE@@\n      - name: Generate SBOM\n        run: |\n",
+              "count": 1,
+              "job": "supply-chain-security"
+            }
+          ]
+        },
+        {
+          "path": "Dockerfile",
+          "mode": "100644",
+          "adapters": [
+            {
+              "kind": "plain",
+              "template": "# Dependabot tracks both image references. See docs/security for fix evidence.\n\n# rust @@RUST_VALUE@@ on Debian 13 (trixie); multi-arch index digest\nFROM @@IMAGE_trixie@@ AS rust-base\n\n",
+              "count": 1
+            },
+            {
+              "kind": "image:trixie",
+              "template": "\n# rust @@RUST_plain@@ on Debian 13 (trixie); multi-arch index digest\nFROM @@RUST_VALUE@@ AS rust-base\n\n# Install every requested component before the nonroot builder enters the repo.\n",
+              "count": 1
+            },
+            {
+              "kind": "plain",
+              "template": "\n# Install every requested component before the nonroot builder enters the repo.\nENV RUST_VERSION=@@RUST_VALUE@@\nRUN rustup component add --toolchain @@RUST_plain@@ clippy rustfmt llvm-tools-preview && \\\n    rustc --version | grep -q '^rustc @@RUST_bracketed@@ '\n",
+              "count": 1
+            },
+            {
+              "kind": "plain",
+              "template": "# Install every requested component before the nonroot builder enters the repo.\nENV RUST_VERSION=@@RUST_plain@@\nRUN rustup component add --toolchain @@RUST_VALUE@@ clippy rustfmt llvm-tools-preview && \\\n    rustc --version | grep -q '^rustc @@RUST_bracketed@@ '\n\n",
+              "count": 1
+            },
+            {
+              "kind": "bracketed",
+              "template": "ENV RUST_VERSION=@@RUST_plain@@\nRUN rustup component add --toolchain @@RUST_plain@@ clippy rustfmt llvm-tools-preview && \\\n    rustc --version | grep -q '^rustc @@RUST_VALUE@@ '\n\nARG VERSION=0.3.5\n",
+              "count": 1
+            }
+          ]
+        },
+        {
+          "path": "Makefile",
+          "mode": "100644",
+          "adapters": [
+            {
+              "kind": "plain",
+              "template": "CARGO ?= cargo\nRUST_MSRV ?= 1.97.1\nRUST_TOOLCHAIN ?= @@RUST_VALUE@@\nMSRV_TARGET_DIR ?= $(if $(CARGO_TARGET_DIR),$(CARGO_TARGET_DIR)/msrv,target/msrv)\nBINARY_NAME ?= file-scanner\n",
+              "count": 1
+            }
+          ]
+        },
+        {
+          "path": "rust-toolchain.toml",
+          "mode": "100644",
+          "adapters": [
+            {
+              "kind": "plain",
+              "template": "[toolchain]\nchannel = \"@@RUST_VALUE@@\"\ncomponents = [\"clippy\", \"rustfmt\", \"llvm-tools-preview\"]\n",
+              "count": 1
+            }
+          ]
+        }
+      ],
+      "preserved_roles": [
+        "Cargo rust-version and MSRV",
+        "beta and nightly",
+        "legacy, fuzz, vendor and historical fixtures"
+      ]
+    },
+    {
+      "repository": "ThreatFlux/gguf",
+      "id": 1047697546,
+      "default_branch": "main",
+      "reviewed_source_sha": "551ff7e1fccbbffbfd1777a9b26f247b29bdc657",
+      "files": [
+        {
+          "path": ".github/workflows/ci.yml",
+          "mode": "100644",
+          "adapters": [
+            {
+              "kind": "plain",
+              "template": "  RUSTUP_TOOLCHAIN: @@RUST_VALUE@@\n",
+              "count": 1,
+              "job": "RUSTUP_TOOLCHAIN"
+            },
+            {
+              "kind": "plain",
+              "template": "  quality:\n    name: Quality (Rust @@RUST_VALUE@@)\n    runs-on: ubuntu-latest\n    steps:\n",
+              "count": 1,
+              "job": "quality"
+            },
+            {
+              "kind": "plain",
+              "template": "        uses: dtolnay/rust-toolchain@683b588c487a69d01f6c6ddf40f036ff682cc2c8 # v1\n        with:\n          toolchain: @@RUST_VALUE@@\n          components: rustfmt, clippy\n\n",
+              "count": 1,
+              "job": "quality"
+            },
+            {
+              "kind": "plain",
+              "template": "            ~/.cargo/git\n            target\n          key: ${{ runner.os }}-cargo-@@RUST_VALUE@@-${{ hashFiles('**/Cargo.lock') }}\n\n      - name: Check formatting\n",
+              "count": 1,
+              "job": "quality"
+            },
+            {
+              "kind": "plain",
+              "template": "        uses: dtolnay/rust-toolchain@683b588c487a69d01f6c6ddf40f036ff682cc2c8 # v1\n        with:\n          toolchain: @@RUST_VALUE@@\n\n      - name: Verify active compiler\n",
+              "count": 1,
+              "job": "feature-sets"
+            },
+            {
+              "kind": "plain",
+              "template": "            ~/.cargo/git\n            target\n          key: ${{ runner.os }}-cargo-features-@@RUST_VALUE@@-${{ hashFiles('**/Cargo.lock') }}\n\n      - name: Check default library features\n",
+              "count": 1,
+              "job": "feature-sets"
+            },
+            {
+              "kind": "plain",
+              "template": "        include:\n          - os: windows-latest\n            rust: @@RUST_VALUE@@\n            experimental: false\n          - os: macos-latest\n",
+              "count": 1,
+              "job": "compatibility"
+            },
+            {
+              "kind": "plain",
+              "template": "            experimental: false\n          - os: macos-latest\n            rust: @@RUST_VALUE@@\n            experimental: false\n          - os: ubuntu-latest\n",
+              "count": 1,
+              "job": "compatibility"
+            },
+            {
+              "kind": "plain",
+              "template": "        uses: dtolnay/rust-toolchain@683b588c487a69d01f6c6ddf40f036ff682cc2c8 # v1\n        with:\n          toolchain: @@RUST_VALUE@@\n          components: llvm-tools-preview\n\n",
+              "count": 1,
+              "job": "coverage"
+            }
+          ]
+        },
+        {
+          "path": ".github/workflows/codeql.yml",
+          "mode": "100644",
+          "adapters": [
+            {
+              "kind": "plain",
+              "template": "  RUSTUP_TOOLCHAIN: @@RUST_VALUE@@\n\njobs:\n",
+              "count": 1,
+              "job": "RUSTUP_TOOLCHAIN"
+            },
+            {
+              "kind": "plain",
+              "template": "        uses: dtolnay/rust-toolchain@683b588c487a69d01f6c6ddf40f036ff682cc2c8 # v1\n        with:\n          toolchain: @@RUST_VALUE@@\n\n      - name: Verify active compiler\n",
+              "count": 1,
+              "job": "analyze"
+            }
+          ]
+        },
+        {
+          "path": ".github/workflows/docs.yml",
+          "mode": "100644",
+          "adapters": [
+            {
+              "kind": "plain",
+              "template": "  RUSTUP_TOOLCHAIN: @@RUST_VALUE@@\n",
+              "count": 1,
+              "job": "RUSTUP_TOOLCHAIN"
+            },
+            {
+              "kind": "plain",
+              "template": "        uses: dtolnay/rust-toolchain@683b588c487a69d01f6c6ddf40f036ff682cc2c8 # v1\n        with:\n          toolchain: @@RUST_VALUE@@\n\n      - name: Verify active compiler\n",
+              "count": 1,
+              "job": "build-docs"
+            },
+            {
+              "kind": "plain",
+              "template": "            ~/.cargo/registry\n            ~/.cargo/git\n          key: ${{ runner.os }}-cargo-docs-@@RUST_VALUE@@-${{ hashFiles('**/Cargo.lock') }}\n\n      - name: Build documentation\n",
+              "count": 1,
+              "job": "build-docs"
+            }
+          ]
+        },
+        {
+          "path": ".github/workflows/release.yml",
+          "mode": "100644",
+          "adapters": [
+            {
+              "kind": "plain",
+              "template": "  RUSTUP_TOOLCHAIN: @@RUST_VALUE@@\n",
+              "count": 1,
+              "job": "RUSTUP_TOOLCHAIN"
+            },
+            {
+              "kind": "plain",
+              "template": "        uses: dtolnay/rust-toolchain@683b588c487a69d01f6c6ddf40f036ff682cc2c8 # v1\n        with:\n          toolchain: @@RUST_VALUE@@\n\n      - name: Verify active compiler\n",
+              "count": 1,
+              "job": "verify-package"
+            },
+            {
+              "kind": "plain",
+              "template": "        uses: dtolnay/rust-toolchain@683b588c487a69d01f6c6ddf40f036ff682cc2c8 # v1\n        with:\n          toolchain: @@RUST_VALUE@@\n          targets: ${{ matrix.target }}\n\n",
+              "count": 1,
+              "job": "build"
+            },
+            {
+              "kind": "plain",
+              "template": "        uses: dtolnay/rust-toolchain@683b588c487a69d01f6c6ddf40f036ff682cc2c8 # v1\n        with:\n          toolchain: @@RUST_VALUE@@\n\n      - name: Install cargo-cyclonedx\n",
+              "count": 1,
+              "job": "sbom"
+            },
+            {
+              "kind": "plain",
+              "template": "        uses: dtolnay/rust-toolchain@683b588c487a69d01f6c6ddf40f036ff682cc2c8 # v1\n        with:\n          toolchain: @@RUST_VALUE@@\n\n      - name: Verify active compiler\n",
+              "count": 1,
+              "job": "publish-crate"
+            }
+          ]
+        },
+        {
+          "path": ".github/workflows/security.yml",
+          "mode": "100644",
+          "adapters": [
+            {
+              "kind": "plain",
+              "template": "  RUSTUP_TOOLCHAIN: @@RUST_VALUE@@\n\njobs:\n",
+              "count": 1,
+              "job": "RUSTUP_TOOLCHAIN"
+            },
+            {
+              "kind": "plain",
+              "template": "        uses: dtolnay/rust-toolchain@683b588c487a69d01f6c6ddf40f036ff682cc2c8 # v1\n        with:\n          toolchain: @@RUST_VALUE@@\n\n      - name: Verify active compiler\n",
+              "count": 1,
+              "job": "cargo-deny"
+            },
+            {
+              "kind": "plain",
+              "template": "        uses: dtolnay/rust-toolchain@683b588c487a69d01f6c6ddf40f036ff682cc2c8 # v1\n        with:\n          toolchain: @@RUST_VALUE@@\n\n      - name: Verify active compiler\n",
+              "count": 1,
+              "job": "cargo-audit"
+            },
+            {
+              "kind": "plain",
+              "template": "          package: gguf-rs-lib\n          baseline-rev: ${{ github.event.pull_request.base.sha }}\n          rust-toolchain: @@RUST_VALUE@@\n",
+              "count": 1,
+              "job": "semver"
+            }
+          ]
+        },
+        {
+          "path": "rust-toolchain.toml",
+          "mode": "100644",
+          "adapters": [
+            {
+              "kind": "plain",
+              "template": "[toolchain]\nchannel = \"@@RUST_VALUE@@\"\nprofile = \"minimal\"\ncomponents = [\"rustfmt\", \"clippy\"]\n",
+              "count": 1
+            }
+          ]
+        }
+      ],
+      "preserved_roles": [
+        "Cargo rust-version and MSRV",
+        "beta and nightly",
+        "legacy, fuzz, vendor and historical fixtures"
+      ]
+    },
+    {
+      "repository": "ThreatFlux/github_actions",
+      "id": 1195672051,
+      "default_branch": "main",
+      "reviewed_source_sha": "c0af79c1d1cbce16cb627d1301942ac668c98beb",
+      "files": [
+        {
+          "path": ".github/workflows/ci.yml",
+          "mode": "100644",
+          "adapters": [
+            {
+              "kind": "plain",
+              "template": "  RUST_STABLE_VERSION: @@RUST_VALUE@@\n",
+              "count": 1,
+              "job": "RUST_STABLE_VERSION"
+            },
+            {
+              "kind": "plain",
+              "template": "  RUSTUP_TOOLCHAIN: @@RUST_VALUE@@\n\njobs:\n",
+              "count": 1,
+              "job": "RUSTUP_TOOLCHAIN"
+            },
+            {
+              "kind": "plain",
+              "template": "    continue-on-error: ${{ matrix.rust == 'nightly' }}\n    env:\n      RUSTUP_TOOLCHAIN: ${{ matrix.rust == 'stable' && '@@RUST_VALUE@@' || matrix.rust }}\n\n    steps:\n",
+              "count": 1,
+              "job": "test"
+            }
+          ]
+        },
+        {
+          "path": ".github/workflows/release.yml",
+          "mode": "100644",
+          "adapters": [
+            {
+              "kind": "plain",
+              "template": "  RUST_VERSION: @@RUST_VALUE@@\n",
+              "count": 1,
+              "job": "RUST_VERSION"
+            },
+            {
+              "kind": "plain",
+              "template": "  RUSTUP_TOOLCHAIN: @@RUST_VALUE@@\n",
+              "count": 1,
+              "job": "RUSTUP_TOOLCHAIN"
+            }
+          ]
+        },
+        {
+          "path": ".github/workflows/security.yml",
+          "mode": "100644",
+          "adapters": [
+            {
+              "kind": "plain",
+              "template": "    env:\n      CARGO_TERM_COLOR: always\n      RUST_VERSION: @@RUST_VALUE@@\n      RUSTUP_TOOLCHAIN: @@RUST_plain@@\n      BINARY_NAME: ${{ vars.RUST_TEMPLATE_BINARY_NAME || 'github-actions-maintainer' }}\n",
+              "count": 1,
+              "job": "audit"
+            },
+            {
+              "kind": "plain",
+              "template": "      CARGO_TERM_COLOR: always\n      RUST_VERSION: @@RUST_plain@@\n      RUSTUP_TOOLCHAIN: @@RUST_VALUE@@\n      BINARY_NAME: ${{ vars.RUST_TEMPLATE_BINARY_NAME || 'github-actions-maintainer' }}\n      SBOM_MANIFEST_PATH: ${{ vars.RUST_TEMPLATE_SBOM_MANIFEST_PATH || 'Cargo.toml' }}\n",
+              "count": 1,
+              "job": "audit"
+            },
+            {
+              "kind": "plain",
+              "template": "    env:\n      CARGO_TERM_COLOR: always\n      RUST_VERSION: @@RUST_VALUE@@\n      RUSTUP_TOOLCHAIN: @@RUST_plain@@\n      BINARY_NAME: ${{ vars.RUST_TEMPLATE_BINARY_NAME || 'github-actions-maintainer' }}\n",
+              "count": 1,
+              "job": "deny"
+            },
+            {
+              "kind": "plain",
+              "template": "      CARGO_TERM_COLOR: always\n      RUST_VERSION: @@RUST_plain@@\n      RUSTUP_TOOLCHAIN: @@RUST_VALUE@@\n      BINARY_NAME: ${{ vars.RUST_TEMPLATE_BINARY_NAME || 'github-actions-maintainer' }}\n      SBOM_MANIFEST_PATH: ${{ vars.RUST_TEMPLATE_SBOM_MANIFEST_PATH || 'Cargo.toml' }}\n",
+              "count": 1,
+              "job": "deny"
+            },
+            {
+              "kind": "plain",
+              "template": "    env:\n      CARGO_TERM_COLOR: always\n      RUST_VERSION: @@RUST_VALUE@@\n      RUSTUP_TOOLCHAIN: @@RUST_plain@@\n      BINARY_NAME: ${{ vars.RUST_TEMPLATE_BINARY_NAME || 'github-actions-maintainer' }}\n",
+              "count": 1,
+              "job": "supply-chain"
+            },
+            {
+              "kind": "plain",
+              "template": "      CARGO_TERM_COLOR: always\n      RUST_VERSION: @@RUST_plain@@\n      RUSTUP_TOOLCHAIN: @@RUST_VALUE@@\n      BINARY_NAME: ${{ vars.RUST_TEMPLATE_BINARY_NAME || 'github-actions-maintainer' }}\n      SBOM_MANIFEST_PATH: ${{ vars.RUST_TEMPLATE_SBOM_MANIFEST_PATH || 'Cargo.toml' }}\n",
+              "count": 1,
+              "job": "supply-chain"
+            }
+          ]
+        },
+        {
+          "path": "Dockerfile",
+          "mode": "100644",
+          "adapters": [
+            {
+              "kind": "plain",
+              "template": "    rm -rf /var/lib/apt/lists/*\n\n# Rust @@RUST_VALUE@@ on Alpine 3.24 (musl); multi-arch index digest\nFROM @@IMAGE_alpine3.24@@ AS rust-base\n\n",
+              "count": 1
+            },
+            {
+              "kind": "image:alpine3.24",
+              "template": "\n# Rust @@RUST_plain@@ on Alpine 3.24 (musl); multi-arch index digest\nFROM @@RUST_VALUE@@ AS rust-base\n\n# Install the repository's requested components before exporting the toolchain\n",
+              "count": 1
+            },
+            {
+              "kind": "plain",
+              "template": "# Install the repository's requested components before exporting the toolchain\n# image or switching to the unprivileged builder.\nRUN rustup toolchain install @@RUST_VALUE@@ --profile minimal --no-self-update \\\n      --component rustfmt --component clippy --component llvm-tools-preview && \\\n    rustup default @@RUST_plain@@ && \\\n",
+              "count": 1
+            },
+            {
+              "kind": "plain",
+              "template": "RUN rustup toolchain install @@RUST_plain@@ --profile minimal --no-self-update \\\n      --component rustfmt --component clippy --component llvm-tools-preview && \\\n    rustup default @@RUST_VALUE@@ && \\\n    test \"$(rustc --version | cut -d ' ' -f 2)\" = @@RUST_plain@@\n\n",
+              "count": 1
+            },
+            {
+              "kind": "plain",
+              "template": "      --component rustfmt --component clippy --component llvm-tools-preview && \\\n    rustup default @@RUST_plain@@ && \\\n    test \"$(rustc --version | cut -d ' ' -f 2)\" = @@RUST_VALUE@@\n\nARG VERSION=0.0.0\n",
+              "count": 1
+            }
+          ]
+        },
+        {
+          "path": "Makefile",
+          "mode": "100644",
+          "adapters": [
+            {
+              "kind": "plain",
+              "template": "CARGO ?= cargo\nRUST_MSRV ?= 1.97.1\nRUST_TOOLCHAIN ?= @@RUST_VALUE@@\nexport RUSTUP_TOOLCHAIN := $(RUST_TOOLCHAIN)\n\n",
+              "count": 1
+            }
+          ]
+        },
+        {
+          "path": "rust-toolchain.toml",
+          "mode": "100644",
+          "adapters": [
+            {
+              "kind": "plain",
+              "template": "[toolchain]\nchannel = \"@@RUST_VALUE@@\"\ncomponents = [\"clippy\", \"rustfmt\", \"llvm-tools-preview\"]\n",
+              "count": 1
+            }
+          ]
+        }
+      ],
+      "preserved_roles": [
+        "Cargo rust-version and MSRV",
+        "beta and nightly",
+        "legacy, fuzz, vendor and historical fixtures"
+      ]
+    },
+    {
+      "repository": "ThreatFlux/ollama_rust_sdk",
+      "id": 1047304816,
+      "default_branch": "main",
+      "reviewed_source_sha": "9d16b0862fa68b200d76df8dd1c18ce6f02f0a8d",
+      "files": [
+        {
+          "path": ".github/workflows/ci.yml",
+          "mode": "100644",
+          "adapters": [
+            {
+              "kind": "plain",
+              "template": "  RUST_STABLE_VERSION: @@RUST_VALUE@@\n",
+              "count": 1,
+              "job": "RUST_STABLE_VERSION"
+            },
+            {
+              "kind": "plain",
+              "template": "\n    env:\n      RUSTUP_TOOLCHAIN: ${{ matrix.rust == 'stable' && '@@RUST_VALUE@@' || matrix.rust }}\n    steps:\n      - name: Checkout\n",
+              "count": 1,
+              "job": "test"
+            }
+          ]
+        },
+        {
+          "path": ".github/workflows/code-quality.yml",
+          "mode": "100644",
+          "adapters": [
+            {
+              "kind": "plain",
+              "template": "  RUST_STABLE_VERSION: @@RUST_VALUE@@\n\njobs:\n",
+              "count": 1,
+              "job": "RUST_STABLE_VERSION"
+            }
+          ]
+        },
+        {
+          "path": ".github/workflows/codeql.yml",
+          "mode": "100644",
+          "adapters": [
+            {
+              "kind": "plain",
+              "template": "        uses: dtolnay/rust-toolchain@683b588c487a69d01f6c6ddf40f036ff682cc2c8 # pinned master commit\n        with:\n          toolchain: @@RUST_VALUE@@\n\n      - name: Build\n",
+              "count": 1,
+              "job": "analyze"
+            }
+          ]
+        },
+        {
+          "path": ".github/workflows/dependencies.yml",
+          "mode": "100644",
+          "adapters": [
+            {
+              "kind": "plain",
+              "template": "  RUST_VERSION: @@RUST_VALUE@@\n\njobs:\n",
+              "count": 1,
+              "job": "RUST_VERSION"
+            }
+          ]
+        },
+        {
+          "path": ".github/workflows/docs.yml",
+          "mode": "100644",
+          "adapters": [
+            {
+              "kind": "plain",
+              "template": "  RUST_VERSION: @@RUST_VALUE@@\n\njobs:\n",
+              "count": 1,
+              "job": "RUST_VERSION"
+            }
+          ]
+        },
+        {
+          "path": ".github/workflows/ollama-integration.yml",
+          "mode": "100644",
+          "adapters": [
+            {
+              "kind": "plain",
+              "template": "  RUST_VERSION: @@RUST_VALUE@@\n\njobs:\n",
+              "count": 1,
+              "job": "RUST_VERSION"
+            }
+          ]
+        },
+        {
+          "path": ".github/workflows/release.yml",
+          "mode": "100644",
+          "adapters": [
+            {
+              "kind": "plain",
+              "template": "  RUST_VERSION: @@RUST_VALUE@@\n",
+              "count": 1,
+              "job": "RUST_VERSION"
+            }
+          ]
+        },
+        {
+          "path": ".github/workflows/security.yml",
+          "mode": "100644",
+          "adapters": [
+            {
+              "kind": "plain",
+              "template": "  RUST_VERSION: @@RUST_VALUE@@\n\njobs:\n",
+              "count": 1,
+              "job": "RUST_VERSION"
+            }
+          ]
+        },
+        {
+          "path": "Dockerfile",
+          "mode": "100644",
+          "adapters": [
+            {
+              "kind": "plain",
+              "template": "    rm -rf /var/lib/apt/lists/*\n\n# Verified Rust @@RUST_VALUE@@ on Alpine 3.24 (musl); multi-arch index digest\nFROM @@IMAGE_alpine3.24@@ AS rust-base\n\n",
+              "count": 1
+            },
+            {
+              "kind": "image:alpine3.24",
+              "template": "\n# Verified Rust @@RUST_plain@@ on Alpine 3.24 (musl); multi-arch index digest\nFROM @@RUST_VALUE@@ AS rust-base\n\n# Install the source-requested components as root before unprivileged builds.\n",
+              "count": 1
+            },
+            {
+              "kind": "plain",
+              "template": "\n# Install the source-requested components as root before unprivileged builds.\nENV RUST_VERSION=@@RUST_VALUE@@\nRUN rustup component add --toolchain @@RUST_plain@@ clippy rustfmt llvm-tools-preview \\\n    && rustup default @@RUST_plain@@ \\\n",
+              "count": 1
+            },
+            {
+              "kind": "plain",
+              "template": "# Install the source-requested components as root before unprivileged builds.\nENV RUST_VERSION=@@RUST_plain@@\nRUN rustup component add --toolchain @@RUST_VALUE@@ clippy rustfmt llvm-tools-preview \\\n    && rustup default @@RUST_plain@@ \\\n    && test \"$(rustc --version | cut -d ' ' -f 2)\" = \"@@RUST_plain@@\"\n",
+              "count": 1
+            },
+            {
+              "kind": "plain",
+              "template": "ENV RUST_VERSION=@@RUST_plain@@\nRUN rustup component add --toolchain @@RUST_plain@@ clippy rustfmt llvm-tools-preview \\\n    && rustup default @@RUST_VALUE@@ \\\n    && test \"$(rustc --version | cut -d ' ' -f 2)\" = \"@@RUST_plain@@\"\n\n",
+              "count": 1
+            },
+            {
+              "kind": "plain",
+              "template": "RUN rustup component add --toolchain @@RUST_plain@@ clippy rustfmt llvm-tools-preview \\\n    && rustup default @@RUST_plain@@ \\\n    && test \"$(rustc --version | cut -d ' ' -f 2)\" = \"@@RUST_VALUE@@\"\n\nARG VERSION=0.0.0\n",
+              "count": 1
+            }
+          ]
+        },
+        {
+          "path": "Makefile",
+          "mode": "100644",
+          "adapters": [
+            {
+              "kind": "plain",
+              "template": "CARGO ?= cargo\nRUST_MSRV ?= 1.97.1\nRUST_TOOLCHAIN ?= @@RUST_VALUE@@\nBINARY_NAME ?= ollama-cli\nBINARY_PACKAGE ?=\n",
+              "count": 1
+            }
+          ]
+        },
+        {
+          "path": "rust-toolchain.toml",
+          "mode": "100644",
+          "adapters": [
+            {
+              "kind": "plain",
+              "template": "[toolchain]\nchannel = \"@@RUST_VALUE@@\"\ncomponents = [\"clippy\", \"rustfmt\", \"llvm-tools-preview\"]\n",
+              "count": 1
+            }
+          ]
+        }
+      ],
+      "preserved_roles": [
+        "Cargo rust-version and MSRV",
+        "beta and nightly",
+        "legacy, fuzz, vendor and historical fixtures"
+      ]
+    },
+    {
+      "repository": "ThreatFlux/openai_rust_sdk",
+      "id": 1040313051,
+      "default_branch": "main",
+      "reviewed_source_sha": "5f2b8677f1903303e298a19ceac34bf260156e38",
+      "files": [
+        {
+          "path": ".github/workflows/ci.yml",
+          "mode": "100644",
+          "adapters": [
+            {
+              "kind": "plain",
+              "template": "  RUST_STABLE_VERSION: @@RUST_VALUE@@\n",
+              "count": 1,
+              "job": "RUST_STABLE_VERSION"
+            },
+            {
+              "kind": "plain",
+              "template": "    continue-on-error: ${{ matrix.rust == 'nightly' }}\n    env:\n      RUSTUP_TOOLCHAIN: ${{ matrix.rust == 'stable' && '@@RUST_VALUE@@' || matrix.rust }}\n    steps:\n      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1\n",
+              "count": 1,
+              "job": "test"
+            }
+          ]
+        },
+        {
+          "path": ".github/workflows/quality.yml",
+          "mode": "100644",
+          "adapters": [
+            {
+              "kind": "plain",
+              "template": "  RUST_VERSION: @@RUST_VALUE@@\n\njobs:\n",
+              "count": 1,
+              "job": "RUST_VERSION"
+            }
+          ]
+        },
+        {
+          "path": ".github/workflows/release.yml",
+          "mode": "100644",
+          "adapters": [
+            {
+              "kind": "plain",
+              "template": "  RUST_VERSION: @@RUST_VALUE@@\n",
+              "count": 1,
+              "job": "RUST_VERSION"
+            },
+            {
+              "kind": "plain",
+              "template": "  RUSTUP_TOOLCHAIN: @@RUST_VALUE@@\n",
+              "count": 1,
+              "job": "RUSTUP_TOOLCHAIN"
+            }
+          ]
+        },
+        {
+          "path": ".github/workflows/security.yml",
+          "mode": "100644",
+          "adapters": [
+            {
+              "kind": "plain",
+              "template": "    env:\n      CARGO_TERM_COLOR: always\n      RUST_VERSION: @@RUST_VALUE@@\n    steps:\n      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1\n",
+              "count": 1,
+              "job": "audit"
+            },
+            {
+              "kind": "plain",
+              "template": "    env:\n      CARGO_TERM_COLOR: always\n      RUST_VERSION: @@RUST_VALUE@@\n    steps:\n      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1\n",
+              "count": 1,
+              "job": "license-check"
+            },
+            {
+              "kind": "plain",
+              "template": "    env:\n      CARGO_TERM_COLOR: always\n      RUST_VERSION: @@RUST_VALUE@@\n    permissions:\n      security-events: write\n",
+              "count": 1,
+              "job": "codeql"
+            },
+            {
+              "kind": "plain",
+              "template": "    env:\n      CARGO_TERM_COLOR: always\n      RUST_VERSION: @@RUST_VALUE@@\n      BINARY_NAME: openai_rust_sdk\n      SBOM_MANIFEST_PATH: Cargo.toml\n",
+              "count": 1,
+              "job": "supply-chain"
+            }
+          ]
+        },
+        {
+          "path": "Dockerfile",
+          "mode": "100644",
+          "adapters": [
+            {
+              "kind": "plain",
+              "template": "    rm -rf /var/lib/apt/lists/*\n\n# Verified Rust @@RUST_VALUE@@ on Alpine 3.24 (musl); multi-arch index digest\nFROM @@IMAGE_alpine3.24@@ AS rust-base\n\n",
+              "count": 1
+            },
+            {
+              "kind": "image:alpine3.24",
+              "template": "\n# Verified Rust @@RUST_plain@@ on Alpine 3.24 (musl); multi-arch index digest\nFROM @@RUST_VALUE@@ AS rust-base\n\n# Install the source-requested components as root before unprivileged builds.\n",
+              "count": 1
+            },
+            {
+              "kind": "plain",
+              "template": "\n# Install the source-requested components as root before unprivileged builds.\nENV RUST_VERSION=@@RUST_VALUE@@\nRUN rustup component add --toolchain @@RUST_plain@@ clippy rustfmt llvm-tools-preview \\\n    && rustup default @@RUST_plain@@ \\\n",
+              "count": 1
+            },
+            {
+              "kind": "plain",
+              "template": "# Install the source-requested components as root before unprivileged builds.\nENV RUST_VERSION=@@RUST_plain@@\nRUN rustup component add --toolchain @@RUST_VALUE@@ clippy rustfmt llvm-tools-preview \\\n    && rustup default @@RUST_plain@@ \\\n    && test \"$(rustc --version | cut -d ' ' -f 2)\" = \"@@RUST_plain@@\"\n",
+              "count": 1
+            },
+            {
+              "kind": "plain",
+              "template": "ENV RUST_VERSION=@@RUST_plain@@\nRUN rustup component add --toolchain @@RUST_plain@@ clippy rustfmt llvm-tools-preview \\\n    && rustup default @@RUST_VALUE@@ \\\n    && test \"$(rustc --version | cut -d ' ' -f 2)\" = \"@@RUST_plain@@\"\n\n",
+              "count": 1
+            },
+            {
+              "kind": "plain",
+              "template": "RUN rustup component add --toolchain @@RUST_plain@@ clippy rustfmt llvm-tools-preview \\\n    && rustup default @@RUST_plain@@ \\\n    && test \"$(rustc --version | cut -d ' ' -f 2)\" = \"@@RUST_VALUE@@\"\n\nARG VERSION=0.0.0\n",
+              "count": 1
+            },
+            {
+              "kind": "plain",
+              "template": "      org.opencontainers.image.licenses=\"${OCI_IMAGE_LICENSES}\" \\\n      org.opencontainers.image.documentation=\"${OCI_IMAGE_DOCUMENTATION}\" \\\n      com.threatflux.rust.version=\"@@RUST_VALUE@@\" \\\n      com.threatflux.rust.edition=\"2024\"\n\n",
+              "count": 1
+            }
+          ]
+        },
+        {
+          "path": "Makefile",
+          "mode": "100644",
+          "adapters": [
+            {
+              "kind": "plain",
+              "template": "CARGO ?= cargo\nRUST_MSRV ?= 1.97.1\nRUST_TOOLCHAIN ?= @@RUST_VALUE@@\n\nDOCKER_IMAGE ?= openai-rust-sdk\n",
+              "count": 1
+            }
+          ]
+        },
+        {
+          "path": "rust-toolchain.toml",
+          "mode": "100644",
+          "adapters": [
+            {
+              "kind": "plain",
+              "template": "[toolchain]\nchannel = \"@@RUST_VALUE@@\"\ncomponents = [\"clippy\", \"rustfmt\", \"llvm-tools-preview\"]\n",
+              "count": 1
+            }
+          ]
+        }
+      ],
+      "preserved_roles": [
+        "Cargo rust-version and MSRV",
+        "beta and nightly",
+        "legacy, fuzz, vendor and historical fixtures"
+      ]
+    },
+    {
+      "repository": "ThreatFlux/rust-cicd-template",
+      "id": 1132511475,
+      "default_branch": "main",
+      "reviewed_source_sha": "9ee05ced4c0ae1391d0008c6ee6cf511ffda8073",
+      "files": [
+        {
+          "path": ".github/workflows/ci.yml",
+          "mode": "100644",
+          "adapters": [
+            {
+              "kind": "plain",
+              "template": "  RUST_STABLE_VERSION: @@RUST_VALUE@@\n",
+              "count": 1,
+              "job": "RUST_STABLE_VERSION"
+            },
+            {
+              "kind": "plain",
+              "template": "  RUSTUP_TOOLCHAIN: @@RUST_VALUE@@\n\njobs:\n",
+              "count": 1,
+              "job": "RUSTUP_TOOLCHAIN"
+            },
+            {
+              "kind": "plain",
+              "template": "        include:\n          # Preserve existing protected check contexts as explicit compatibility\n          # lanes while the primary stable compiler advances to @@RUST_VALUE@@.\n          - os: linux\n            runner: ${{ vars.RUST_TEMPLATE_RUNNER_UBUNTU || 'ubuntu-latest' }}\n",
+              "count": 1,
+              "job": "test"
+            },
+            {
+              "kind": "plain",
+              "template": "          - os: linux\n            runner: ${{ vars.RUST_TEMPLATE_RUNNER_UBUNTU || 'ubuntu-latest' }}\n            rust: \"@@RUST_VALUE@@\"\n          - os: macos\n            runner: ${{ vars.RUST_TEMPLATE_RUNNER_MACOS || 'macos-latest' }}\n",
+              "count": 1,
+              "job": "test"
+            },
+            {
+              "kind": "plain",
+              "template": "          - os: macos\n            runner: ${{ vars.RUST_TEMPLATE_RUNNER_MACOS || 'macos-latest' }}\n            rust: \"@@RUST_VALUE@@\"\n          - os: windows\n            runner: ${{ vars.RUST_TEMPLATE_RUNNER_WINDOWS || 'windows-latest' }}\n",
+              "count": 1,
+              "job": "test"
+            },
+            {
+              "kind": "plain",
+              "template": "          - os: windows\n            runner: ${{ vars.RUST_TEMPLATE_RUNNER_WINDOWS || 'windows-latest' }}\n            rust: \"@@RUST_VALUE@@\"\n    env:\n      RUSTUP_TOOLCHAIN: ${{ matrix.rust }}\n",
+              "count": 1,
+              "job": "test"
+            }
+          ]
+        },
+        {
+          "path": ".github/workflows/release.yml",
+          "mode": "100644",
+          "adapters": [
+            {
+              "kind": "plain",
+              "template": "  RUST_VERSION: @@RUST_VALUE@@\n",
+              "count": 1,
+              "job": "RUST_VERSION"
+            },
+            {
+              "kind": "plain",
+              "template": "  RUSTUP_TOOLCHAIN: @@RUST_VALUE@@\n",
+              "count": 1,
+              "job": "RUSTUP_TOOLCHAIN"
+            }
+          ]
+        },
+        {
+          "path": ".github/workflows/security.yml",
+          "mode": "100644",
+          "adapters": [
+            {
+              "kind": "plain",
+              "template": "    env:\n      CARGO_TERM_COLOR: always\n      RUST_VERSION: @@RUST_VALUE@@\n      RUSTUP_TOOLCHAIN: @@RUST_plain@@\n      BINARY_NAME: ${{ vars.RUST_TEMPLATE_BINARY_NAME || 'rust-cicd-template' }}\n",
+              "count": 1,
+              "job": "audit"
+            },
+            {
+              "kind": "plain",
+              "template": "      CARGO_TERM_COLOR: always\n      RUST_VERSION: @@RUST_plain@@\n      RUSTUP_TOOLCHAIN: @@RUST_VALUE@@\n      BINARY_NAME: ${{ vars.RUST_TEMPLATE_BINARY_NAME || 'rust-cicd-template' }}\n      SBOM_MANIFEST_PATH: ${{ vars.RUST_TEMPLATE_SBOM_MANIFEST_PATH || 'Cargo.toml' }}\n",
+              "count": 1,
+              "job": "audit"
+            },
+            {
+              "kind": "plain",
+              "template": "    env:\n      CARGO_TERM_COLOR: always\n      RUST_VERSION: @@RUST_VALUE@@\n      RUSTUP_TOOLCHAIN: @@RUST_plain@@\n      BINARY_NAME: ${{ vars.RUST_TEMPLATE_BINARY_NAME || 'rust-cicd-template' }}\n",
+              "count": 1,
+              "job": "deny"
+            },
+            {
+              "kind": "plain",
+              "template": "      CARGO_TERM_COLOR: always\n      RUST_VERSION: @@RUST_plain@@\n      RUSTUP_TOOLCHAIN: @@RUST_VALUE@@\n      BINARY_NAME: ${{ vars.RUST_TEMPLATE_BINARY_NAME || 'rust-cicd-template' }}\n      SBOM_MANIFEST_PATH: ${{ vars.RUST_TEMPLATE_SBOM_MANIFEST_PATH || 'Cargo.toml' }}\n",
+              "count": 1,
+              "job": "deny"
+            },
+            {
+              "kind": "plain",
+              "template": "    env:\n      CARGO_TERM_COLOR: always\n      RUST_VERSION: @@RUST_VALUE@@\n      RUSTUP_TOOLCHAIN: @@RUST_plain@@\n      BINARY_NAME: ${{ vars.RUST_TEMPLATE_BINARY_NAME || 'rust-cicd-template' }}\n",
+              "count": 1,
+              "job": "supply-chain"
+            },
+            {
+              "kind": "plain",
+              "template": "      CARGO_TERM_COLOR: always\n      RUST_VERSION: @@RUST_plain@@\n      RUSTUP_TOOLCHAIN: @@RUST_VALUE@@\n      BINARY_NAME: ${{ vars.RUST_TEMPLATE_BINARY_NAME || 'rust-cicd-template' }}\n      SBOM_MANIFEST_PATH: ${{ vars.RUST_TEMPLATE_SBOM_MANIFEST_PATH || 'Cargo.toml' }}\n",
+              "count": 1,
+              "job": "supply-chain"
+            }
+          ]
+        },
+        {
+          "path": "Dockerfile",
+          "mode": "100644",
+          "adapters": [
+            {
+              "kind": "image:trixie",
+              "template": "# the later runtime digest with the command above during template updates.\n\nFROM @@RUST_VALUE@@ AS rust-base\n\n# Install the repository's requested components before exporting the toolchain\n",
+              "count": 1
+            },
+            {
+              "kind": "plain",
+              "template": "# Install the repository's requested components before exporting the toolchain\n# image or switching to the unprivileged builder.\nRUN rustup toolchain install @@RUST_VALUE@@ --profile minimal --no-self-update \\\n      --component rustfmt --component clippy --component llvm-tools-preview && \\\n    rustup default @@RUST_plain@@ && \\\n",
+              "count": 1
+            },
+            {
+              "kind": "plain",
+              "template": "RUN rustup toolchain install @@RUST_plain@@ --profile minimal --no-self-update \\\n      --component rustfmt --component clippy --component llvm-tools-preview && \\\n    rustup default @@RUST_VALUE@@ && \\\n    test \"$(rustc --version | cut -d ' ' -f 2)\" = @@RUST_plain@@\n\n",
+              "count": 1
+            },
+            {
+              "kind": "plain",
+              "template": "      --component rustfmt --component clippy --component llvm-tools-preview && \\\n    rustup default @@RUST_plain@@ && \\\n    test \"$(rustc --version | cut -d ' ' -f 2)\" = @@RUST_VALUE@@\n\nARG VERSION=0.0.0\n",
+              "count": 1
+            }
+          ]
+        },
+        {
+          "path": "Dockerfile.debian",
+          "mode": "100644",
+          "adapters": [
+            {
+              "kind": "image:trixie",
+              "template": "# Keep the two in sync \u2014 the conformance job checks both against the template.\n\nFROM @@RUST_VALUE@@ AS rust-base\n\n# Install the repository's requested components before exporting the toolchain\n",
+              "count": 1
+            },
+            {
+              "kind": "plain",
+              "template": "# Install the repository's requested components before exporting the toolchain\n# image or switching to the unprivileged builder.\nRUN rustup toolchain install @@RUST_VALUE@@ --profile minimal --no-self-update \\\n      --component rustfmt --component clippy --component llvm-tools-preview && \\\n    rustup default @@RUST_plain@@ && \\\n",
+              "count": 1
+            },
+            {
+              "kind": "plain",
+              "template": "RUN rustup toolchain install @@RUST_plain@@ --profile minimal --no-self-update \\\n      --component rustfmt --component clippy --component llvm-tools-preview && \\\n    rustup default @@RUST_VALUE@@ && \\\n    test \"$(rustc --version | cut -d ' ' -f 2)\" = @@RUST_plain@@\n\n",
+              "count": 1
+            },
+            {
+              "kind": "plain",
+              "template": "      --component rustfmt --component clippy --component llvm-tools-preview && \\\n    rustup default @@RUST_plain@@ && \\\n    test \"$(rustc --version | cut -d ' ' -f 2)\" = @@RUST_VALUE@@\n\nARG VERSION=0.0.0\n",
+              "count": 1
+            }
+          ]
+        },
+        {
+          "path": "Makefile",
+          "mode": "100644",
+          "adapters": [
+            {
+              "kind": "plain",
+              "template": "CARGO ?= cargo\nRUST_MSRV ?= 1.97.1\nRUST_TOOLCHAIN ?= @@RUST_VALUE@@\n\nDOCKER_IMAGE ?= $(shell basename $(CURDIR))\n",
+              "count": 1
+            }
+          ]
+        },
+        {
+          "path": "rust-toolchain.toml",
+          "mode": "100644",
+          "adapters": [
+            {
+              "kind": "plain",
+              "template": "[toolchain]\nchannel = \"@@RUST_VALUE@@\"\ncomponents = [\"clippy\", \"rustfmt\", \"llvm-tools-preview\"]\n",
+              "count": 1
+            }
+          ]
+        }
+      ],
+      "preserved_roles": [
+        "Cargo rust-version and MSRV",
+        "beta and nightly",
+        "legacy, fuzz, vendor and historical fixtures"
+      ]
+    },
+    {
+      "repository": "ThreatFlux/threatbins",
+      "id": 1068323847,
+      "default_branch": "main",
+      "reviewed_source_sha": "5fff9afae2a027b4eeecfcb7b70113946d5598a4",
+      "files": [
+        {
+          "path": ".github/workflows/ci.yml",
+          "mode": "100644",
+          "adapters": [
+            {
+              "kind": "plain",
+              "template": "      - uses: dtolnay/rust-toolchain@683b588c487a69d01f6c6ddf40f036ff682cc2c8 # v1\n        with:\n          toolchain: @@RUST_VALUE@@\n          components: rustfmt, clippy\n      - name: Install cargo-audit from registry-verified source\n",
+              "count": 1,
+              "job": "check"
+            }
+          ]
+        },
+        {
+          "path": ".github/workflows/release.yml",
+          "mode": "100644",
+          "adapters": [
+            {
+              "kind": "plain",
+              "template": "        uses: dtolnay/rust-toolchain@683b588c487a69d01f6c6ddf40f036ff682cc2c8 # v1\n        with:\n          toolchain: @@RUST_VALUE@@\n      - name: Install native package dependencies\n        if: steps.plan.outputs.reuse != 'true'\n",
+              "count": 1,
+              "job": "package"
+            }
+          ]
+        },
+        {
+          "path": "Makefile",
+          "mode": "100644",
+          "adapters": [
+            {
+              "kind": "plain",
+              "template": "RUST_STABLE := @@RUST_VALUE@@\nMSRV := 1.98.0\nCARGO_BUILD_JOBS ?= 2\n",
+              "count": 1
+            }
+          ]
+        },
+        {
+          "path": "rust-toolchain.toml",
+          "mode": "100644",
+          "adapters": [
+            {
+              "kind": "plain",
+              "template": "[toolchain]\nchannel = \"@@RUST_VALUE@@\"\ncomponents = [\"rustfmt\", \"clippy\"]\nprofile = \"minimal\"\n",
+              "count": 1
+            }
+          ]
+        }
+      ],
+      "preserved_roles": [
+        "Cargo rust-version and MSRV",
+        "beta and nightly",
+        "legacy, fuzz, vendor and historical fixtures"
+      ]
+    },
+    {
+      "repository": "ThreatFlux/threatflux-atlassian",
+      "id": 1179949155,
+      "default_branch": "main",
+      "reviewed_source_sha": "f9f17e1acebf72cdeeccf3fd451946de7d4e6ffb",
+      "files": [
+        {
+          "path": ".github/workflows/ci.yml",
+          "mode": "100644",
+          "adapters": [
+            {
+              "kind": "plain",
+              "template": "  RUSTUP_TOOLCHAIN: @@RUST_VALUE@@\n",
+              "count": 1,
+              "job": "RUSTUP_TOOLCHAIN"
+            },
+            {
+              "kind": "plain",
+              "template": "  RUST_STABLE_VERSION: @@RUST_VALUE@@\n",
+              "count": 1,
+              "job": "RUST_STABLE_VERSION"
+            },
+            {
+              "kind": "plain",
+              "template": "    continue-on-error: ${{ matrix.rust == 'nightly' }}\n    env:\n      RUSTUP_TOOLCHAIN: ${{ matrix.rust == 'stable' && '@@RUST_VALUE@@' || matrix.rust }}\n\n    steps:\n",
+              "count": 1,
+              "job": "test"
+            },
+            {
+              "kind": "plain",
+              "template": "            ~/.cargo/git/db\n            target\n          key: ${{ runner.os }}-@@RUST_VALUE@@-features-cargo-${{ hashFiles('**/Cargo.lock') }}\n\n      - name: Check no default features\n",
+              "count": 1,
+              "job": "features"
+            },
+            {
+              "kind": "plain",
+              "template": "            ~/.cargo/git/db\n            target\n          key: ${{ runner.os }}-@@RUST_VALUE@@-bench-cargo-${{ hashFiles('**/Cargo.lock') }}\n\n      - name: Check benchmarks compile\n",
+              "count": 1,
+              "job": "bench"
+            },
+            {
+              "kind": "plain",
+              "template": "            ~/.cargo/git/db\n            target\n          key: ${{ runner.os }}-@@RUST_VALUE@@-coverage-cargo-${{ hashFiles('**/Cargo.lock') }}\n\n      - name: Generate coverage\n",
+              "count": 1,
+              "job": "coverage"
+            }
+          ]
+        },
+        {
+          "path": ".github/workflows/release.yml",
+          "mode": "100644",
+          "adapters": [
+            {
+              "kind": "plain",
+              "template": "  RUSTUP_TOOLCHAIN: @@RUST_VALUE@@\n",
+              "count": 1,
+              "job": "RUSTUP_TOOLCHAIN"
+            },
+            {
+              "kind": "plain",
+              "template": "  RUST_VERSION: @@RUST_VALUE@@\n",
+              "count": 1,
+              "job": "RUST_VERSION"
+            }
+          ]
+        },
+        {
+          "path": ".github/workflows/security.yml",
+          "mode": "100644",
+          "adapters": [
+            {
+              "kind": "plain",
+              "template": "  RUSTUP_TOOLCHAIN: @@RUST_VALUE@@\n",
+              "count": 1,
+              "job": "RUSTUP_TOOLCHAIN"
+            },
+            {
+              "kind": "plain",
+              "template": "  RUST_VERSION: @@RUST_VALUE@@\n\njobs:\n",
+              "count": 1,
+              "job": "RUST_VERSION"
+            }
+          ]
+        },
+        {
+          "path": "Dockerfile",
+          "mode": "100644",
+          "adapters": [
+            {
+              "kind": "image:alpine3.24",
+              "template": "    && rm -rf /var/lib/apt/lists/*\n\nFROM @@RUST_VALUE@@ AS builder\n\n# Install the source-requested components as root before unprivileged builds.\n",
+              "count": 1
+            },
+            {
+              "kind": "plain",
+              "template": "\n# Install the source-requested components as root before unprivileged builds.\nENV RUST_VERSION=@@RUST_VALUE@@\nRUN rustup component add --toolchain @@RUST_plain@@ clippy rustfmt llvm-tools-preview \\\n    && rustup default @@RUST_plain@@ \\\n",
+              "count": 1
+            },
+            {
+              "kind": "plain",
+              "template": "# Install the source-requested components as root before unprivileged builds.\nENV RUST_VERSION=@@RUST_plain@@\nRUN rustup component add --toolchain @@RUST_VALUE@@ clippy rustfmt llvm-tools-preview \\\n    && rustup default @@RUST_plain@@ \\\n    && test \"$(rustc --version | cut -d ' ' -f 2)\" = \"@@RUST_plain@@\"\n",
+              "count": 1
+            },
+            {
+              "kind": "plain",
+              "template": "ENV RUST_VERSION=@@RUST_plain@@\nRUN rustup component add --toolchain @@RUST_plain@@ clippy rustfmt llvm-tools-preview \\\n    && rustup default @@RUST_VALUE@@ \\\n    && test \"$(rustc --version | cut -d ' ' -f 2)\" = \"@@RUST_plain@@\"\nARG CARGO_BUILD_JOBS=2\n",
+              "count": 1
+            },
+            {
+              "kind": "plain",
+              "template": "RUN rustup component add --toolchain @@RUST_plain@@ clippy rustfmt llvm-tools-preview \\\n    && rustup default @@RUST_plain@@ \\\n    && test \"$(rustc --version | cut -d ' ' -f 2)\" = \"@@RUST_VALUE@@\"\nARG CARGO_BUILD_JOBS=2\nENV CARGO_BUILD_JOBS=${CARGO_BUILD_JOBS}\n",
+              "count": 1
+            }
+          ]
+        },
+        {
+          "path": "Makefile",
+          "mode": "100644",
+          "adapters": [
+            {
+              "kind": "plain",
+              "template": "CARGO ?= cargo\nRUST_MSRV ?= 1.97.1\nRUST_TOOLCHAIN ?= @@RUST_VALUE@@\n\n# Docker configuration\n",
+              "count": 1
+            }
+          ]
+        },
+        {
+          "path": "action.Dockerfile",
+          "mode": "100644",
+          "adapters": [
+            {
+              "kind": "image:alpine3.24",
+              "template": "    && rm -rf /var/lib/apt/lists/*\n\nFROM @@RUST_VALUE@@ AS builder\n\n# Install the source-requested components as root before unprivileged builds.\n",
+              "count": 1
+            },
+            {
+              "kind": "plain",
+              "template": "\n# Install the source-requested components as root before unprivileged builds.\nENV RUST_VERSION=@@RUST_VALUE@@\nRUN rustup component add --toolchain @@RUST_plain@@ clippy rustfmt llvm-tools-preview \\\n    && rustup default @@RUST_plain@@ \\\n",
+              "count": 1
+            },
+            {
+              "kind": "plain",
+              "template": "# Install the source-requested components as root before unprivileged builds.\nENV RUST_VERSION=@@RUST_plain@@\nRUN rustup component add --toolchain @@RUST_VALUE@@ clippy rustfmt llvm-tools-preview \\\n    && rustup default @@RUST_plain@@ \\\n    && test \"$(rustc --version | cut -d ' ' -f 2)\" = \"@@RUST_plain@@\"\n",
+              "count": 1
+            },
+            {
+              "kind": "plain",
+              "template": "ENV RUST_VERSION=@@RUST_plain@@\nRUN rustup component add --toolchain @@RUST_plain@@ clippy rustfmt llvm-tools-preview \\\n    && rustup default @@RUST_VALUE@@ \\\n    && test \"$(rustc --version | cut -d ' ' -f 2)\" = \"@@RUST_plain@@\"\nARG CARGO_BUILD_JOBS=2\n",
+              "count": 1
+            },
+            {
+              "kind": "plain",
+              "template": "RUN rustup component add --toolchain @@RUST_plain@@ clippy rustfmt llvm-tools-preview \\\n    && rustup default @@RUST_plain@@ \\\n    && test \"$(rustc --version | cut -d ' ' -f 2)\" = \"@@RUST_VALUE@@\"\nARG CARGO_BUILD_JOBS=2\nENV CARGO_BUILD_JOBS=${CARGO_BUILD_JOBS}\n",
+              "count": 1
+            }
+          ]
+        },
+        {
+          "path": "rust-toolchain.toml",
+          "mode": "100644",
+          "adapters": [
+            {
+              "kind": "plain",
+              "template": "[toolchain]\nchannel = \"@@RUST_VALUE@@\"\ncomponents = [\"clippy\", \"rustfmt\", \"llvm-tools-preview\"]\n",
+              "count": 1
+            }
+          ]
+        }
+      ],
+      "preserved_roles": [
+        "Cargo rust-version and MSRV",
+        "beta and nightly",
+        "legacy, fuzz, vendor and historical fixtures"
+      ]
+    },
+    {
+      "repository": "ThreatFlux/threatflux-binary-analysis",
+      "id": 1037435049,
+      "default_branch": "main",
+      "reviewed_source_sha": "ea44848973abef0a67a5f2d1b0a4a7d156728b78",
+      "files": [
+        {
+          "path": ".github/workflows/ci.yml",
+          "mode": "100644",
+          "adapters": [
+            {
+              "kind": "plain",
+              "template": "  RUST_STABLE: @@RUST_VALUE@@\n",
+              "count": 1,
+              "job": "RUST_STABLE"
+            }
+          ]
+        },
+        {
+          "path": ".github/workflows/docs.yml",
+          "mode": "100644",
+          "adapters": [
+            {
+              "kind": "plain",
+              "template": "  RUST_STABLE: @@RUST_VALUE@@\n\njobs:\n",
+              "count": 1,
+              "job": "RUST_STABLE"
+            }
+          ]
+        },
+        {
+          "path": ".github/workflows/release.yml",
+          "mode": "100644",
+          "adapters": [
+            {
+              "kind": "plain",
+              "template": "  RUST_STABLE: @@RUST_VALUE@@\n",
+              "count": 1,
+              "job": "RUST_STABLE"
+            }
+          ]
+        },
+        {
+          "path": ".github/workflows/security.yml",
+          "mode": "100644",
+          "adapters": [
+            {
+              "kind": "plain",
+              "template": "  RUST_STABLE: @@RUST_VALUE@@\n\njobs:\n",
+              "count": 1,
+              "job": "RUST_STABLE"
+            }
+          ]
+        },
+        {
+          "path": "rust-toolchain.toml",
+          "mode": "100644",
+          "adapters": [
+            {
+              "kind": "plain",
+              "template": "[toolchain]\nchannel = \"@@RUST_VALUE@@\"\ncomponents = [\"clippy\", \"rustfmt\"]\nprofile = \"minimal\"\n",
+              "count": 1
+            }
+          ]
+        }
+      ],
+      "preserved_roles": [
+        "Cargo rust-version and MSRV",
+        "beta and nightly",
+        "legacy, fuzz, vendor and historical fixtures"
+      ]
+    },
+    {
+      "repository": "ThreatFlux/threatflux-cache",
+      "id": 1037434126,
+      "default_branch": "main",
+      "reviewed_source_sha": "31f36938ffd7c324eb0acd2d52e61c5157c1acd8",
+      "files": [
+        {
+          "path": ".github/workflows/ci.yml",
+          "mode": "100644",
+          "adapters": [
+            {
+              "kind": "plain",
+              "template": "  RUST_STABLE: @@RUST_VALUE@@\n",
+              "count": 1,
+              "job": "RUST_STABLE"
+            }
+          ]
+        },
+        {
+          "path": ".github/workflows/docs.yml",
+          "mode": "100644",
+          "adapters": [
+            {
+              "kind": "plain",
+              "template": "  RUST_STABLE: @@RUST_VALUE@@\n\njobs:\n",
+              "count": 1,
+              "job": "RUST_STABLE"
+            }
+          ]
+        },
+        {
+          "path": ".github/workflows/release.yml",
+          "mode": "100644",
+          "adapters": [
+            {
+              "kind": "plain",
+              "template": "  RUST_STABLE: @@RUST_VALUE@@\n",
+              "count": 1,
+              "job": "RUST_STABLE"
+            }
+          ]
+        },
+        {
+          "path": ".github/workflows/security.yml",
+          "mode": "100644",
+          "adapters": [
+            {
+              "kind": "plain",
+              "template": "  RUST_STABLE: @@RUST_VALUE@@\n\njobs:\n",
+              "count": 1,
+              "job": "RUST_STABLE"
+            }
+          ]
+        },
+        {
+          "path": "rust-toolchain.toml",
+          "mode": "100644",
+          "adapters": [
+            {
+              "kind": "plain",
+              "template": "[toolchain]\nchannel = \"@@RUST_VALUE@@\"\ncomponents = [\"clippy\", \"rustfmt\"]\nprofile = \"minimal\"\n",
+              "count": 1
+            }
+          ]
+        }
+      ],
+      "preserved_roles": [
+        "Cargo rust-version and MSRV",
+        "beta and nightly",
+        "legacy, fuzz, vendor and historical fixtures"
+      ]
+    },
+    {
+      "repository": "ThreatFlux/threatflux-hashing",
+      "id": 1037432397,
+      "default_branch": "main",
+      "reviewed_source_sha": "835c424f3b35a914f53b9453c143bdbc5c98f447",
+      "files": [
+        {
+          "path": ".github/workflows/ci.yml",
+          "mode": "100644",
+          "adapters": [
+            {
+              "kind": "plain",
+              "template": "  RUST_STABLE: @@RUST_VALUE@@\n",
+              "count": 1,
+              "job": "RUST_STABLE"
+            }
+          ]
+        },
+        {
+          "path": ".github/workflows/docs.yml",
+          "mode": "100644",
+          "adapters": [
+            {
+              "kind": "plain",
+              "template": "  RUST_STABLE: @@RUST_VALUE@@\n\njobs:\n",
+              "count": 1,
+              "job": "RUST_STABLE"
+            }
+          ]
+        },
+        {
+          "path": ".github/workflows/release.yml",
+          "mode": "100644",
+          "adapters": [
+            {
+              "kind": "plain",
+              "template": "  RUST_VERSION: @@RUST_VALUE@@\n",
+              "count": 1,
+              "job": "RUST_VERSION"
+            }
+          ]
+        },
+        {
+          "path": ".github/workflows/security.yml",
+          "mode": "100644",
+          "adapters": [
+            {
+              "kind": "plain",
+              "template": "  RUST_STABLE: @@RUST_VALUE@@\n\njobs:\n",
+              "count": 1,
+              "job": "RUST_STABLE"
+            }
+          ]
+        },
+        {
+          "path": "rust-toolchain.toml",
+          "mode": "100644",
+          "adapters": [
+            {
+              "kind": "plain",
+              "template": "[toolchain]\nchannel = \"@@RUST_VALUE@@\"\ncomponents = [\"clippy\", \"rustfmt\"]\nprofile = \"minimal\"\n",
+              "count": 1
+            }
+          ]
+        }
+      ],
+      "preserved_roles": [
+        "Cargo rust-version and MSRV",
+        "beta and nightly",
+        "legacy, fuzz, vendor and historical fixtures"
+      ]
+    },
+    {
+      "repository": "ThreatFlux/threatflux-package-security",
+      "id": 1037435337,
+      "default_branch": "main",
+      "reviewed_source_sha": "14afc724022b9669c3db11a0eafbde16c5a9518c",
+      "files": [
+        {
+          "path": ".github/workflows/ci.yml",
+          "mode": "100644",
+          "adapters": [
+            {
+              "kind": "plain",
+              "template": "  RUST_STABLE: @@RUST_VALUE@@\n\njobs:\n",
+              "count": 1,
+              "job": "RUST_STABLE"
+            },
+            {
+              "kind": "plain",
+              "template": "\n      - name: Install Rust\n        run: rustup toolchain install @@RUST_VALUE@@ --profile minimal --component clippy --component rustfmt\n\n      - name: Cache Cargo data\n",
+              "count": 1,
+              "job": "quality"
+            },
+            {
+              "kind": "plain",
+              "template": "\n      - name: Install Rust\n        run: rustup toolchain install @@RUST_VALUE@@ --profile minimal\n\n      - name: Test without default features\n",
+              "count": 1,
+              "job": "features"
+            },
+            {
+              "kind": "plain",
+              "template": "\n      - name: Install Rust\n        run: rustup toolchain install @@RUST_VALUE@@ --profile minimal\n\n      - name: Cache Cargo data\n",
+              "count": 1,
+              "job": "test"
+            },
+            {
+              "kind": "plain",
+              "template": "\n      - name: Install Rust\n        run: rustup toolchain install @@RUST_VALUE@@ --profile minimal --component llvm-tools-preview\n\n      - name: Install cargo-llvm-cov\n",
+              "count": 1,
+              "job": "coverage"
+            }
+          ]
+        },
+        {
+          "path": ".github/workflows/docs.yml",
+          "mode": "100644",
+          "adapters": [
+            {
+              "kind": "plain",
+              "template": "\n      - name: Install Rust\n        run: rustup toolchain install @@RUST_VALUE@@ --profile minimal\n\n      - name: Build API documentation\n",
+              "count": 1,
+              "job": "check"
+            },
+            {
+              "kind": "plain",
+              "template": "\n      - name: Install Rust\n        run: rustup toolchain install @@RUST_VALUE@@ --profile minimal\n\n      - name: Configure Pages\n",
+              "count": 1,
+              "job": "build-pages"
+            }
+          ]
+        },
+        {
+          "path": ".github/workflows/release.yml",
+          "mode": "100644",
+          "adapters": [
+            {
+              "kind": "plain",
+              "template": "\n      - name: Install Rust\n        run: rustup toolchain install @@RUST_VALUE@@ --profile minimal\n\n      - name: Verify semantic version\n",
+              "count": 1,
+              "job": "provenance"
+            },
+            {
+              "kind": "plain",
+              "template": "\n      - name: Install Rust\n        run: rustup toolchain install @@RUST_VALUE@@ --profile minimal\n\n      - name: Test release build\n",
+              "count": 1,
+              "job": "verify"
+            },
+            {
+              "kind": "plain",
+              "template": "\n      - name: Install Rust\n        run: rustup toolchain install @@RUST_VALUE@@ --profile minimal --component clippy --component rustfmt\n\n      - name: Stage the release version (dry run)\n",
+              "count": 1,
+              "job": "publish"
+            }
+          ]
+        },
+        {
+          "path": ".github/workflows/security.yml",
+          "mode": "100644",
+          "adapters": [
+            {
+              "kind": "plain",
+              "template": "\n      - name: Install Rust\n        run: rustup toolchain install @@RUST_VALUE@@ --profile minimal\n\n      - name: Install supply-chain tools\n",
+              "count": 1,
+              "job": "supply-chain"
+            }
+          ]
+        },
+        {
+          "path": "Makefile",
+          "mode": "100644",
+          "adapters": [
+            {
+              "kind": "plain",
+              "template": "\nMSRV := 1.95.0\nSTABLE := @@RUST_VALUE@@\nMARKDOWN_TARGET_DIR := target/markdown-doctests\n\n",
+              "count": 1
+            }
+          ]
+        },
+        {
+          "path": "rust-toolchain.toml",
+          "mode": "100644",
+          "adapters": [
+            {
+              "kind": "plain",
+              "template": "[toolchain]\nchannel = \"@@RUST_VALUE@@\"\nprofile = \"minimal\"\ncomponents = [\"clippy\", \"rustfmt\"]\n",
+              "count": 1
+            }
+          ]
+        }
+      ],
+      "preserved_roles": [
+        "Cargo rust-version and MSRV",
+        "beta and nightly",
+        "legacy, fuzz, vendor and historical fixtures"
+      ]
+    },
+    {
+      "repository": "ThreatFlux/threatflux-string-analysis",
+      "id": 1037433646,
+      "default_branch": "main",
+      "reviewed_source_sha": "5aab4d022e9b980304b4e26b830eb6f5f952870e",
+      "files": [
+        {
+          "path": ".github/workflows/ci.yml",
+          "mode": "100644",
+          "adapters": [
+            {
+              "kind": "plain",
+              "template": "  RUST_STABLE: @@RUST_VALUE@@\n",
+              "count": 1,
+              "job": "RUST_STABLE"
+            }
+          ]
+        },
+        {
+          "path": ".github/workflows/docs.yml",
+          "mode": "100644",
+          "adapters": [
+            {
+              "kind": "plain",
+              "template": "  RUST_STABLE: @@RUST_VALUE@@\n\njobs:\n",
+              "count": 1,
+              "job": "RUST_STABLE"
+            }
+          ]
+        },
+        {
+          "path": ".github/workflows/release.yml",
+          "mode": "100644",
+          "adapters": [
+            {
+              "kind": "plain",
+              "template": "  RUST_STABLE: @@RUST_VALUE@@\n",
+              "count": 1,
+              "job": "RUST_STABLE"
+            }
+          ]
+        },
+        {
+          "path": ".github/workflows/security.yml",
+          "mode": "100644",
+          "adapters": [
+            {
+              "kind": "plain",
+              "template": "  RUST_STABLE: @@RUST_VALUE@@\n\njobs:\n",
+              "count": 1,
+              "job": "RUST_STABLE"
+            }
+          ]
+        },
+        {
+          "path": "Makefile",
+          "mode": "100644",
+          "adapters": [
+            {
+              "kind": "plain",
+              "template": "\nMSRV := 1.95.0\nSTABLE := @@RUST_VALUE@@\nMARKDOWN_TARGET_DIR := target/markdown-doctests\nSBOM_NAME := threatflux-string-analysis\n",
+              "count": 1
+            }
+          ]
+        },
+        {
+          "path": "rust-toolchain.toml",
+          "mode": "100644",
+          "adapters": [
+            {
+              "kind": "plain",
+              "template": "[toolchain]\nchannel = \"@@RUST_VALUE@@\"\nprofile = \"minimal\"\ncomponents = [\"clippy\", \"rustfmt\"]\n",
+              "count": 1
+            }
+          ]
+        }
+      ],
+      "preserved_roles": [
+        "Cargo rust-version and MSRV",
+        "beta and nightly",
+        "legacy, fuzz, vendor and historical fixtures"
+      ]
+    },
+    {
+      "repository": "ThreatFlux/threatflux-threat-detection",
+      "id": 1037435218,
+      "default_branch": "main",
+      "reviewed_source_sha": "d4508de414e398e2f4f19b78b1f9d6fd966b8ce6",
+      "files": [
+        {
+          "path": ".github/workflows/ci.yml",
+          "mode": "100644",
+          "adapters": [
+            {
+              "kind": "plain",
+              "template": "  RUST_STABLE: @@RUST_VALUE@@\n",
+              "count": 1,
+              "job": "RUST_STABLE"
+            }
+          ]
+        },
+        {
+          "path": ".github/workflows/docs.yml",
+          "mode": "100644",
+          "adapters": [
+            {
+              "kind": "plain",
+              "template": "  RUST_STABLE: @@RUST_VALUE@@\n\njobs:\n",
+              "count": 1,
+              "job": "RUST_STABLE"
+            }
+          ]
+        },
+        {
+          "path": ".github/workflows/release.yml",
+          "mode": "100644",
+          "adapters": [
+            {
+              "kind": "plain",
+              "template": "  RUST_STABLE: @@RUST_VALUE@@\n",
+              "count": 1,
+              "job": "RUST_STABLE"
+            }
+          ]
+        },
+        {
+          "path": ".github/workflows/security.yml",
+          "mode": "100644",
+          "adapters": [
+            {
+              "kind": "plain",
+              "template": "  RUST_STABLE: @@RUST_VALUE@@\n\njobs:\n",
+              "count": 1,
+              "job": "RUST_STABLE"
+            }
+          ]
+        },
+        {
+          "path": "rust-toolchain.toml",
+          "mode": "100644",
+          "adapters": [
+            {
+              "kind": "plain",
+              "template": "[toolchain]\nchannel = \"@@RUST_VALUE@@\"\ncomponents = [\"clippy\", \"rustfmt\"]\nprofile = \"minimal\"\n",
+              "count": 1
+            }
+          ]
+        }
+      ],
+      "preserved_roles": [
+        "Cargo rust-version and MSRV",
+        "beta and nightly",
+        "legacy, fuzz, vendor and historical fixtures"
+      ]
+    },
+    {
+      "repository": "ThreatFlux/threatflux-unifi-sdk",
+      "id": 1190669423,
+      "default_branch": "main",
+      "reviewed_source_sha": "27c8bf4960e4f6c0e86a36c0282b72c1f5037a12",
+      "files": [
+        {
+          "path": ".devcontainer/Dockerfile",
+          "mode": "100644",
+          "adapters": [
+            {
+              "kind": "image:bookworm",
+              "template": "FROM @@RUST_VALUE@@\n\n# Install the source-requested components as root before unprivileged builds.\n",
+              "count": 1
+            },
+            {
+              "kind": "plain",
+              "template": "\n# Install the source-requested components as root before unprivileged builds.\nENV RUST_VERSION=@@RUST_VALUE@@\nRUN rustup component add --toolchain @@RUST_plain@@ clippy rustfmt llvm-tools-preview \\\n    && rustup default @@RUST_plain@@ \\\n",
+              "count": 1
+            },
+            {
+              "kind": "plain",
+              "template": "# Install the source-requested components as root before unprivileged builds.\nENV RUST_VERSION=@@RUST_plain@@\nRUN rustup component add --toolchain @@RUST_VALUE@@ clippy rustfmt llvm-tools-preview \\\n    && rustup default @@RUST_plain@@ \\\n    && test \"$(rustc --version | cut -d ' ' -f 2)\" = \"@@RUST_plain@@\"\n",
+              "count": 1
+            },
+            {
+              "kind": "plain",
+              "template": "ENV RUST_VERSION=@@RUST_plain@@\nRUN rustup component add --toolchain @@RUST_plain@@ clippy rustfmt llvm-tools-preview \\\n    && rustup default @@RUST_VALUE@@ \\\n    && test \"$(rustc --version | cut -d ' ' -f 2)\" = \"@@RUST_plain@@\"\n\n",
+              "count": 1
+            },
+            {
+              "kind": "plain",
+              "template": "RUN rustup component add --toolchain @@RUST_plain@@ clippy rustfmt llvm-tools-preview \\\n    && rustup default @@RUST_plain@@ \\\n    && test \"$(rustc --version | cut -d ' ' -f 2)\" = \"@@RUST_VALUE@@\"\n\nENV DEBIAN_FRONTEND=noninteractive\n",
+              "count": 1
+            }
+          ]
+        },
+        {
+          "path": ".github/workflows/ci.yml",
+          "mode": "100644",
+          "adapters": [
+            {
+              "kind": "plain",
+              "template": "  RUST_STABLE_VERSION: @@RUST_VALUE@@\n",
+              "count": 1,
+              "job": "RUST_STABLE_VERSION"
+            },
+            {
+              "kind": "plain",
+              "template": "          - os: linux\n            runner: ubuntu-latest\n            rust: @@RUST_VALUE@@\n          - os: linux\n            runner: ubuntu-latest\n",
+              "count": 1,
+              "job": "test"
+            },
+            {
+              "kind": "plain",
+              "template": "          - os: macos\n            runner: macos-latest\n            rust: @@RUST_VALUE@@\n          - os: windows\n            runner: windows-latest\n",
+              "count": 1,
+              "job": "test"
+            },
+            {
+              "kind": "plain",
+              "template": "          - os: windows\n            runner: windows-latest\n            rust: @@RUST_VALUE@@\n    continue-on-error: ${{ matrix.rust == 'nightly' }}\n    env:\n",
+              "count": 1,
+              "job": "test"
+            }
+          ]
+        },
+        {
+          "path": ".github/workflows/release.yml",
+          "mode": "100644",
+          "adapters": [
+            {
+              "kind": "plain",
+              "template": "  RUST_VERSION: @@RUST_VALUE@@\n",
+              "count": 1,
+              "job": "RUST_VERSION"
+            }
+          ]
+        },
+        {
+          "path": ".github/workflows/security.yml",
+          "mode": "100644",
+          "adapters": [
+            {
+              "kind": "plain",
+              "template": "  RUST_VERSION: @@RUST_VALUE@@\n",
+              "count": 1,
+              "job": "RUST_VERSION"
+            }
+          ]
+        },
+        {
+          "path": "Dockerfile",
+          "mode": "100644",
+          "adapters": [
+            {
+              "kind": "image:alpine3.24",
+              "template": "\n# Native musl builder; all CLI features use Rustls, with no OpenSSL requirement.\nFROM @@RUST_VALUE@@ AS rust-base\n\n# Install the source-requested components as root before unprivileged builds.\n",
+              "count": 1
+            },
+            {
+              "kind": "plain",
+              "template": "\n# Install the source-requested components as root before unprivileged builds.\nENV RUST_VERSION=@@RUST_VALUE@@\nRUN rustup component add --toolchain @@RUST_plain@@ clippy rustfmt llvm-tools-preview \\\n    && rustup default @@RUST_plain@@ \\\n",
+              "count": 1
+            },
+            {
+              "kind": "plain",
+              "template": "# Install the source-requested components as root before unprivileged builds.\nENV RUST_VERSION=@@RUST_plain@@\nRUN rustup component add --toolchain @@RUST_VALUE@@ clippy rustfmt llvm-tools-preview \\\n    && rustup default @@RUST_plain@@ \\\n    && test \"$(rustc --version | cut -d ' ' -f 2)\" = \"@@RUST_plain@@\"\n",
+              "count": 1
+            },
+            {
+              "kind": "plain",
+              "template": "ENV RUST_VERSION=@@RUST_plain@@\nRUN rustup component add --toolchain @@RUST_plain@@ clippy rustfmt llvm-tools-preview \\\n    && rustup default @@RUST_VALUE@@ \\\n    && test \"$(rustc --version | cut -d ' ' -f 2)\" = \"@@RUST_plain@@\"\n\n",
+              "count": 1
+            },
+            {
+              "kind": "plain",
+              "template": "RUN rustup component add --toolchain @@RUST_plain@@ clippy rustfmt llvm-tools-preview \\\n    && rustup default @@RUST_plain@@ \\\n    && test \"$(rustc --version | cut -d ' ' -f 2)\" = \"@@RUST_VALUE@@\"\n\nSHELL [\"/bin/ash\", \"-eo\", \"pipefail\", \"-c\"]\n",
+              "count": 1
+            }
+          ]
+        },
+        {
+          "path": "Makefile",
+          "mode": "100644",
+          "adapters": [
+            {
+              "kind": "plain",
+              "template": "CARGO ?= cargo\nRUST_MSRV ?= 1.96.0\nRUST_TOOLCHAIN ?= @@RUST_VALUE@@\n\nDOCKER_IMAGE ?= $(shell basename $(CURDIR))\n",
+              "count": 1
+            }
+          ]
+        },
+        {
+          "path": "rust-toolchain.toml",
+          "mode": "100644",
+          "adapters": [
+            {
+              "kind": "plain",
+              "template": "[toolchain]\nchannel = \"@@RUST_VALUE@@\"\ncomponents = [\"clippy\", \"rustfmt\", \"llvm-tools-preview\"]\n",
+              "count": 1
+            }
+          ]
+        }
+      ],
+      "preserved_roles": [
+        "Cargo rust-version and MSRV",
+        "beta and nightly",
+        "legacy, fuzz, vendor and historical fixtures"
+      ]
+    },
+    {
+      "repository": "ThreatFlux/vertex_rust_sdk",
+      "id": 1189773171,
+      "default_branch": "main",
+      "reviewed_source_sha": "c0028f395b928a6956f2e40b30243e4e83b2adc2",
+      "files": [
+        {
+          "path": ".github/workflows/ci.yml",
+          "mode": "100644",
+          "adapters": [
+            {
+              "kind": "plain",
+              "template": "  RUST_STABLE_VERSION: @@RUST_VALUE@@\n",
+              "count": 1,
+              "job": "RUST_STABLE_VERSION"
+            },
+            {
+              "kind": "plain",
+              "template": "\n    env:\n      RUSTUP_TOOLCHAIN: ${{ matrix.rust == 'stable' && '@@RUST_VALUE@@' || matrix.rust }}\n    steps:\n      - name: Checkout\n",
+              "count": 1,
+              "job": "test"
+            }
+          ]
+        },
+        {
+          "path": ".github/workflows/release.yml",
+          "mode": "100644",
+          "adapters": [
+            {
+              "kind": "plain",
+              "template": "  RUST_VERSION: @@RUST_VALUE@@\n",
+              "count": 1,
+              "job": "RUST_VERSION"
+            }
+          ]
+        },
+        {
+          "path": ".github/workflows/security.yml",
+          "mode": "100644",
+          "adapters": [
+            {
+              "kind": "plain",
+              "template": "  RUST_VERSION: @@RUST_VALUE@@\n",
+              "count": 1,
+              "job": "RUST_VERSION"
+            }
+          ]
+        },
+        {
+          "path": "Dockerfile",
+          "mode": "100644",
+          "adapters": [
+            {
+              "kind": "plain",
+              "template": "    rm -rf /var/lib/apt/lists/*\n\n# Verified Rust @@RUST_VALUE@@ on Alpine 3.24 (musl); multi-arch index digest\nFROM @@IMAGE_alpine3.24@@ AS rust-base\n\n",
+              "count": 1
+            },
+            {
+              "kind": "image:alpine3.24",
+              "template": "\n# Verified Rust @@RUST_plain@@ on Alpine 3.24 (musl); multi-arch index digest\nFROM @@RUST_VALUE@@ AS rust-base\n\n# Install the source-requested components as root before unprivileged builds.\n",
+              "count": 1
+            },
+            {
+              "kind": "plain",
+              "template": "\n# Install the source-requested components as root before unprivileged builds.\nENV RUST_VERSION=@@RUST_VALUE@@\nRUN rustup component add --toolchain @@RUST_plain@@ clippy rustfmt llvm-tools-preview \\\n    && rustup default @@RUST_plain@@ \\\n",
+              "count": 1
+            },
+            {
+              "kind": "plain",
+              "template": "# Install the source-requested components as root before unprivileged builds.\nENV RUST_VERSION=@@RUST_plain@@\nRUN rustup component add --toolchain @@RUST_VALUE@@ clippy rustfmt llvm-tools-preview \\\n    && rustup default @@RUST_plain@@ \\\n    && test \"$(rustc --version | cut -d ' ' -f 2)\" = \"@@RUST_plain@@\"\n",
+              "count": 1
+            },
+            {
+              "kind": "plain",
+              "template": "ENV RUST_VERSION=@@RUST_plain@@\nRUN rustup component add --toolchain @@RUST_plain@@ clippy rustfmt llvm-tools-preview \\\n    && rustup default @@RUST_VALUE@@ \\\n    && test \"$(rustc --version | cut -d ' ' -f 2)\" = \"@@RUST_plain@@\"\n\n",
+              "count": 1
+            },
+            {
+              "kind": "plain",
+              "template": "RUN rustup component add --toolchain @@RUST_plain@@ clippy rustfmt llvm-tools-preview \\\n    && rustup default @@RUST_plain@@ \\\n    && test \"$(rustc --version | cut -d ' ' -f 2)\" = \"@@RUST_VALUE@@\"\n\nARG VERSION=0.0.0\n",
+              "count": 1
+            }
+          ]
+        },
+        {
+          "path": "Makefile",
+          "mode": "100644",
+          "adapters": [
+            {
+              "kind": "plain",
+              "template": "CARGO ?= cargo\nRUST_MSRV ?= 1.96.0\nRUST_TOOLCHAIN ?= @@RUST_VALUE@@\nCARGO_AUDIT_VERSION := 0.23.0\nCARGO_DENY_VERSION := 0.20.2\n",
+              "count": 1
+            }
+          ]
+        },
+        {
+          "path": "rust-toolchain.toml",
+          "mode": "100644",
+          "adapters": [
+            {
+              "kind": "plain",
+              "template": "[toolchain]\nchannel = \"@@RUST_VALUE@@\"\ncomponents = [\"clippy\", \"rustfmt\", \"llvm-tools-preview\"]\n",
+              "count": 1
+            }
+          ]
+        }
+      ],
+      "preserved_roles": [
+        "Cargo rust-version and MSRV",
+        "beta and nightly",
+        "legacy, fuzz, vendor and historical fixtures"
+      ]
+    },
+    {
+      "repository": "ThreatFlux/virustotal-rs",
+      "id": 1040375638,
+      "default_branch": "main",
+      "reviewed_source_sha": "7f5580a381171ba13a3e6e0ce3367980eee2977d",
+      "files": [
+        {
+          "path": ".github/workflows/ci.yml",
+          "mode": "100644",
+          "adapters": [
+            {
+              "kind": "plain",
+              "template": "  RUST_STABLE_VERSION: @@RUST_VALUE@@\n",
+              "count": 1,
+              "job": "RUST_STABLE_VERSION"
+            },
+            {
+              "kind": "plain",
+              "template": "\n    env:\n      RUSTUP_TOOLCHAIN: ${{ matrix.rust == 'stable' && '@@RUST_VALUE@@' || matrix.rust }}\n    steps:\n      - name: Checkout\n",
+              "count": 1,
+              "job": "test"
+            }
+          ]
+        },
+        {
+          "path": ".github/workflows/docs.yml",
+          "mode": "100644",
+          "adapters": [
+            {
+              "kind": "plain",
+              "template": "  RUST_VERSION: @@RUST_VALUE@@\n\njobs:\n",
+              "count": 1,
+              "job": "RUST_VERSION"
+            }
+          ]
+        },
+        {
+          "path": ".github/workflows/release.yml",
+          "mode": "100644",
+          "adapters": [
+            {
+              "kind": "plain",
+              "template": "  RUST_VERSION: @@RUST_VALUE@@\n",
+              "count": 1,
+              "job": "RUST_VERSION"
+            }
+          ]
+        },
+        {
+          "path": ".github/workflows/security.yml",
+          "mode": "100644",
+          "adapters": [
+            {
+              "kind": "plain",
+              "template": "  RUST_VERSION: @@RUST_VALUE@@\n\njobs:\n",
+              "count": 1,
+              "job": "RUST_VERSION"
+            }
+          ]
+        },
+        {
+          "path": "Dockerfile",
+          "mode": "100644",
+          "adapters": [
+            {
+              "kind": "plain",
+              "template": "    rm -rf /var/lib/apt/lists/*\n\n# Verified Rust @@RUST_VALUE@@ on Alpine 3.24 (musl); multi-arch index digest\nFROM @@IMAGE_alpine3.24@@ AS rust-base\n\n",
+              "count": 1
+            },
+            {
+              "kind": "image:alpine3.24",
+              "template": "\n# Verified Rust @@RUST_plain@@ on Alpine 3.24 (musl); multi-arch index digest\nFROM @@RUST_VALUE@@ AS rust-base\n\n# Install the source-requested components as root before unprivileged builds.\n",
+              "count": 1
+            },
+            {
+              "kind": "plain",
+              "template": "\n# Install the source-requested components as root before unprivileged builds.\nENV RUST_VERSION=@@RUST_VALUE@@\nRUN rustup component add --toolchain @@RUST_plain@@ clippy rustfmt \\\n    && rustup default @@RUST_plain@@ \\\n",
+              "count": 1
+            },
+            {
+              "kind": "plain",
+              "template": "# Install the source-requested components as root before unprivileged builds.\nENV RUST_VERSION=@@RUST_plain@@\nRUN rustup component add --toolchain @@RUST_VALUE@@ clippy rustfmt \\\n    && rustup default @@RUST_plain@@ \\\n    && test \"$(rustc --version | cut -d ' ' -f 2)\" = \"@@RUST_plain@@\"\n",
+              "count": 1
+            },
+            {
+              "kind": "plain",
+              "template": "ENV RUST_VERSION=@@RUST_plain@@\nRUN rustup component add --toolchain @@RUST_plain@@ clippy rustfmt \\\n    && rustup default @@RUST_VALUE@@ \\\n    && test \"$(rustc --version | cut -d ' ' -f 2)\" = \"@@RUST_plain@@\"\n\n",
+              "count": 1
+            },
+            {
+              "kind": "plain",
+              "template": "RUN rustup component add --toolchain @@RUST_plain@@ clippy rustfmt \\\n    && rustup default @@RUST_plain@@ \\\n    && test \"$(rustc --version | cut -d ' ' -f 2)\" = \"@@RUST_VALUE@@\"\n\nARG VERSION=0.0.0\n",
+              "count": 1
+            }
+          ]
+        },
+        {
+          "path": "rust-toolchain.toml",
+          "mode": "100644",
+          "adapters": [
+            {
+              "kind": "plain",
+              "template": "[toolchain]\nchannel = \"@@RUST_VALUE@@\"\ncomponents = [\"clippy\", \"rustfmt\"]\nprofile = \"minimal\"\n",
+              "count": 1
+            }
+          ]
+        }
+      ],
+      "preserved_roles": [
+        "Cargo rust-version and MSRV",
+        "beta and nightly",
+        "legacy, fuzz, vendor and historical fixtures"
+      ]
+    },
+    {
+      "repository": "ThreatFlux/yrlint",
+      "id": 942933915,
+      "default_branch": "main",
+      "reviewed_source_sha": "6a10c7e30791344e4659060baddeb73dfb83cac4",
+      "files": [
+        {
+          "path": ".github/workflows/ci.yml",
+          "mode": "100644",
+          "adapters": [
+            {
+              "kind": "plain",
+              "template": "  RUST_VERSION: @@RUST_VALUE@@\n",
+              "count": 1,
+              "job": "RUST_VERSION"
+            },
+            {
+              "kind": "plain",
+              "template": "  RUSTUP_TOOLCHAIN: @@RUST_VALUE@@\n\njobs:\n",
+              "count": 1,
+              "job": "RUSTUP_TOOLCHAIN"
+            }
+          ]
+        },
+        {
+          "path": ".github/workflows/release.yml",
+          "mode": "100644",
+          "adapters": [
+            {
+              "kind": "plain",
+              "template": "  RUST_VERSION: @@RUST_VALUE@@\n",
+              "count": 1,
+              "job": "RUST_VERSION"
+            },
+            {
+              "kind": "plain",
+              "template": "  RUSTUP_TOOLCHAIN: @@RUST_VALUE@@\n",
+              "count": 1,
+              "job": "RUSTUP_TOOLCHAIN"
+            }
+          ]
+        },
+        {
+          "path": ".github/workflows/security.yml",
+          "mode": "100644",
+          "adapters": [
+            {
+              "kind": "plain",
+              "template": "  RUST_VERSION: @@RUST_VALUE@@\n",
+              "count": 1,
+              "job": "RUST_VERSION"
+            },
+            {
+              "kind": "plain",
+              "template": "  RUSTUP_TOOLCHAIN: @@RUST_VALUE@@\n\njobs:\n",
+              "count": 1,
+              "job": "RUSTUP_TOOLCHAIN"
+            }
+          ]
+        },
+        {
+          "path": "Dockerfile",
+          "mode": "100644",
+          "adapters": [
+            {
+              "kind": "plain",
+              "template": "    rm -rf /var/lib/apt/lists/*\n\n# rust @@RUST_VALUE@@ on Alpine 3.24 (musl); multi-arch index digest\nFROM @@IMAGE_alpine3.24@@ AS rust-base\n\n",
+              "count": 1
+            },
+            {
+              "kind": "image:alpine3.24",
+              "template": "\n# rust @@RUST_plain@@ on Alpine 3.24 (musl); multi-arch index digest\nFROM @@RUST_VALUE@@ AS rust-base\n\n# Install every requested component before the nonroot builder enters the repo.\n",
+              "count": 1
+            },
+            {
+              "kind": "plain",
+              "template": "\n# Install every requested component before the nonroot builder enters the repo.\nENV RUST_VERSION=@@RUST_VALUE@@\nRUN rustup component add --toolchain @@RUST_plain@@ clippy rustfmt && \\\n    rustc --version | grep -q '^rustc @@RUST_bracketed@@ '\n",
+              "count": 1
+            },
+            {
+              "kind": "plain",
+              "template": "# Install every requested component before the nonroot builder enters the repo.\nENV RUST_VERSION=@@RUST_plain@@\nRUN rustup component add --toolchain @@RUST_VALUE@@ clippy rustfmt && \\\n    rustc --version | grep -q '^rustc @@RUST_bracketed@@ '\n\n",
+              "count": 1
+            },
+            {
+              "kind": "bracketed",
+              "template": "ENV RUST_VERSION=@@RUST_plain@@\nRUN rustup component add --toolchain @@RUST_plain@@ clippy rustfmt && \\\n    rustc --version | grep -q '^rustc @@RUST_VALUE@@ '\n\nARG VERSION=0.0.0\n",
+              "count": 1
+            }
+          ]
+        },
+        {
+          "path": "rust-toolchain.toml",
+          "mode": "100644",
+          "adapters": [
+            {
+              "kind": "plain",
+              "template": "[toolchain]\nchannel = \"@@RUST_VALUE@@\"\nprofile = \"minimal\"\ncomponents = [\"clippy\", \"rustfmt\"]\n",
+              "count": 1
+            }
+          ]
+        }
+      ],
+      "preserved_roles": [
+        "Cargo rust-version and MSRV",
+        "beta and nightly",
+        "legacy, fuzz, vendor and historical fixtures"
+      ]
+    }
+  ]
+}
