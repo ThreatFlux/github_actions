@@ -47,6 +47,17 @@ class ControlTests(unittest.TestCase):
         )
         self.assertEqual(self.github.writes, [])
 
+    def test_selector_failure_names_only_the_public_repository_and_managed_file(self):
+        self.github.files[".github/workflows/ci.yml"] = b"name: Changed layout\n"
+        with self.assertRaises(PolicyError) as failure:
+            repository_plan(self.github, self.item, self.config)
+        self.assertEqual(
+            str(failure.exception),
+            "ThreatFlux/example:.github/workflows/ci.yml: "
+            "Reviewed workflow job context changed",
+        )
+        self.assertEqual(self.github.writes, [])
+
     def test_missing_image_or_compiler_evidence_prevents_every_repository_plan(self):
         actual = copy.deepcopy(self.config["target"])
         actual["images"].pop("trixie")

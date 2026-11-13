@@ -5,15 +5,67 @@ import hashlib
 import json
 import secrets
 import unittest
+import urllib.error
 import urllib.request
+from email.message import Message
 from unittest import mock
 
 import fixtures
-from api import DockerBlobRedirect, GitHub, NoRedirect, PolicyError, object_id
+from api import DockerBlobRedirect, GitHub, NoRedirect, PolicyError, fetch, object_id
 from targets import RustImages, stable_channel
 
 
 class SourceTests(unittest.TestCase):
+    def test_http_failure_reports_public_endpoint_and_numeric_rate_headers_only(self):
+        secret = secrets.token_hex(16)
+        url = (
+            f"https://user:{secret}@api.github.com/apps/example?token={secret}#{secret}"
+        )
+        headers = Message()
+        for name, value in {
+            "X-RateLimit-Remaining": "0",
+            "X-RateLimit-Reset": "1794550000",
+            "Retry-After": "60",
+            "Authorization": "Bearer " + secret,
+            "Set-Cookie": secret,
+        }.items():
+            headers[name] = value
+        error = urllib.error.HTTPError(url, 403, secret, headers, None)
+        with mock.patch("api.urllib.request.build_opener") as builder:
+            builder.return_value.open.side_effect = error
+            with self.assertRaises(PolicyError) as failure:
+                fetch(url, secret, {"private": secret})
+        self.assertEqual(
+            str(failure.exception),
+            "HTTPS request failed at api.github.com/apps/example: status=403; "
+            "x-ratelimit-remaining=0; x-ratelimit-reset=1794550000; retry-after=60",
+        )
+        self.assertNotIn(secret, str(failure.exception))
+
+    def test_http_diagnostics_reject_header_text_and_preserve_404_semantics(self):
+        headers = Message()
+        headers["Retry-After"] = "60; unexpected text"
+        headers["X-RateLimit-Remaining"] = "0\nInjected: value"
+        for status in [429, 404]:
+            error = urllib.error.HTTPError(
+                "https://api.github.com/repos/ThreatFlux/example",
+                status,
+                "",
+                headers,
+                None,
+            )
+            with mock.patch("api.urllib.request.build_opener") as builder:
+                builder.return_value.open.side_effect = error
+                if status == 404:
+                    self.assertEqual(fetch(error.url), (None, {"status": 404}))
+                else:
+                    with self.assertRaises(PolicyError) as failure:
+                        fetch(error.url)
+                    self.assertEqual(
+                        str(failure.exception),
+                        "HTTPS request failed at api.github.com/repos/ThreatFlux/example: status=429",
+                    )
+
     def test_real_api_wrapper_allows_immutable_three_dot_compare_path(self):
         path = (
             "/repos/ThreatFlux/example/compare/"

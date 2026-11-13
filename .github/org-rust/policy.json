@@ -875,7 +875,7 @@
             },
             {
               "kind": "bracketed",
-              "template": "ENV RUST_VERSION=@@RUST_plain@@\nRUN rustup component add --toolchain @@RUST_plain@@ clippy rustfmt llvm-tools-preview && \\\n    rustc --version | grep -q '^rustc @@RUST_VALUE@@ '\n\nARG VERSION=0.3.5\n",
+              "template": "ENV RUST_VERSION=@@RUST_plain@@\nRUN rustup component add --toolchain @@RUST_plain@@ clippy rustfmt llvm-tools-preview && \\\n    rustc --version | grep -q '^rustc @@RUST_VALUE@@ '\n",
               "count": 1
             }
           ]
@@ -1217,7 +1217,7 @@
             },
             {
               "kind": "plain",
-              "template": "      --component rustfmt --component clippy --component llvm-tools-preview && \\\n    rustup default @@RUST_plain@@ && \\\n    test \"$(rustc --version | cut -d ' ' -f 2)\" = @@RUST_VALUE@@\n\nARG VERSION=0.0.0\n",
+              "template": "      --component rustfmt --component clippy --component llvm-tools-preview && \\\n    rustup default @@RUST_plain@@ && \\\n    test \"$(rustc --version | cut -d ' ' -f 2)\" = @@RUST_VALUE@@\n",
               "count": 1
             }
           ]
@@ -1390,7 +1390,7 @@
             },
             {
               "kind": "plain",
-              "template": "RUN rustup component add --toolchain @@RUST_plain@@ clippy rustfmt llvm-tools-preview \\\n    && rustup default @@RUST_plain@@ \\\n    && test \"$(rustc --version | cut -d ' ' -f 2)\" = \"@@RUST_VALUE@@\"\n\nARG VERSION=0.0.0\n",
+              "template": "RUN rustup component add --toolchain @@RUST_plain@@ clippy rustfmt llvm-tools-preview \\\n    && rustup default @@RUST_plain@@ \\\n    && test \"$(rustc --version | cut -d ' ' -f 2)\" = \"@@RUST_VALUE@@\"\n",
               "count": 1
             }
           ]
@@ -1539,7 +1539,7 @@
             },
             {
               "kind": "plain",
-              "template": "RUN rustup component add --toolchain @@RUST_plain@@ clippy rustfmt llvm-tools-preview \\\n    && rustup default @@RUST_plain@@ \\\n    && test \"$(rustc --version | cut -d ' ' -f 2)\" = \"@@RUST_VALUE@@\"\n\nARG VERSION=0.0.0\n",
+              "template": "RUN rustup component add --toolchain @@RUST_plain@@ clippy rustfmt llvm-tools-preview \\\n    && rustup default @@RUST_plain@@ \\\n    && test \"$(rustc --version | cut -d ' ' -f 2)\" = \"@@RUST_VALUE@@\"\n",
               "count": 1
             },
             {
@@ -1707,7 +1707,7 @@
             },
             {
               "kind": "plain",
-              "template": "      --component rustfmt --component clippy --component llvm-tools-preview && \\\n    rustup default @@RUST_plain@@ && \\\n    test \"$(rustc --version | cut -d ' ' -f 2)\" = @@RUST_VALUE@@\n\nARG VERSION=0.0.0\n",
+              "template": "      --component rustfmt --component clippy --component llvm-tools-preview && \\\n    rustup default @@RUST_plain@@ && \\\n    test \"$(rustc --version | cut -d ' ' -f 2)\" = @@RUST_VALUE@@\n",
               "count": 1
             }
           ]
@@ -1733,7 +1733,7 @@
             },
             {
               "kind": "plain",
-              "template": "      --component rustfmt --component clippy --component llvm-tools-preview && \\\n    rustup default @@RUST_plain@@ && \\\n    test \"$(rustc --version | cut -d ' ' -f 2)\" = @@RUST_VALUE@@\n\nARG VERSION=0.0.0\n",
+              "template": "      --component rustfmt --component clippy --component llvm-tools-preview && \\\n    rustup default @@RUST_plain@@ && \\\n    test \"$(rustc --version | cut -d ' ' -f 2)\" = @@RUST_VALUE@@\n",
               "count": 1
             }
           ]
@@ -2727,7 +2727,7 @@
             },
             {
               "kind": "plain",
-              "template": "RUN rustup component add --toolchain @@RUST_plain@@ clippy rustfmt llvm-tools-preview \\\n    && rustup default @@RUST_plain@@ \\\n    && test \"$(rustc --version | cut -d ' ' -f 2)\" = \"@@RUST_VALUE@@\"\n\nARG VERSION=0.0.0\n",
+              "template": "RUN rustup component add --toolchain @@RUST_plain@@ clippy rustfmt llvm-tools-preview \\\n    && rustup default @@RUST_plain@@ \\\n    && test \"$(rustc --version | cut -d ' ' -f 2)\" = \"@@RUST_VALUE@@\"\n",
               "count": 1
             }
           ]
@@ -2852,7 +2852,7 @@
             },
             {
               "kind": "plain",
-              "template": "RUN rustup component add --toolchain @@RUST_plain@@ clippy rustfmt \\\n    && rustup default @@RUST_plain@@ \\\n    && test \"$(rustc --version | cut -d ' ' -f 2)\" = \"@@RUST_VALUE@@\"\n\nARG VERSION=0.0.0\n",
+              "template": "RUN rustup component add --toolchain @@RUST_plain@@ clippy rustfmt \\\n    && rustup default @@RUST_plain@@ \\\n    && test \"$(rustc --version | cut -d ' ' -f 2)\" = \"@@RUST_VALUE@@\"\n",
               "count": 1
             }
           ]
@@ -2961,7 +2961,7 @@
             },
             {
               "kind": "bracketed",
-              "template": "ENV RUST_VERSION=@@RUST_plain@@\nRUN rustup component add --toolchain @@RUST_plain@@ clippy rustfmt && \\\n    rustc --version | grep -q '^rustc @@RUST_VALUE@@ '\n\nARG VERSION=0.0.0\n",
+              "template": "ENV RUST_VERSION=@@RUST_plain@@\nRUN rustup component add --toolchain @@RUST_plain@@ clippy rustfmt && \\\n    rustc --version | grep -q '^rustc @@RUST_VALUE@@ '\n",
               "count": 1
             }
           ]
