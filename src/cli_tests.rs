@@ -450,6 +450,45 @@ fn release_expected_head_remains_optional_for_manual_calls_and_empty_action_inpu
     });
 }
 
+#[test]
+fn release_analysis_sha_resolves_from_action_input_and_explicit_flag_wins() {
+    let source = "a".repeat(40);
+    with_env(&[("INPUT_ANALYSIS-SHA", &source)], || {
+        assert_eq!(
+            release_args(parse(&["bin", "release", "--dry-run"])).analysis_sha.as_deref(),
+            Some(source.as_str())
+        );
+        assert_eq!(
+            release_args(parse(&["bin", "release", "--dry-run", "--analysis-sha", "explicitsha"]))
+                .analysis_sha
+                .as_deref(),
+            Some("explicitsha")
+        );
+    });
+}
+
+#[test]
+fn analysis_sha_cannot_disable_the_real_release_guard_or_write_outputs() {
+    for (dry_run, expected) in [(false, None), (true, Some("validatedsha"))] {
+        with_env(&[], || {
+            let repo = tempfile::tempdir().expect("tempdir");
+            let mut server = mockito::Server::new();
+            let no_request = server.mock("GET", mockito::Matcher::Any).expect(0).create();
+            let mut args = mock_release_args(repo.path());
+            args.analysis_sha = Some("a".repeat(40));
+            args.expected_head = expected.map(str::to_owned);
+            args.dry_run = dry_run;
+            let error = super::release_cli::run_release(args, Some(server.url()))
+                .expect_err("invalid preview inputs");
+            assert!(error.to_string().contains("requires --dry-run"));
+            no_request.assert();
+            drop(server);
+            assert!(!repo.path().join("outputs").exists());
+            assert!(!repo.path().join("notes.md").exists());
+        });
+    }
+}
+
 /// Parse the same release invocation for mock publishers, deliberately
 /// bypassing main's `INPUT_*` cleanup to exercise `run_release`'s own boundary.
 fn mock_release_args(repo_root: &std::path::Path) -> ReleaseArgs {

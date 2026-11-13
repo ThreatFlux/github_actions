@@ -43,6 +43,14 @@ pub fn current_version(repo_root: &Path) -> Result<String> {
     })
 }
 
+/// Parse the exact manifest bytes already authenticated against an immutable
+/// source, without reopening a path that could change during the HTTP read.
+pub(crate) fn current_version_from_source(contents: &str) -> Result<String> {
+    let document = contents.parse::<DocumentMut>().context("parse validated Cargo manifest")?;
+    version_from_document(&document)
+        .context("unable to determine current version from validated Cargo manifest")
+}
+
 /// Plan the rewrite of every member manifest and the lockfile to
 /// `new_version`, without touching the filesystem.
 pub fn plan_version_rewrite(repo_root: &Path, new_version: &str) -> Result<VersionRewritePlan> {

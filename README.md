@@ -79,6 +79,7 @@ Options:
 - `--extra-files`: comma-separated files to stage into the release commit alongside the version rewrites
 - `--phase`: `all` (default), `bump` to commit the version bump without tagging it, or `tag` to release the version the manifest already holds
 - `--expected-head`: optional exact branch commit that passed validation; fail before release analysis or writes if the branch head differs
+- `--analysis-sha`: immutable candidate commit for a read-only preview; bind commit history and consulted Cargo data to this source, never the moving main head
 
 Command behavior:
 
@@ -148,11 +149,11 @@ cargo run -- release \
 4. Creates the release commit directly on the base branch (fast-forward only — if the branch advanced past the analyzed head, the run skips cleanly), the `vX.Y.Z` tag (annotated by default so provenance checks like `git cat-file -t` pass; `--tag-style lightweight` opts out), an optional moving major alias tag (`--update-major-alias`), and the GitHub Release with grouped release notes: Breaking Changes, Features, and Bug Fixes. A release with none of those (for example `--bump patch` over `ci:`, `build:`, `chore:`, and `docs:` commits) lists its other conventional commits under Maintenance instead, leaving out the tool's own `chore: release vX.Y.Z` bump commit.
 5. Writes release notes to `--notes-file` and `released`/`version`/`tag`/`commit`/`release-url`/`notes-file` outputs to `$GITHUB_OUTPUT` when set.
 
-Automation that gates a specific commit should pass `--expected-head <full-commit-sha>` (action input `expected-head`). The publisher rejects a different branch head before reading release history or preparing writes, then retains its mid-run race checks. The reusable release workflow forwards the exact commit accepted by its validation gate for writes; read-only PR dry runs retain their existing preview behavior. Direct CLI and library callers can omit the guard for the existing manual release behavior; library callers can opt in with `ReleasePublisher::release_at_head` without changing `ReleaseOptions`.
+Automation that gates a specific commit should pass `--expected-head <full-commit-sha>` (action input `expected-head`). A different head or a later publication race fails the guarded request. Read-only reusable previews instead pass `analysis-sha`, binding history and all consulted Cargo data to the requested immutable commit. That input requires `--dry-run` and cannot be combined with `--expected-head`. Library callers can use `preview_at_commit` or `release_at_head` without changing `ReleaseOptions`. Legacy direct dry runs without an analysis SHA retain their local-data behavior.
 
 Release mode requires a token with `contents: write` on the target repository. The `workflow` scope is not required because release commits only touch Cargo manifests.
 
-Nested consumers are selected through actual in-repository path dependencies, including renamed and inherited requirements. Write releases discover nested manifest/lock pairs from the analyzed tree and verify every source used to include or exclude a consumer against its regular-file blob; untracked sources, symlinks, registry entries and historical package copies cannot become owned release entries. Explicit and implicit nested workspace members and safe in-repository explicit `package.workspace` inheritance are supported without changing consumer package versions. Unrelated historical fixtures that have no owned path dependency remain untouched. The publisher stops with an actionable error for owned patch/replace redirection, stale or missing required owned path lock entries, and ambiguous local path identities. Refresh that active consumer lock before retrying; historical package copies are not guessed to be current owned packages. Read-only PR dry runs may preview their local source without requiring it to match main.
+Nested consumers are selected through actual in-repository path dependencies, including renamed and inherited requirements. Write releases discover nested manifest/lock pairs from the analyzed tree and verify every source used to include or exclude a consumer against its regular-file blob; untracked sources, symlinks, registry entries and historical package copies cannot become owned release entries. Explicit and implicit nested workspace members and safe in-repository explicit `package.workspace` inheritance are supported without changing consumer package versions. Unrelated historical fixtures that have no owned path dependency remain untouched. The publisher stops with an actionable error for owned patch/replace redirection, stale or missing required owned path lock entries, and ambiguous local path identities. Refresh that active consumer lock before retrying; historical package copies are not guessed to be current owned packages. Explicit candidate previews require consulted Cargo data to match their immutable commit; candidate scripts, source code and Git configuration are never executed.
 
 #### Splitting a release across two runs
 
@@ -230,6 +231,7 @@ prebuilt image, so it starts in seconds instead of compiling from source.
 | `check-policies` | `policy` | `true` | Report unpinned actions, permission, and job timeout findings. |
 | `fail-on-findings` | `policy` | `false` | Fail the action when the scan reports any finding. |
 | `expected-head` | `release` | none | Exact validated branch commit; reject a different branch head before release analysis or writes. |
+| `analysis-sha` | `release` | none | Immutable commit for a dry-run preview; cannot enable writes or be combined with `expected-head`. |
 | `bump` | `release` | `auto` | `auto`, `major`, `minor`, or `patch`. |
 | `tag-prefix` | `release` | `v` | Prefix for release tags. |
 | `tag-style` | `release` | `annotated` | `annotated` or `lightweight`. |

@@ -28,6 +28,8 @@ RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates
 # Rust 1.100.0 on Alpine 3.24 (musl); multi-arch index digest
 FROM rust:1.100.0-alpine3.24@sha256:de1e0058543a81ed7b046629167db587c67a94bdf37cce14eb27f0ec83baaffb AS rust-base
 
+SHELL ["/bin/ash", "-eo", "pipefail", "-c"]
+
 # Install the repository's requested components before exporting the toolchain
 # image or switching to the unprivileged builder.
 RUN rustup toolchain install 1.100.0 --profile minimal --no-self-update \
@@ -46,8 +48,6 @@ ARG OCI_IMAGE_TITLE="github_actions runtime"
 ARG OCI_IMAGE_DESCRIPTION="github_actions maintained static runtime"
 ARG OCI_IMAGE_VENDOR=ThreatFlux
 ARG OCI_IMAGE_SOURCE=https://github.com/ThreatFlux/github_actions
-
-SHELL ["/bin/ash", "-eo", "pipefail", "-c"]
 
 # Refresh these direct Alpine package pins together with the builder digest.
 # tini-static preserves signal forwarding and zombie reaping without a libc

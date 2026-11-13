@@ -94,6 +94,9 @@ on:
         description: Private key for the GitHub App identified by github-app-id. Store it as an organization or repository secret.
         required: false
     outputs:
+      analysis-sha:
+        description: Immutable candidate commit actually analyzed by the preview runtime.
+        value: ${{ jobs.preview.outputs.analysis-sha }}
       released:
         description: Whether a release was created (true or false).
         value: ${{ jobs.release.outputs.released || jobs.preview.outputs.released || 'false' }}
@@ -174,6 +177,10 @@ jobs:
             exit 0
           fi
           if [[ "$DRY_RUN" != true && "$EVENT_NAME" != workflow_run && "$CURRENT_REF" != refs/heads/main ]]; then
+            if [[ "$EVENT_NAME" == workflow_dispatch ]]; then
+              echo "::error::A manual release must target current main; the request was not performed."
+              exit 1
+            fi
             echo "should-release=false" >> "$GITHUB_OUTPUT"
             exit 0
           fi
@@ -181,6 +188,10 @@ jobs:
             main_sha="$(gh api "repos/$GITHUB_REPOSITORY/commits/main" --jq .sha)"
             if [[ "$main_sha" != "$TARGET_SHA" ]]; then
               echo "main advanced; refusing to release stale $TARGET_SHA"
+              if [[ "$EVENT_NAME" == workflow_dispatch ]]; then
+                echo "::error::The requested manual release was not performed; dispatch again against current main."
+                exit 1
+              fi
               echo "should-release=false" >> "$GITHUB_OUTPUT"
               exit 0
             fi
@@ -240,6 +251,10 @@ jobs:
             if [[ "$status" != completed:success ]]; then
               echo "Required workflow '$workflow' is '$status' for $ci_sha"
               echo "should-release=false" >> "$GITHUB_OUTPUT"
+              if [[ "$EVENT_NAME" == workflow_dispatch && "$DRY_RUN" != true ]]; then
+                echo "::error::The manual release was not performed because its required checks are not successful."
+                exit 1
+              fi
               exit 0
             fi
           done
@@ -254,6 +269,7 @@ jobs:
       contents: read
       pull-requests: read
     outputs:
+      analysis-sha: ${{ steps.release.outputs.analysis-sha }}
       released: ${{ steps.release.outputs.released }}
       version: ${{ steps.release.outputs.version }}
       tag: ${{ steps.release.outputs.tag }}
@@ -285,6 +301,7 @@ jobs:
           repo: .preview-target
           token: ${{ github.token }}
           expected-head: ''
+          analysis-sha: ${{ needs.check.outputs.target-sha }}
           bump: ${{ inputs.bump }}
           tag-prefix: ${{ inputs.tag-prefix }}
           update-major-alias: ${{ inputs.update-major-alias }}

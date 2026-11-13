@@ -6,12 +6,13 @@ import unittest
 from pathlib import Path
 
 from fixtures import CI, policy, target, upgraded
-from adapters import patch_file, render, validate_file
+from adapters import EARLY_SHELL, REVIEWED_SHELLS, patch_file, render, validate_file
 from api import PolicyError
 from control import select_repositories, validate_policy
 
 TRIMMED_ASSERTIONS = {
     ("ThreatFlux/file-scanner", "Dockerfile"),
+    ("ThreatFlux/threatflux-unifi-sdk", "Dockerfile"),
     ("ThreatFlux/github_actions", "Dockerfile"),
     ("ThreatFlux/ollama_rust_sdk", "Dockerfile"),
     ("ThreatFlux/openai_rust_sdk", "Dockerfile"),
@@ -24,6 +25,64 @@ TRIMMED_ASSERTIONS = {
 
 
 class AdapterTests(unittest.TestCase):
+    def test_real_from_contexts_accept_only_reviewed_optional_early_shells(self):
+        catalog = json.loads(
+            Path(__file__).resolve().parents[1].joinpath("policy.json").read_text()
+        )
+        contexts = [
+            adapter
+            for repository in catalog["repositories"]
+            for file in repository["files"]
+            for adapter in file["adapters"]
+            if EARLY_SHELL in adapter["template"]
+        ]
+        self.assertEqual(len(contexts), 20)
+        self.assertTrue(any("AS builder" in a["template"] for a in contexts))
+        self.assertTrue(any("ENV RUST_VERSION" in a["template"] for a in contexts))
+        self.assertTrue(any("AS " not in a["template"] for a in contexts))
+        config = upgraded()
+        old_state = config["accepted_states"][0]
+
+        def concrete(template, value):
+            text = template.replace("@@RUST_VALUE@@", value)
+            text = text.replace("@@RUST_plain@@", old_state["stable"]["version"])
+            for variant, image in old_state["images"].items():
+                text = text.replace(f"@@IMAGE_{variant}@@", image["reference"])
+            return text
+
+        for adapter in contexts:
+            kind = adapter["kind"]
+            if kind.startswith("image:"):
+                variant = kind.split(":", 1)[1]
+                old = old_state["images"][variant]["reference"]
+                new = config["target"]["images"][variant]["reference"]
+            else:
+                old = render(old_state["stable"]["version"], kind)
+                new = render(config["target"]["stable"]["version"], kind)
+            for shell in ["", *REVIEWED_SHELLS]:
+                template = adapter["template"].replace(EARLY_SHELL, shell)
+                original = concrete(template, old)
+                expected = concrete(template, new)
+                with self.subTest(template=adapter["template"], shell=shell):
+                    self.assertEqual(patch_file(original, [adapter], config), expected)
+                    with self.assertRaises(PolicyError):
+                        patch_file(original + original, [adapter], config)
+                    with self.assertRaises(PolicyError):
+                        patch_file(
+                            original.replace("FROM ", "FROM --unexpected=stage ", 1),
+                            [adapter],
+                            config,
+                        )
+            for shell in [
+                'SHELL ["/bin/sh", "-c"]\n\n',
+                REVIEWED_SHELLS[0] + REVIEWED_SHELLS[0],
+            ]:
+                original = concrete(
+                    adapter["template"].replace(EARLY_SHELL, shell), old
+                )
+                with self.subTest(shell=shell), self.assertRaises(PolicyError):
+                    patch_file(original, [adapter], config)
+
     def test_all_real_compiler_assertions_ignore_independent_product_arg_versions(self):
         catalog = json.loads(
             Path(__file__).resolve().parents[1].joinpath("policy.json").read_text()
@@ -44,7 +103,7 @@ class AdapterTests(unittest.TestCase):
                 ]
             )
         ]
-        self.assertEqual(len(assertions), 9)
+        self.assertEqual(len(assertions), 10)
         suffix = "\nARG VERSION=9.8.7\nARG BUILD_DATE=2026-11-13\n"
         for adapter in assertions:
             context = adapter["template"].replace("@@RUST_plain@@", "1.100.0")
@@ -64,6 +123,12 @@ class AdapterTests(unittest.TestCase):
                         original.replace("rustfmt", "unexpected-component"),
                         [adapter],
                         upgraded(),
+                    )
+                shell = REVIEWED_SHELLS[0]
+                for before, after in [("", shell), (shell, "")]:
+                    self.assertEqual(
+                        patch_file(before + original + after, [adapter], upgraded()),
+                        before + expected + after,
                     )
 
     def test_same_number_msrv_beta_nightly_and_cargo_floor_stay_unchanged(self):

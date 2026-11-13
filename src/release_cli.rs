@@ -44,6 +44,11 @@ pub struct ReleaseArgs {
     #[arg(long, env = "INPUT_EXPECTED-HEAD")]
     pub expected_head: Option<String>,
 
+    /// Immutable candidate commit to analyze; only valid with --dry-run and
+    /// mutually exclusive with the real-release --expected-head guard.
+    #[arg(long, env = "INPUT_ANALYSIS-SHA")]
+    pub analysis_sha: Option<String>,
+
     /// Version bump strategy.
     #[arg(long, env = "INPUT_BUMP", value_enum, default_value_t = BumpArg::Auto)]
     pub bump: BumpArg,
@@ -161,6 +166,12 @@ impl PhaseArg {
 }
 
 pub fn run_release(args: ReleaseArgs, github_api_base_url: Option<String>) -> Result<()> {
+    let analysis_sha = args.analysis_sha.as_deref().map(str::trim).filter(|sha| !sha.is_empty());
+    let expected_head = args.expected_head.as_deref().map(str::trim).filter(|sha| !sha.is_empty());
+    anyhow::ensure!(
+        analysis_sha.is_none() || (args.dry_run && expected_head.is_none()),
+        "analysis SHA requires --dry-run and cannot be combined with --expected-head"
+    );
     let github = GitHubClient::new(
         github_api_base_url.unwrap_or_else(|| String::from("https://api.github.com")),
         args.token,
@@ -187,10 +198,11 @@ pub fn run_release(args: ReleaseArgs, github_api_base_url: Option<String>) -> Re
             .collect(),
         phase: args.phase.phase(),
     };
-    let report = match args.expected_head.as_deref().map(str::trim).filter(|head| !head.is_empty())
-    {
-        Some(expected_head) => publisher.release_at_head(&options, expected_head)?,
-        None => publisher.release(&options)?,
+    let report = match (analysis_sha, expected_head) {
+        (Some(sha), None) => publisher.preview_at_commit(&options, sha)?,
+        (None, Some(expected)) => publisher.release_at_head(&options, expected)?,
+        (None, None) => publisher.release(&options)?,
+        (Some(_), Some(_)) => unreachable!("mutually exclusive inputs were checked above"),
     };
 
     if let Some(notes) = &report.notes {
@@ -200,7 +212,12 @@ pub fn run_release(args: ReleaseArgs, github_api_base_url: Option<String>) -> Re
     }
 
     if let Some(output_path) = &args.github_output {
-        let outputs = report.github_outputs(&args.notes_file);
+        let mut outputs = report.github_outputs(&args.notes_file);
+        if let Some(sha) = analysis_sha {
+            outputs.push_str("analysis-sha=");
+            outputs.push_str(sha);
+            outputs.push('\n');
+        }
         let mut file =
             fs::OpenOptions::new().append(true).create(true).open(output_path).with_context(
                 || format!("failed to open GitHub outputs file '{}'", output_path.display()),
@@ -211,6 +228,9 @@ pub fn run_release(args: ReleaseArgs, github_api_base_url: Option<String>) -> Re
     }
 
     print_release_report(&report, &args.notes_file);
+    if let Some(sha) = analysis_sha {
+        println!("- analyzed immutable candidate {sha}");
+    }
     Ok(())
 }
 

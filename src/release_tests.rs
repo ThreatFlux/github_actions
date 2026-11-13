@@ -21,6 +21,8 @@ mod nested_lockfiles;
 mod phases;
 #[path = "release_pr_flow_tests.rs"]
 mod pr_flow;
+#[path = "release_preview_source_tests.rs"]
+mod preview_source;
 
 const FEAT_AND_FIX: &str = r#"{"total_commits":2,"commits":[{"sha":"feataaaaaaa","commit":{"message":"feat: add thing"},"parents":[{}]},{"sha":"fixbbbbbbbb","commit":{"message":"fix: repair thing"},"parents":[{}]}]}"#;
 const CHORE_ONLY: &str = r#"{"total_commits":1,"commits":[{"sha":"choreaaaaaa","commit":{"message":"chore: tidy"},"parents":[{}]}]}"#;
