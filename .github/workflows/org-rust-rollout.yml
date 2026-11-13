@@ -1,0 +1,182 @@
+name: Organization Rust Rollout
+
+on:
+  push:
+    branches: [main]
+    paths: [.github/org-rust/policy.json]
+  schedule:
+    - cron: '41 9 * * 1'
+  workflow_dispatch:
+    inputs:
+      organization:
+        description: Reviewed policy organization
+        default: ThreatFlux
+        type: string
+      repositories:
+        description: Comma-separated public allowlist names; empty selects all
+        default: ''
+        type: string
+      dry_run:
+        description: Read-only organization plan
+        default: true
+        type: boolean
+      probe_workflows_permission:
+        description: Probe an explicitly granted scoped Workflows permission without ref writes
+        default: false
+        type: boolean
+
+permissions:
+  contents: read
+
+concurrency:
+  group: organization-rust-rollout
+  cancel-in-progress: false
+  queue: max
+
+jobs:
+  plan:
+    name: Read-only public Rust plan
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    outputs:
+      matrix: ${{ steps.plan.outputs.matrix }}
+      enabled: ${{ steps.plan.outputs.enabled }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.workflow_sha }}
+          persist-credentials: false
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
+        with:
+          python-version: '3.15.2'
+      - name: Resolve official compiler, images and exact public repository heads
+        id: plan
+        env:
+          GH_TOKEN: ${{ github.token }}
+          POLICY_SHA: ${{ github.workflow_sha }}
+          ORGANIZATION: ${{ inputs.organization || 'ThreatFlux' }}
+          REPOSITORIES: ${{ inputs.repositories || '' }}
+        run: >-
+          python3 .github/org-rust/cli.py plan --expected-policy-commit "$POLICY_SHA"
+          --organization "$ORGANIZATION" --repositories "$REPOSITORIES"
+          --output org-rust-plan.json
+      - name: Retain actual read-only plan
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: org-rust-plan
+          path: org-rust-plan.json
+          if-no-files-found: error
+
+  apply:
+    name: Public Rust proposal (${{ matrix.target.repository }})
+    needs: plan
+    if: >-
+      github.ref == 'refs/heads/main' && needs.plan.outputs.enabled == 'true' &&
+      github.event_name == 'workflow_dispatch' && !inputs.dry_run && !inputs.probe_workflows_permission
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      max-parallel: 4
+      matrix:
+        target: ${{ fromJSON(needs.plan.outputs.matrix).include }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.workflow_sha }}
+          persist-credentials: false
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
+        with:
+          python-version: '3.15.2'
+      - name: Require exact reviewed current main before minting credentials
+        env:
+          GH_TOKEN: ${{ github.token }}
+          POLICY_SHA: ${{ github.workflow_sha }}
+        run: python3 .github/org-rust/cli.py preflight --expected-policy-commit "$POLICY_SHA" --output central-source.json
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: org-rust-plan
+          path: org-rust-artifacts
+      - name: Mint a token for exactly this public repository
+        id: app
+        uses: actions/create-github-app-token@64ab729a6294000f5aa4a4bc0b73d1f32bc45510 # v3.3.0
+        with:
+          client-id: ${{ vars.TF_AUTOMATION_APP_ID }}
+          private-key: ${{ secrets.TF_AUTOMATION_APP_PRIVATE_KEY }}
+          owner: ThreatFlux
+          repositories: ${{ matrix.target.repository }}
+          permission-contents: write
+          permission-pull-requests: write
+          permission-metadata: read
+          permission-workflows: ${{ matrix.target.needs_workflows_write && 'write' || '' }}
+      - name: Re-read exact source and propose only the reviewed value changes
+        env:
+          GH_TOKEN: ${{ steps.app.outputs.token }}
+          CENTRAL_GH_TOKEN: ${{ github.token }}
+          GITHUB_APP_SLUG: ${{ steps.app.outputs.app-slug }}
+          POLICY_SHA: ${{ github.workflow_sha }}
+          REPOSITORY: ${{ matrix.target.repository }}
+        run: >-
+          python3 .github/org-rust/cli.py apply --expected-policy-commit "$POLICY_SHA"
+          --repositories "$REPOSITORY" --plan org-rust-artifacts/org-rust-plan.json
+          --output org-rust-apply.json
+      - name: Retain actual per-repository outcome
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: org-rust-apply-${{ matrix.target.repository }}
+          path: org-rust-apply.json
+          if-no-files-found: warn
+
+  permission-probe:
+    name: Probe scoped Workflows grant (${{ matrix.target.repository }})
+    needs: plan
+    if: >-
+      github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main' &&
+      inputs.probe_workflows_permission
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    strategy:
+      fail-fast: false
+      max-parallel: 2
+      matrix:
+        target: ${{ fromJSON(needs.plan.outputs.matrix).include }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.workflow_sha }}
+          persist-credentials: false
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
+        with:
+          python-version: '3.15.2'
+      - name: Require exact reviewed main
+        env:
+          GH_TOKEN: ${{ github.token }}
+          POLICY_SHA: ${{ github.workflow_sha }}
+        run: python3 .github/org-rust/cli.py preflight --expected-policy-commit "$POLICY_SHA" --output central-source.json
+      - name: Request the actual installed capability without ref writes
+        id: app
+        uses: actions/create-github-app-token@64ab729a6294000f5aa4a4bc0b73d1f32bc45510 # v3.3.0
+        with:
+          client-id: ${{ vars.TF_AUTOMATION_APP_ID }}
+          private-key: ${{ secrets.TF_AUTOMATION_APP_PRIVATE_KEY }}
+          owner: ThreatFlux
+          repositories: ${{ matrix.target.repository }}
+          permission-contents: read
+          permission-metadata: read
+          permission-workflows: write
+      - name: Verify provider, one-repository scope and source readback
+        env:
+          GH_TOKEN: ${{ steps.app.outputs.token }}
+          GITHUB_APP_SLUG: ${{ steps.app.outputs.app-slug }}
+          POLICY_SHA: ${{ github.workflow_sha }}
+          REPOSITORY: ${{ matrix.target.repository }}
+        run: >-
+          python3 .github/org-rust/cli.py probe --expected-policy-commit "$POLICY_SHA"
+          --repositories "$REPOSITORY" --output org-rust-capability.json
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: org-rust-capability-${{ matrix.target.repository }}
+          path: org-rust-capability.json
+          if-no-files-found: error

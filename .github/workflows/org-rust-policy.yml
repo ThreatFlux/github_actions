@@ -1,0 +1,105 @@
+name: Organization Rust Policy Discovery
+
+on:
+  schedule:
+    - cron: '23 8 * * *'
+  workflow_dispatch:
+    inputs:
+      organization:
+        description: Reviewed policy organization
+        default: ThreatFlux
+        type: string
+      dry_run:
+        description: Discover without proposing a policy PR
+        default: true
+        type: boolean
+
+permissions:
+  contents: read
+
+concurrency:
+  group: organization-rust-policy-discovery
+  cancel-in-progress: false
+  queue: max
+
+jobs:
+  discover:
+    name: Read official stable compiler and image descriptors
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    outputs:
+      changed: ${{ steps.discovery.outputs.changed }}
+      enabled: ${{ steps.discovery.outputs.enabled }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.workflow_sha }}
+          persist-credentials: false
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
+        with:
+          python-version: '3.15.2'
+      - name: Build an atomic central-policy proposal
+        id: discovery
+        env:
+          GH_TOKEN: ${{ github.token }}
+          POLICY_SHA: ${{ github.workflow_sha }}
+          ORGANIZATION: ${{ inputs.organization || 'ThreatFlux' }}
+        run: >-
+          python3 .github/org-rust/cli.py refresh --expected-policy-commit "$POLICY_SHA"
+          --organization "$ORGANIZATION" --output org-rust-discovery.json
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: org-rust-discovery
+          path: org-rust-discovery.json
+          if-no-files-found: error
+
+  propose:
+    name: Propose reviewed central policy
+    needs: discover
+    if: >-
+      github.ref == 'refs/heads/main' && needs.discover.outputs.enabled == 'true' &&
+      needs.discover.outputs.changed == 'true' &&
+      (github.event_name == 'schedule' || (github.event_name == 'workflow_dispatch' && !inputs.dry_run))
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.workflow_sha }}
+          persist-credentials: false
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
+        with:
+          python-version: '3.15.2'
+      - name: Require reviewed exact current main
+        env:
+          GH_TOKEN: ${{ github.token }}
+          POLICY_SHA: ${{ github.workflow_sha }}
+        run: python3 .github/org-rust/cli.py preflight --expected-policy-commit "$POLICY_SHA" --output central-source.json
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: org-rust-discovery
+          path: org-rust-artifacts
+      - name: Mint only central-policy PR permissions
+        id: app
+        uses: actions/create-github-app-token@64ab729a6294000f5aa4a4bc0b73d1f32bc45510 # v3.3.0
+        with:
+          client-id: ${{ vars.TF_AUTOMATION_APP_ID }}
+          private-key: ${{ secrets.TF_AUTOMATION_APP_PRIVATE_KEY }}
+          owner: ThreatFlux
+          repositories: github_actions
+          permission-contents: write
+          permission-pull-requests: write
+          permission-metadata: read
+      - name: Recheck official evidence and propose policy without target fanout
+        env:
+          GH_TOKEN: ${{ steps.app.outputs.token }}
+          GITHUB_APP_SLUG: ${{ steps.app.outputs.app-slug }}
+          POLICY_SHA: ${{ github.workflow_sha }}
+        run: >-
+          python3 .github/org-rust/cli.py apply-refresh --expected-policy-commit "$POLICY_SHA"
+          --plan org-rust-artifacts/org-rust-discovery.json --output org-rust-policy-proposal.json
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: org-rust-policy-proposal
+          path: org-rust-policy-proposal.json
+          if-no-files-found: error

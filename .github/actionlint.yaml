@@ -2,6 +2,15 @@
 # stable actionlint 1.7.12 release. Preserve the reusable workflow's exact source.
 # https://github.blog/changelog/2026-09-03-github-actions-early-september-2026-updates/
 paths:
+  .github/workflows/org-rust-policy.yml:
+    ignore:
+      # GitHub supports these fields; actionlint 1.7.12 predates them.
+      - '^unexpected key "queue" for "concurrency" section\. expected one of "cancel-in-progress", "group"$'
+      - '^property "workflow_sha" is not defined in object type \{check_run_id: number; container:'
+  .github/workflows/org-rust-rollout.yml:
+    ignore:
+      - '^unexpected key "queue" for "concurrency" section\. expected one of "cancel-in-progress", "group"$'
+      - '^property "workflow_sha" is not defined in object type \{check_run_id: number; container:'
   .github/workflows/auto-release.yml:
     ignore:
       # GitHub supports queued concurrency; stable actionlint 1.7.12 predates it.
