@@ -294,7 +294,9 @@ jobs:
 
   action-smoke:
     name: Action Smoke (${{ matrix.command }})
-    runs-on: ${{ vars.RUST_TEMPLATE_RUNNER_UBUNTU || 'ubuntu-latest' }}
+    # Exercise live update metadata through the published native ARM runtime
+    # and its separate GitHub-hosted network route.
+    runs-on: ${{ matrix.command == 'update' && 'ubuntu-24.04-arm' || vars.RUST_TEMPLATE_RUNNER_UBUNTU || 'ubuntu-latest' }}
     permissions:
       contents: read
     strategy:
