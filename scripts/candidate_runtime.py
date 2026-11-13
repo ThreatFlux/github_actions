@@ -4,7 +4,9 @@
 import json
 import os
 import re
-import subprocess
+
+# B404: Only fixed gh/git argv lists are executed; no shell evaluates inputs.
+import subprocess  # nosec B404
 from pathlib import Path
 
 UPSTREAM = "ThreatFlux/github_actions"
@@ -70,7 +72,11 @@ def validate_evidence(source, checkout, remote_ref, permissions):
 
 
 def api(endpoint):
-    return json.loads(subprocess.check_output(["gh", "api", endpoint], text=True))
+    # B603: Fixed gh/api command; upstream is constant and actor/ref are validated.
+    payload = subprocess.check_output(  # nosec B603
+        ["gh", "api", endpoint], text=True, shell=False
+    )
+    return json.loads(payload)
 
 
 def admit(context):
@@ -82,8 +88,9 @@ def admit(context):
         api(f"repos/{UPSTREAM}/collaborators/{actor}/permission") for actor in actors
     ]
     remote = api(f"repos/{UPSTREAM}/git/ref/heads/{context['GITHUB_REF_NAME']}")
-    checkout = subprocess.check_output(
-        ["git", "rev-parse", "--verify", "HEAD"], text=True
+    # B603: Entire Git argv is constant; no user-supplied Git options or shell.
+    checkout = subprocess.check_output(  # nosec B603
+        ["git", "rev-parse", "--verify", "HEAD"], text=True, shell=False
     ).strip()
     validate_evidence(source, checkout, remote, permissions)
     return {
