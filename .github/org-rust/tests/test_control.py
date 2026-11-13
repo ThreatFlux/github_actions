@@ -2,6 +2,7 @@
 
 import copy
 import unittest
+from unittest import mock
 
 from fixtures import CENTRAL_SOURCE, COMMIT, SOURCE, FakeGitHub, policy, upgraded
 from api import PolicyError
@@ -13,6 +14,7 @@ from control import (
     repository_plan,
     write_proposal,
 )
+import control
 
 
 class ControlTests(unittest.TestCase):
@@ -138,6 +140,45 @@ class ControlTests(unittest.TestCase):
                 for path, _ in self.github.writes
             )
         )
+
+    def test_central_policy_revocation_after_ref_creation_prevents_commit(self):
+        self.github.on_ref_created = lambda client: setattr(
+            client, "central_source", "e" * 40
+        )
+        with self.assertRaises(PolicyError):
+            write_proposal(self.github, self.config, self.row, CENTRAL_SOURCE)
+        self.assertEqual(self.github.branch, SOURCE)
+        self.assertFalse(
+            any(
+                path == "graphql" or path.endswith("/pulls")
+                for path, _ in self.github.writes
+            )
+        )
+
+    def test_central_policy_revocation_during_commit_prevents_pr(self):
+        self.github.on_graphql = lambda client: setattr(
+            client, "central_source", "e" * 40
+        )
+        with self.assertRaises(PolicyError):
+            write_proposal(self.github, self.config, self.row, CENTRAL_SOURCE)
+        self.assertEqual(self.github.branch, COMMIT)
+        self.assertFalse(any(path.endswith("/pulls") for path, _ in self.github.writes))
+
+    def test_central_policy_revocation_blocks_existing_proposal_reuse_claim(self):
+        write_proposal(self.github, self.config, self.row, CENTRAL_SOURCE)
+        original = control.existing_proposal
+        count = len(self.github.writes)
+
+        def revoke(*arguments):
+            result = original(*arguments)
+            self.github.central_source = "e" * 40
+            return result
+
+        with mock.patch.object(
+            control, "existing_proposal", side_effect=revoke
+        ), self.assertRaises(PolicyError):
+            write_proposal(self.github, self.config, self.row, CENTRAL_SOURCE)
+        self.assertEqual(count, len(self.github.writes))
 
     def test_unsigned_or_wrong_actor_commit_never_gets_a_pr(self):
         for attribute, value in [("verified", False), ("author", "maintainer")]:

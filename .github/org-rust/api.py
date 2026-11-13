@@ -75,9 +75,9 @@ def fetch(url, token=None, payload=None, accept="application/json", public_blob=
 def object_id(data):
     framed = b"blob " + str(len(data)).encode("ascii") + b"\0" + data
     # Git object identity uses SHA-1 framing; this is not a security hash choice.
-    return hashlib.sha1(
+    return hashlib.sha1(  # nosemgrep: insecure-hash-algorithm-sha1
         framed, usedforsecurity=False
-    ).hexdigest()  # nosemgrep: insecure-hash-algorithm-sha1
+    ).hexdigest()
 
 
 def sha(value):

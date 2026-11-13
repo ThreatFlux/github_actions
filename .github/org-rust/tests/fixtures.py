@@ -106,6 +106,8 @@ class FakeGitHub:
         self.on_graphql = None
         self.on_source = None
         self.proposed_files = None
+        self.central_source = CENTRAL_SOURCE
+        self.on_ref_created = None
 
     def pages(self, path, key=None):
         if path == "/installation/repositories":
@@ -165,7 +167,7 @@ class FakeGitHub:
             }
         if path.endswith("/git/ref/heads/main"):
             if "github_actions" in path:
-                return {"object": {"sha": CENTRAL_SOURCE}}
+                return {"object": {"sha": self.central_source}}
             if self.on_source:
                 self.on_source(self)
             return {
@@ -193,6 +195,8 @@ class FakeGitHub:
         self.writes.append((path, payload))
         if path.endswith("/git/refs"):
             self.branch = payload["sha"]
+            if self.on_ref_created:
+                self.on_ref_created(self)
             return {"object": {"sha": self.branch}}
         if path.endswith("/pulls"):
             pull = {

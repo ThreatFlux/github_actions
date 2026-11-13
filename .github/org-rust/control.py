@@ -35,28 +35,36 @@ def validate_policy(policy):
         )
     names, identities = set(), set()
     for repository in policy["repositories"]:
-        name = repository["repository"]
-        if not re.fullmatch(r"ThreatFlux/[A-Za-z0-9_.-]+", name):
-            raise PolicyError("Invalid public allowlist repository name")
-        if (
-            name in names
-            or repository["id"] in identities
-            or type(repository["id"]) is not int
-        ):
-            raise PolicyError("Duplicate or invalid allowlist repository identity")
-        if repository["default_branch"] != "main" or not repository["files"]:
-            raise PolicyError(
-                "A maintained adapter and reviewed default branch are required"
-            )
-        names.add(name)
-        identities.add(repository["id"])
-        for file in repository["files"]:
-            validate_file(file["path"])
-            if file["mode"] not in {"100644", "100755"} or not file["adapters"]:
-                raise PolicyError("Invalid maintained regular-file adapter")
-            for adapter in file["adapters"]:
-                if type(adapter["count"]) is not int or adapter["count"] < 1:
-                    raise PolicyError("Invalid maintained selector match count")
+        validate_repository(repository, names, identities)
+
+
+def validate_repository(repository, names, identities):
+    name = repository["repository"]
+    if not re.fullmatch(r"ThreatFlux/[A-Za-z0-9_.-]+", name):
+        raise PolicyError("Invalid public allowlist repository name")
+    if (
+        name in names
+        or repository["id"] in identities
+        or type(repository["id"]) is not int
+    ):
+        raise PolicyError("Duplicate or invalid allowlist repository identity")
+    if repository["default_branch"] != "main" or not repository["files"]:
+        raise PolicyError(
+            "A maintained adapter and reviewed default branch are required"
+        )
+    names.add(name)
+    identities.add(repository["id"])
+    for file in repository["files"]:
+        validate_adapter_file(file)
+
+
+def validate_adapter_file(file):
+    validate_file(file["path"])
+    if file["mode"] not in {"100644", "100755"} or not file["adapters"]:
+        raise PolicyError("Invalid maintained regular-file adapter")
+    for adapter in file["adapters"]:
+        if type(adapter["count"]) is not int or adapter["count"] < 1:
+            raise PolicyError("Invalid maintained selector match count")
 
 
 def select_repositories(policy, organization, subset):
@@ -321,13 +329,14 @@ def verify_proposal_tree(github, row, commit_sha, commit):
         )
 
 
-def signed_commit(github, row, branch, policy, policy_commit):
+def signed_commit(github, row, branch, policy, policy_commit, central_github=None):
     additions = [
         {"path": change["path"], "contents": change["content"]}
         for change in row["changes"]
     ]
     mutation = """mutation($input:CreateCommitOnBranchInput!){createCommitOnBranch(input:$input){commit{oid}}}"""
     version = policy["target"]["stable"]["version"]
+    central_main(central_github or github, policy_commit)
     result = github.graphql(
         mutation,
         {
@@ -357,10 +366,29 @@ def signed_commit(github, row, branch, policy, policy_commit):
     return commit_sha
 
 
+def pull_payload(row, branch, policy, policy_commit):
+    version = policy["target"]["stable"]["version"]
+    body = f"Apply the reviewed [organization Rust policy](https://github.com/{CENTRAL}/blob/{policy_commit}/{POLICY_PATH}) to exact base `{row['source_sha']}`. Only maintained stable compiler selectors and their coupled verified official image pins change. Cargo MSRV, beta/nightly, legacy/fixture lanes and package versions are preserved."
+    if row.get("policy_only"):
+        body = f"Propose official stable Rust {version} and all matching verified two-architecture official image digests in the central policy. The trusted discovery code is at `{CENTRAL}@{policy_commit}`. No target repository is changed by this proposal; rollout waits for normal review and policy merge."
+    return {
+        "title": f"chore(ci): {'propose' if row.get('policy_only') else 'adopt'} organization Rust {version}"
+        + (" policy" if row.get("policy_only") else ""),
+        "head": branch,
+        "base": row["default_branch"],
+        "maintainer_can_modify": False,
+        "body": body
+        + f"\n\nPolicy SHA256: `{fingerprint(policy)}`. Existing full hosted CI and normal review/merge/publication rules remain required; this updater does not approve or merge PRs.",
+    }
+
+
 def write_proposal(github, policy, row, policy_commit, central_github=None):
+    central = central_github or github
+    central_main(central, policy_commit)
     branch = branch_name(policy, row.get("policy_only", False))
     existing = existing_proposal(github, policy, row, branch)
     if existing:
+        central_main(central, policy_commit)
         return existing
     repository = row["repository"]
     if github.api(f"/repos/{repository}/git/ref/heads/{branch}", missing=True):
@@ -371,33 +399,21 @@ def write_proposal(github, policy, row, policy_commit, central_github=None):
         item for item in policy["repositories"] if item["repository"] == repository
     )
     unchanged_head(github, item, row["source_sha"])
-    central_main(central_github or github, policy_commit)
+    central_main(central, policy_commit)
     github.api(
         f"/repos/{repository}/git/refs",
         {"ref": "refs/heads/" + branch, "sha": row["source_sha"]},
     )
-    commit_sha = signed_commit(github, row, branch, policy, policy_commit)
+    commit_sha = signed_commit(github, row, branch, policy, policy_commit, central)
     unchanged_head(github, item, row["source_sha"])
     head = github.api(f"/repos/{repository}/git/ref/heads/{branch}")["object"]["sha"]
     if head != commit_sha:
         raise PolicyError(
             "Toolchain branch moved before PR creation; preserve all work"
         )
-    version = policy["target"]["stable"]["version"]
-    body = f"Apply the reviewed [organization Rust policy](https://github.com/{CENTRAL}/blob/{policy_commit}/{POLICY_PATH}) to exact base `{row['source_sha']}`. Only maintained stable compiler selectors and their coupled verified official image pins change. Cargo MSRV, beta/nightly, legacy/fixture lanes and package versions are preserved."
-    if row.get("policy_only"):
-        body = f"Propose official stable Rust {version} and all matching verified two-architecture official image digests in the central policy. The trusted discovery code is at `{CENTRAL}@{policy_commit}`. No target repository is changed by this proposal; rollout waits for normal review and policy merge."
+    central_main(central, policy_commit)
     pull = github.api(
-        f"/repos/{repository}/pulls",
-        {
-            "title": f"chore(ci): {'propose' if row.get('policy_only') else 'adopt'} organization Rust {version}"
-            + (" policy" if row.get("policy_only") else ""),
-            "head": branch,
-            "base": row["default_branch"],
-            "maintainer_can_modify": False,
-            "body": body
-            + f"\n\nPolicy SHA256: `{fingerprint(policy)}`. Existing full hosted CI and normal review/merge/publication rules remain required; this updater does not approve or merge PRs.",
-        },
+        f"/repos/{repository}/pulls", pull_payload(row, branch, policy, policy_commit)
     )
     return {
         "status": "proposed",

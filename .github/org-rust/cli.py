@@ -144,11 +144,7 @@ def apply(args, policy, github):
     emit(args.output, result)
 
 
-def refresh(args, policy, github):
-    validate_policy(policy)
-    if args.organization != policy["organization"]:
-        raise PolicyError("Organization is outside the reviewed policy")
-    target = official_target(github)
+def refreshed_policy(policy, target):
     proposed = json.loads(json.dumps(policy))
     if target != policy["target"]:
         from adapters import version_tuple
@@ -167,6 +163,14 @@ def refresh(args, policy, github):
             {fingerprint(state): state for state in prior}.values()
         )
         proposed["target"] = target
+    return proposed
+
+
+def refresh(args, policy, github):
+    validate_policy(policy)
+    if args.organization != policy["organization"]:
+        raise PolicyError("Organization is outside the reviewed policy")
+    proposed = refreshed_policy(policy, official_target(github))
     result = stamp(
         {
             "complete": True,
@@ -184,23 +188,11 @@ def refresh(args, policy, github):
 
 
 def validated_refresh(github, policy, prior):
-    proposed = prior["proposed_policy"]
+    # Rebuild public policy bytes from trusted source plus fresh official data.
+    # The artifact is a comparison input, never the source of a commit's bytes.
+    proposed = refreshed_policy(policy, official_target(github))
     validate_policy(proposed)
-    # Only the official target and accepted previous states may differ.
-    comparison = dict(
-        proposed, target=policy["target"], accepted_states=policy["accepted_states"]
-    )
-    expected_states = list(
-        {
-            fingerprint(state): state
-            for state in [*policy["accepted_states"], policy["target"]]
-        }.values()
-    )
-    if (
-        comparison != policy
-        or proposed["accepted_states"] != expected_states
-        or proposed["target"] != official_target(github)
-    ):
+    if prior["proposed_policy"] != proposed:
         raise PolicyError(
             "Proposed policy includes unreviewed edits or stale official images"
         )

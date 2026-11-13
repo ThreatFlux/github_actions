@@ -10,7 +10,7 @@ from pathlib import Path
 from types import SimpleNamespace
 from unittest import mock
 
-from fixtures import CENTRAL_SOURCE, FakeGitHub, policy
+from fixtures import CENTRAL_SOURCE, FakeGitHub, policy, target
 import cli
 from api import PolicyError
 from control import plan
@@ -123,6 +123,21 @@ class CliTests(unittest.TestCase):
         ), mock.patch.object(cli, "emit") as emit, mock.patch.object(cli, "outputs"):
             cli.refresh(self.arguments(), config, FakeGitHub())
         self.assertFalse(emit.call_args.args[1]["changed"])
+
+    def test_refreshed_commit_bytes_are_rebuilt_not_returned_from_artifact(self):
+        config = policy()
+        official = target("1.101.0")
+        expected = cli.refreshed_policy(config, official)
+        artifact = {"proposed_policy": copy.deepcopy(expected)}
+        with mock.patch.object(cli, "official_target", return_value=official):
+            rebuilt = cli.validated_refresh(FakeGitHub(), config, artifact)
+        self.assertEqual(rebuilt, expected)
+        self.assertIsNot(rebuilt, artifact["proposed_policy"])
+        artifact["proposed_policy"]["writes_enabled"] = False
+        with mock.patch.object(
+            cli, "official_target", return_value=official
+        ), self.assertRaises(PolicyError):
+            cli.validated_refresh(FakeGitHub(), config, artifact)
 
     def test_workflow_credential_paths_are_main_only_explicitly_scoped(self):
         root = Path(__file__).resolve().parents[2]
