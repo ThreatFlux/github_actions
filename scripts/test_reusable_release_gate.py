@@ -159,7 +159,7 @@ class ReleaseGateTests(unittest.TestCase):
             "should-release=true",
         )
 
-    def test_pr_dry_run_gates_on_actual_head_but_preserves_merge_checkout(self):
+    def test_pr_dry_run_gates_on_actual_head_but_preserves_merge_revision(self):
         head = "b" * 40
         self.assertEqual(
             self.gate(
@@ -312,17 +312,7 @@ class ReleaseGateTests(unittest.TestCase):
         self.assertIn("Show the downstream dispatch plan (dry run)", preview)
         self.assertIn("dispatch_release_workflows.py --plan-only", preview)
         self.assertNotIn("gh workflow run", preview)
-        self.assertNotIn("GH_TOKEN:", preview)
-        trusted_checkout, candidate_checkout = preview.split(
-            "      - name: Checkout preview target as data\n", 1
-        )
-        self.assertIn("ref: ${{ job.workflow_sha }}", trusted_checkout)
-        self.assertNotIn("path: .release-action", trusted_checkout)
-        self.assertIn("path: .preview-target", candidate_checkout)
-        self.assertIn("uses: ./\n", candidate_checkout)
-        self.assertIn("repo: .preview-target", candidate_checkout)
-        self.assertNotIn("uses: ./.preview-target", candidate_checkout)
-        self.assertNotIn("python3 .preview-target/", candidate_checkout)
+        self.assertIn("GH_TOKEN: ${{ github.token }}", preview)
         for permission in ["actions", "contents", "pull-requests"]:
             self.assertIn(f"{permission}: read", preview)
         self.assertIn("ref: ${{ needs.check.outputs.target-sha }}", source)
@@ -336,3 +326,22 @@ class ReleaseGateTests(unittest.TestCase):
             ),
             "should-release=true",
         )
+
+    def test_preview_never_checks_out_or_executes_candidate_code(self):
+        source = WORKFLOW.read_text(encoding="utf-8")
+        preview = source.split("\n  preview:\n", 1)[1].split("\n  release:\n", 1)[0]
+        trusted_checkout, candidate_data = preview.split(
+            "      - name: Fetch preview manifests and locks as data\n", 1
+        )
+        self.assertIn("ref: ${{ job.workflow_sha }}", trusted_checkout)
+        self.assertNotIn("path: .release-action", trusted_checkout)
+        self.assertNotIn("actions/checkout@", candidate_data)
+        self.assertIn(
+            "TARGET_SHA: ${{ needs.check.outputs.target-sha }}", candidate_data
+        )
+        self.assertIn("python3 scripts/fetch_release_preview.py", candidate_data)
+        self.assertIn('--sha "$TARGET_SHA" --output .preview-target', candidate_data)
+        self.assertIn("uses: ./\n", candidate_data)
+        self.assertIn("repo: .preview-target", candidate_data)
+        self.assertNotIn("uses: ./.preview-target", candidate_data)
+        self.assertNotIn("python3 .preview-target/", candidate_data)

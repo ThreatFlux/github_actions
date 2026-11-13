@@ -626,16 +626,19 @@ What a dry run does, in either mode:
 - **The gate still applies.** Required workflows must have successful latest
   eligible runs for the requested commit. Read-only previews accept push,
   pull-request, and manual-dispatch checks for that exact SHA; a pull-request
-  merge preview checks its actual PR head's CI while retaining the merge
-  checkout for analysis. Configured write checks must be successful main-push
-  runs, and every write must target the exact current main SHA. Missing,
-  pending, failed, or
-  potentially truncated required histories stop the gate with a diagnostic.
+  merge preview checks its actual PR head's CI while analyzing manifests
+  and lockfiles fetched from the merge revision. Configured write checks must
+  be successful main-push runs, and every write must target the exact current
+  main SHA. Missing, pending, failed, or potentially truncated required
+  histories stop the gate with a diagnostic.
 - **Reads only.** The action reads the default branch (when `base-branch` is
   empty), the base branch head, the tag list, the commits since the highest
   `<tag-prefix>X.Y.Z` tag (the commit list when there is none), and whether
   the candidate tag already exists. Reusable previews use a separate job
   with read-only `github.token` permissions and no write-secret references.
+  Only regular Cargo manifests and lockfiles are fetched at the validated
+  revision, with their blob identities checked; candidate source, scripts,
+  local actions and Git configuration are never checked out in that job.
 - **Writes nothing to the repository.** No blob, tree, or commit is created;
   the base branch and the release branch do not move; no pull request is
   opened or edited; no tag, major alias, or GitHub Release is created.

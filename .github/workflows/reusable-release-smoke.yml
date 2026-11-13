@@ -14,12 +14,14 @@ on:
       - ".github/workflows/reusable-auto-release.yml"
       - ".github/workflows/reusable-release-smoke.yml"
       - "scripts/dispatch_release_workflows.py"
+      - "scripts/fetch_release_preview.py"
   push:
     branches: [main]
     paths:
       - ".github/workflows/reusable-auto-release.yml"
       - ".github/workflows/reusable-release-smoke.yml"
       - "scripts/dispatch_release_workflows.py"
+      - "scripts/fetch_release_preview.py"
   workflow_dispatch:
 
 permissions: {}

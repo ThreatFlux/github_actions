@@ -248,15 +248,15 @@ jobs:
           repository: ${{ job.workflow_repository || 'ThreatFlux/github_actions' }}
           ref: ${{ job.workflow_sha }}
           persist-credentials: false
-      # Keep the candidate in a separate directory. Only the action and
-      # scripts from this workflow's immutable ref are ever executed; the
-      # candidate supplies manifest/lockfile data to the read-only analyzer.
-      - name: Checkout preview target as data
-        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          persist-credentials: false
-          ref: ${{ needs.check.outputs.target-sha }}
-          path: .preview-target
+      # Fetch only regular Cargo manifests and lockfiles. Candidate source,
+      # scripts, local actions and Git configuration never enter this job.
+      - name: Fetch preview manifests and locks as data
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TARGET_SHA: ${{ needs.check.outputs.target-sha }}
+        run: |
+          python3 scripts/fetch_release_preview.py \
+            --repository "$GITHUB_REPOSITORY" --sha "$TARGET_SHA" --output .preview-target
       - name: Compute release preview
         id: release
         uses: ./

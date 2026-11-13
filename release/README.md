@@ -118,11 +118,11 @@ The reusable workflow keeps consumer files small while retaining the common
 release safeguards. `required-workflows` is a comma-separated list of workflow
 names whose latest eligible runs must succeed for the exact requested commit.
 Read-only previews accept push, pull-request, and manual-dispatch checks; a
-pull-request merge preview gates on the actual PR head's CI while retaining
-its merge checkout for analysis. Configured write checks must be main-push runs,
-and every write must target the exact current main SHA. Missing, pending,
-failed, or potentially truncated
-histories stop the gate. `dispatch-workflows` is a
+pull-request merge preview gates on the actual PR head's CI while analyzing
+the merge revision's manifests and lockfiles. Configured write checks must be
+main-push runs, and every write must target the exact current main SHA.
+Missing, pending, failed, or potentially truncated histories stop the gate.
+`dispatch-workflows` is a
 comma-separated list of workflow files to run after a release; set
 `dispatch-version-workflow` when one of them accepts a `version` input. These
 features replace the duplicated `gh run list` and `gh workflow run` shell
@@ -169,7 +169,10 @@ on the repository.
 
 Reusable dry-run previews execute in a separate job with read-only
 `github.token` permissions. They do not read write secrets, mint an App token,
-or validate write credentials. The plan-only dispatch step assumes complete
+or validate write credentials. Only regular Cargo manifests and lockfiles
+are fetched at the validated revision and checked against their blob IDs;
+candidate source, scripts, local actions and Git configuration are not
+checked out. The plan-only dispatch step assumes complete
 write configuration and selects the App policy from the public `github-app-id`;
 the `release-token` and default `GITHUB_TOKEN` paths share a dispatch policy.
 Only real write runs validate the configured App pair and use its token.
