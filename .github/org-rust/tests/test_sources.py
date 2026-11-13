@@ -31,6 +31,7 @@ class SourceTests(unittest.TestCase):
         }.items():
             headers[name] = value
         error = urllib.error.HTTPError(url, 403, secret, headers, None)
+        self.addCleanup(error.close)
         with mock.patch("api.urllib.request.build_opener") as builder:
             builder.return_value.open.side_effect = error
             with self.assertRaises(PolicyError) as failure:
@@ -54,6 +55,7 @@ class SourceTests(unittest.TestCase):
                 headers,
                 None,
             )
+            self.addCleanup(error.close)
             with mock.patch("api.urllib.request.build_opener") as builder:
                 builder.return_value.open.side_effect = error
                 if status == 404:

@@ -21,8 +21,16 @@ class AdapterTests(unittest.TestCase):
             for repository in catalog["repositories"]
             for file in repository["files"]
             for adapter in file["adapters"]
-            if "rustc --version" in adapter["template"]
+            if file["path"] in {"Dockerfile", "Dockerfile.debian"}
             and "rustfmt" in adapter["template"]
+            and any(
+                anchor in adapter["template"]
+                for anchor in [
+                    "'^rustc @@RUST_VALUE@@ '",
+                    "= @@RUST_VALUE@@\n",
+                    '= "@@RUST_VALUE@@"\n',
+                ]
+            )
         ]
         self.assertEqual(len(assertions), 9)
         suffix = "\nARG VERSION=9.8.7\nARG BUILD_DATE=2026-11-13\n"
