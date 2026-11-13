@@ -5,6 +5,11 @@ import re
 from api import PolicyError, safe_path
 
 VALUE = "@@RUST_VALUE@@"
+EARLY_SHELL = "@@OPTIONAL_EARLY_SHELL@@"
+REVIEWED_SHELLS = (
+    'SHELL ["/bin/ash", "-eo", "pipefail", "-c"]\n\n',
+    'SHELL ["/bin/bash", "-eo", "pipefail", "-c"]\n\n',
+)
 
 
 def version_tuple(version):
@@ -49,7 +54,10 @@ def desired(policy, kind):
 def expression(template, policy, kind):
     if template.count(VALUE) != 1:
         raise PolicyError("Adapter must bind exactly one value span")
-    tokens = {VALUE: "(?P<value>" + alternatives(possibilities(policy, kind)) + ")"}
+    tokens = {
+        VALUE: "(?P<value>" + alternatives(possibilities(policy, kind)) + ")",
+        EARLY_SHELL: "(?:" + alternatives(REVIEWED_SHELLS) + ")?",
+    }
     for style in ["plain", "escaped", "bracketed"]:
         tokens[f"@@RUST_{style}@@"] = alternatives(possibilities(policy, style))
     for variant in policy["target"]["images"]:

@@ -98,6 +98,10 @@ inputs:
     description: Exact branch commit validated by the caller. Fail before release analysis or writes if the branch head differs. Leave empty for manual release analysis. (release only)
     required: false
     default: ""
+  analysis-sha:
+    description: Immutable candidate commit for a dry-run preview. Consulted Cargo data must match this commit. Cannot be combined with expected-head or a real release.
+    required: false
+    default: ""
   bump:
     description: Version bump strategy. Use auto, major, minor, or patch. Leave empty to use the default (auto, derived from conventional commits). (release only)
     required: false
@@ -139,6 +143,8 @@ inputs:
     default: ""
 
 outputs:
+  analysis-sha:
+    description: Immutable candidate commit actually analyzed by the preview runtime; empty for legacy runtimes or normal releases.
   released:
     description: Whether a release was created (true or false). Release-command output; empty for other commands.
   version:

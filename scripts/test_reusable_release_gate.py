@@ -77,7 +77,7 @@ class ReleaseGateTests(unittest.TestCase):
                     record[field] = record["createdAt"]
         return record
 
-    def gate(self, runs=None, **overrides):
+    def gate(self, runs=None, expected_returncode=0, **overrides):
         source = WORKFLOW.read_text(encoding="utf-8")
         step = source.split("      - name: Verify required workflows\n", 1)[1]
         script = step.split("        run: |\n", 1)[1].split("\n  preview:", 1)[0]
@@ -114,8 +114,8 @@ class ReleaseGateTests(unittest.TestCase):
             )
             env.update(overrides)
             result = run_gate_script(script, env)
-            self.assertEqual(result.returncode, 0, result.stderr)
-            return output.read_text(encoding="utf-8").strip()
+            self.assertEqual(result.returncode, expected_returncode, result.stderr)
+            return output.read_text(encoding="utf-8").strip() if output.exists() else ""
 
     def test_successful_current_main_push_can_release(self):
         self.assertEqual(self.gate(), "should-release=true")
@@ -136,6 +136,13 @@ class ReleaseGateTests(unittest.TestCase):
     def test_main_advance_stops_stale_release(self):
         self.assertEqual(self.gate(FAKE_MAIN_SHA="b" * 40), "should-release=false")
 
+    def test_queued_manual_request_fails_instead_of_reporting_a_successful_skip(self):
+        self.gate(
+            EVENT_NAME="workflow_dispatch",
+            FAKE_MAIN_SHA="b" * 40,
+            expected_returncode=1,
+        )
+
     def test_missing_or_failed_required_push_run_blocks_release(self):
         for conclusion in ["", "failure", "cancelled"]:
             with self.subTest(conclusion=conclusion):
@@ -145,7 +152,21 @@ class ReleaseGateTests(unittest.TestCase):
 
     def test_manual_dispatch_from_feature_branch_is_refused(self):
         self.assertEqual(
-            self.gate(EVENT_NAME="workflow_dispatch", CURRENT_REF="refs/heads/feature"),
+            self.gate(
+                EVENT_NAME="workflow_dispatch",
+                CURRENT_REF="refs/heads/feature",
+                expected_returncode=1,
+            ),
+            "",
+        )
+
+    def test_manual_request_reports_failure_when_required_checks_do_not_pass(self):
+        self.assertEqual(
+            self.gate(
+                EVENT_NAME="workflow_dispatch",
+                FAKE_CONCLUSION="failure",
+                expected_returncode=1,
+            ),
             "should-release=false",
         )
 
@@ -302,6 +323,17 @@ class ReleaseGateTests(unittest.TestCase):
     def test_potentially_truncated_history_fails_closed(self):
         self.assertEqual(
             self.gate(runs=[self.run_record(databaseId=index) for index in range(100)]),
+            "should-release=false",
+        )
+
+    def test_manual_release_fails_when_required_history_could_be_truncated(self):
+        runs = [self.run_record(databaseId=index) for index in range(100)]
+        self.assertEqual(
+            self.gate(runs=runs, EVENT_NAME="workflow_dispatch", expected_returncode=1),
+            "should-release=false",
+        )
+        self.assertEqual(
+            self.gate(runs=runs, EVENT_NAME="workflow_dispatch", DRY_RUN="true"),
             "should-release=false",
         )
 

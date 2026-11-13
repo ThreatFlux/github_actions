@@ -33,8 +33,9 @@ on:
 
 # A rehearsal never waits behind, or cancels, a real release.
 concurrency:
-  group: ${{ github.event_name == 'workflow_dispatch' && inputs.dry_run && 'release-dry-run' || format('release-{0}', github.ref) }}
+  group: ${{ github.event_name == 'workflow_dispatch' && inputs.dry_run && format('release-dry-run-{0}', github.ref) || 'release-publish' }}
   cancel-in-progress: false
+  queue: max
 
 env:
   CARGO_TERM_COLOR: always

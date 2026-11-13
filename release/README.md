@@ -117,19 +117,13 @@ outputs, while `released` remains `false`.
 The reusable workflow keeps consumer files small while retaining the common
 release safeguards. `required-workflows` is a comma-separated list of workflow
 names whose latest eligible runs must succeed for the exact requested commit.
-Read-only previews accept push, pull-request, and manual-dispatch checks; a
-pull-request merge preview gates on the actual PR head's CI while analyzing
-the merge revision's manifests and lockfiles. Configured write checks must be
-main-push runs, and every write must target the exact current main SHA.
-Missing, pending, failed, or potentially truncated histories stop the gate.
-First attempts use creation time and reruns use their latest start time;
-completion time never determines recency. Any eligible in-flight run or
-ambiguous timestamp blocks the gate, and tied latest attempts must all succeed.
-`dispatch-workflows` is a
-comma-separated list of workflow files to run after a release; set
-`dispatch-version-workflow` when one of them accepts a `version` input. These
-features replace the duplicated `gh run list` and `gh workflow run` shell
-scripts that would otherwise live in every repository.
+Read-only previews accept push, pull-request, and manual-dispatch checks. A
+pull-request merge preview gates on the actual PR head's CI and analyzes the
+immutable merge candidate. The same candidate SHA binds commit history, local
+Cargo data and the proposed rewrite map. Candidate code and Git configuration
+are never executed. Real releases still require exact-current-main validation.
+A queued manual write request fails if main advanced or its required checks are
+not successful; it does not report an unperformed requested bump as a green skip.
 
 Whether `dispatch-workflows` run depends on the token that cut the release
 (`scripts/dispatch_release_workflows.py` makes the decision and is unit tested):
@@ -179,6 +173,19 @@ checked out. The plan-only dispatch step assumes complete
 write configuration and selects the App policy from the public `github-app-id`;
 the `release-token` and default `GITHUB_TOKEN` paths share a dispatch policy.
 Only real write runs validate the configured App pair and use its token.
+
+The preview first checks that the immutable action runtime supports
+`--analysis-sha`, then requires its returned `analysis-sha` to equal the
+requested candidate. An older runtime fails instead of silently reporting
+moving-main analysis. To bootstrap a runtime change, maintainers can manually
+dispatch this repository's Docker workflow on a reviewed `codex/` branch with
+`candidate-runtime: true` and its exact `candidate-source-sha`. The source and
+both dispatch actors are verified before publishing only a full-source-SHA
+candidate tag. Both architecture checks, SBOM generation and digest signing
+must pass before pinning that candidate digest for PR validation. Candidate
+publication does not move normal or base-image aliases, publish a stable
+package, or invoke release handoff. The normal main release still performs
+its version bump, runtime sealing and immutable stable publication.
 
 The App token is scoped to the current repository. Rotate the private key by
 replacing the secret and revoke old keys in the App settings; for the
@@ -292,10 +299,12 @@ App) to the bypass list. A PR-based fallback mode is on the roadmap.
 
 Run the job under a `concurrency` group (see Quick Start). Independently of
 that, the action pins its analysis to the branch head it first observes and
-publishes with a fast-forward-only ref update: if the branch advances
-mid-run, the run skips cleanly with `released=false` instead of releasing a
-stale commit. If the computed tag already exists, the run also skips (exit 0)
-rather than editing the existing release.
+publishes with a fast-forward-only ref update. A guarded `expected-head`
+request fails if the branch advances mid-run; legacy unguarded calls retain
+their `released=false` race result. A manual workflow request also fails when
+its queued source is stale or its required checks are not successful. An
+already-existing computed tag remains an idempotent skip, without editing the
+existing release.
 
 ## Pinning This Action
 

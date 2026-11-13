@@ -295,12 +295,12 @@
           "adapters": [
             {
               "kind": "image:alpine3.24",
-              "template": "# into a static PIE. Use Alpine's maintained musl archive, not Rust's bundled\n# CRT, and prove the selected libc from the linker map on every architecture.\nFROM @@RUST_VALUE@@ AS builder\n\nENV RUST_VERSION=@@RUST_plain@@\n",
+              "template": "# into a static PIE. Use Alpine's maintained musl archive, not Rust's bundled\n# CRT, and prove the selected libc from the linker map on every architecture.\nFROM @@RUST_VALUE@@ AS builder\n\n@@OPTIONAL_EARLY_SHELL@@ENV RUST_VERSION=@@RUST_plain@@\n",
               "count": 1
             },
             {
               "kind": "plain",
-              "template": "FROM @@IMAGE_alpine3.24@@ AS builder\n\nENV RUST_VERSION=@@RUST_VALUE@@\nRUN rustup toolchain install @@RUST_plain@@ --profile minimal --no-self-update --component clippy --component rustfmt && \\\n    rustup default @@RUST_plain@@ && \\\n",
+              "template": "FROM @@IMAGE_alpine3.24@@ AS builder\n\n@@OPTIONAL_EARLY_SHELL@@ENV RUST_VERSION=@@RUST_VALUE@@\nRUN rustup toolchain install @@RUST_plain@@ --profile minimal --no-self-update --component clippy --component rustfmt && \\\n    rustup default @@RUST_plain@@ && \\\n",
               "count": 1
             },
             {
@@ -326,12 +326,12 @@
           "adapters": [
             {
               "kind": "image:alpine3.24",
-              "template": "# into a static PIE. Use Alpine's maintained musl archive, not Rust's bundled\n# CRT, and prove the selected libc from the linker map on every architecture.\nFROM @@RUST_VALUE@@ AS builder\n\nENV RUST_VERSION=@@RUST_plain@@\n",
+              "template": "# into a static PIE. Use Alpine's maintained musl archive, not Rust's bundled\n# CRT, and prove the selected libc from the linker map on every architecture.\nFROM @@RUST_VALUE@@ AS builder\n\n@@OPTIONAL_EARLY_SHELL@@ENV RUST_VERSION=@@RUST_plain@@\n",
               "count": 1
             },
             {
               "kind": "plain",
-              "template": "FROM @@IMAGE_alpine3.24@@ AS builder\n\nENV RUST_VERSION=@@RUST_VALUE@@\nRUN rustup toolchain install @@RUST_plain@@ --profile minimal --no-self-update --component clippy --component rustfmt && \\\n    rustup default @@RUST_plain@@ && \\\n",
+              "template": "FROM @@IMAGE_alpine3.24@@ AS builder\n\n@@OPTIONAL_EARLY_SHELL@@ENV RUST_VERSION=@@RUST_VALUE@@\nRUN rustup toolchain install @@RUST_plain@@ --profile minimal --no-self-update --component clippy --component rustfmt && \\\n    rustup default @@RUST_plain@@ && \\\n",
               "count": 1
             },
             {
@@ -357,12 +357,12 @@
           "adapters": [
             {
               "kind": "image:alpine3.24",
-              "template": "# Stable upstream images are pinned to their multi-platform manifest digests.\nFROM @@RUST_VALUE@@ AS builder\n\nENV RUST_VERSION=@@RUST_plain@@\n",
+              "template": "# Stable upstream images are pinned to their multi-platform manifest digests.\nFROM @@RUST_VALUE@@ AS builder\n\n@@OPTIONAL_EARLY_SHELL@@ENV RUST_VERSION=@@RUST_plain@@\n",
               "count": 1
             },
             {
               "kind": "plain",
-              "template": "FROM @@IMAGE_alpine3.24@@ AS builder\n\nENV RUST_VERSION=@@RUST_VALUE@@\nRUN rustup toolchain install @@RUST_plain@@ --profile minimal --no-self-update --component clippy --component rustfmt && \\\n    rustup default @@RUST_plain@@ && \\\n",
+              "template": "FROM @@IMAGE_alpine3.24@@ AS builder\n\n@@OPTIONAL_EARLY_SHELL@@ENV RUST_VERSION=@@RUST_VALUE@@\nRUN rustup toolchain install @@RUST_plain@@ --profile minimal --no-self-update --component clippy --component rustfmt && \\\n    rustup default @@RUST_plain@@ && \\\n",
               "count": 1
             },
             {
@@ -633,7 +633,7 @@
             },
             {
               "kind": "image:trixie",
-              "template": "\n# Verified Rust @@RUST_plain@@ on Debian 13 (trixie); multi-arch index digest\nFROM @@RUST_VALUE@@ AS builder\n\n# Install the source-requested components as root before unprivileged builds.\n",
+              "template": "\n# Verified Rust @@RUST_plain@@ on Debian 13 (trixie); multi-arch index digest\nFROM @@RUST_VALUE@@ AS builder\n\n@@OPTIONAL_EARLY_SHELL@@# Install the source-requested components as root before unprivileged builds.\n",
               "count": 1
             },
             {
@@ -861,7 +861,7 @@
             },
             {
               "kind": "image:trixie",
-              "template": "\n# rust @@RUST_plain@@ on Debian 13 (trixie); multi-arch index digest\nFROM @@RUST_VALUE@@ AS rust-base\n\n# Install every requested component before the nonroot builder enters the repo.\n",
+              "template": "\n# rust @@RUST_plain@@ on Debian 13 (trixie); multi-arch index digest\nFROM @@RUST_VALUE@@ AS rust-base\n\n@@OPTIONAL_EARLY_SHELL@@# Install every requested component before the nonroot builder enters the repo.\n",
               "count": 1
             },
             {
@@ -1203,7 +1203,7 @@
             },
             {
               "kind": "image:alpine3.24",
-              "template": "\n# Rust @@RUST_plain@@ on Alpine 3.24 (musl); multi-arch index digest\nFROM @@RUST_VALUE@@ AS rust-base\n\n# Install the repository's requested components before exporting the toolchain\n",
+              "template": "\n# Rust @@RUST_plain@@ on Alpine 3.24 (musl); multi-arch index digest\nFROM @@RUST_VALUE@@ AS rust-base\n\n@@OPTIONAL_EARLY_SHELL@@# Install the repository's requested components before exporting the toolchain\n",
               "count": 1
             },
             {
@@ -1371,7 +1371,7 @@
             },
             {
               "kind": "image:alpine3.24",
-              "template": "\n# Verified Rust @@RUST_plain@@ on Alpine 3.24 (musl); multi-arch index digest\nFROM @@RUST_VALUE@@ AS rust-base\n\n# Install the source-requested components as root before unprivileged builds.\n",
+              "template": "\n# Verified Rust @@RUST_plain@@ on Alpine 3.24 (musl); multi-arch index digest\nFROM @@RUST_VALUE@@ AS rust-base\n\n@@OPTIONAL_EARLY_SHELL@@# Install the source-requested components as root before unprivileged builds.\n",
               "count": 1
             },
             {
@@ -1520,7 +1520,7 @@
             },
             {
               "kind": "image:alpine3.24",
-              "template": "\n# Verified Rust @@RUST_plain@@ on Alpine 3.24 (musl); multi-arch index digest\nFROM @@RUST_VALUE@@ AS rust-base\n\n# Install the source-requested components as root before unprivileged builds.\n",
+              "template": "\n# Verified Rust @@RUST_plain@@ on Alpine 3.24 (musl); multi-arch index digest\nFROM @@RUST_VALUE@@ AS rust-base\n\n@@OPTIONAL_EARLY_SHELL@@# Install the source-requested components as root before unprivileged builds.\n",
               "count": 1
             },
             {
@@ -1693,7 +1693,7 @@
           "adapters": [
             {
               "kind": "image:trixie",
-              "template": "# the later runtime digest with the command above during template updates.\n\nFROM @@RUST_VALUE@@ AS rust-base\n\n# Install the repository's requested components before exporting the toolchain\n",
+              "template": "# the later runtime digest with the command above during template updates.\n\nFROM @@RUST_VALUE@@ AS rust-base\n\n@@OPTIONAL_EARLY_SHELL@@# Install the repository's requested components before exporting the toolchain\n",
               "count": 1
             },
             {
@@ -1719,7 +1719,7 @@
           "adapters": [
             {
               "kind": "image:trixie",
-              "template": "# Keep the two in sync \u2014 the conformance job checks both against the template.\n\nFROM @@RUST_VALUE@@ AS rust-base\n\n# Install the repository's requested components before exporting the toolchain\n",
+              "template": "# Keep the two in sync \u2014 the conformance job checks both against the template.\n\nFROM @@RUST_VALUE@@ AS rust-base\n\n@@OPTIONAL_EARLY_SHELL@@# Install the repository's requested components before exporting the toolchain\n",
               "count": 1
             },
             {
@@ -1917,7 +1917,7 @@
           "adapters": [
             {
               "kind": "image:alpine3.24",
-              "template": "    && rm -rf /var/lib/apt/lists/*\n\nFROM @@RUST_VALUE@@ AS builder\n\n# Install the source-requested components as root before unprivileged builds.\n",
+              "template": "    && rm -rf /var/lib/apt/lists/*\n\nFROM @@RUST_VALUE@@ AS builder\n\n@@OPTIONAL_EARLY_SHELL@@# Install the source-requested components as root before unprivileged builds.\n",
               "count": 1
             },
             {
@@ -1959,7 +1959,7 @@
           "adapters": [
             {
               "kind": "image:alpine3.24",
-              "template": "    && rm -rf /var/lib/apt/lists/*\n\nFROM @@RUST_VALUE@@ AS builder\n\n# Install the source-requested components as root before unprivileged builds.\n",
+              "template": "    && rm -rf /var/lib/apt/lists/*\n\nFROM @@RUST_VALUE@@ AS builder\n\n@@OPTIONAL_EARLY_SHELL@@# Install the source-requested components as root before unprivileged builds.\n",
               "count": 1
             },
             {
@@ -2510,7 +2510,7 @@
           "adapters": [
             {
               "kind": "image:bookworm",
-              "template": "FROM @@RUST_VALUE@@\n\n# Install the source-requested components as root before unprivileged builds.\n",
+              "template": "FROM @@RUST_VALUE@@\n\n@@OPTIONAL_EARLY_SHELL@@# Install the source-requested components as root before unprivileged builds.\n",
               "count": 1
             },
             {
@@ -2595,7 +2595,7 @@
           "adapters": [
             {
               "kind": "image:alpine3.24",
-              "template": "\n# Native musl builder; all CLI features use Rustls, with no OpenSSL requirement.\nFROM @@RUST_VALUE@@ AS rust-base\n\n# Install the source-requested components as root before unprivileged builds.\n",
+              "template": "\n# Native musl builder; all CLI features use Rustls, with no OpenSSL requirement.\nFROM @@RUST_VALUE@@ AS rust-base\n\n@@OPTIONAL_EARLY_SHELL@@# Install the source-requested components as root before unprivileged builds.\n",
               "count": 1
             },
             {
@@ -2615,7 +2615,7 @@
             },
             {
               "kind": "plain",
-              "template": "RUN rustup component add --toolchain @@RUST_plain@@ clippy rustfmt llvm-tools-preview \\\n    && rustup default @@RUST_plain@@ \\\n    && test \"$(rustc --version | cut -d ' ' -f 2)\" = \"@@RUST_VALUE@@\"\n\nSHELL [\"/bin/ash\", \"-eo\", \"pipefail\", \"-c\"]\n",
+              "template": "RUN rustup component add --toolchain @@RUST_plain@@ clippy rustfmt llvm-tools-preview \\\n    && rustup default @@RUST_plain@@ \\\n    && test \"$(rustc --version | cut -d ' ' -f 2)\" = \"@@RUST_VALUE@@\"\n",
               "count": 1
             }
           ]
@@ -2708,7 +2708,7 @@
             },
             {
               "kind": "image:alpine3.24",
-              "template": "\n# Verified Rust @@RUST_plain@@ on Alpine 3.24 (musl); multi-arch index digest\nFROM @@RUST_VALUE@@ AS rust-base\n\n# Install the source-requested components as root before unprivileged builds.\n",
+              "template": "\n# Verified Rust @@RUST_plain@@ on Alpine 3.24 (musl); multi-arch index digest\nFROM @@RUST_VALUE@@ AS rust-base\n\n@@OPTIONAL_EARLY_SHELL@@# Install the source-requested components as root before unprivileged builds.\n",
               "count": 1
             },
             {
@@ -2833,7 +2833,7 @@
             },
             {
               "kind": "image:alpine3.24",
-              "template": "\n# Verified Rust @@RUST_plain@@ on Alpine 3.24 (musl); multi-arch index digest\nFROM @@RUST_VALUE@@ AS rust-base\n\n# Install the source-requested components as root before unprivileged builds.\n",
+              "template": "\n# Verified Rust @@RUST_plain@@ on Alpine 3.24 (musl); multi-arch index digest\nFROM @@RUST_VALUE@@ AS rust-base\n\n@@OPTIONAL_EARLY_SHELL@@# Install the source-requested components as root before unprivileged builds.\n",
               "count": 1
             },
             {
@@ -2947,7 +2947,7 @@
             },
             {
               "kind": "image:alpine3.24",
-              "template": "\n# rust @@RUST_plain@@ on Alpine 3.24 (musl); multi-arch index digest\nFROM @@RUST_VALUE@@ AS rust-base\n\n# Install every requested component before the nonroot builder enters the repo.\n",
+              "template": "\n# rust @@RUST_plain@@ on Alpine 3.24 (musl); multi-arch index digest\nFROM @@RUST_VALUE@@ AS rust-base\n\n@@OPTIONAL_EARLY_SHELL@@# Install every requested component before the nonroot builder enters the repo.\n",
               "count": 1
             },
             {

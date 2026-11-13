@@ -9,6 +9,7 @@
 //! not auto-healed and requires a manual `gh release create` for the tag.
 
 use std::{
+    collections::BTreeMap,
     fs,
     path::{Path, PathBuf},
 };
@@ -164,6 +165,7 @@ impl ReleaseReport {
 struct Analysis {
     branch: String,
     head_sha: String,
+    preview_sources: Option<BTreeMap<String, String>>,
     current_version: String,
     current: Version,
     /// Name of the latest release tag and the version it carries, both absent
@@ -232,7 +234,7 @@ impl ReleasePublisher {
     /// Analyze the commits since the latest release tag and release, propose,
     /// or (on a dry run) report the next version according to `options`.
     pub fn release(&self, options: &ReleaseOptions) -> Result<ReleaseReport> {
-        self.release_with_expected_head(options, None)
+        self.release_with_expected_head(options, None, None)
     }
 
     /// Release only if the branch still points at the exact commit validated
@@ -247,13 +249,30 @@ impl ReleasePublisher {
             !expected_head.trim().is_empty(),
             "expected release head must not be empty"
         );
-        self.release_with_expected_head(options, Some(expected_head))
+        self.release_with_expected_head(options, Some(expected_head), None)
+    }
+
+    /// Preview an immutable candidate commit instead of the current base head.
+    /// Every manifest and lockfile consulted must match that commit. This API
+    /// cannot publish or relax the validated-head guard used by real releases.
+    pub fn preview_at_commit(
+        &self,
+        options: &ReleaseOptions,
+        analysis_sha: &str,
+    ) -> Result<ReleaseReport> {
+        anyhow::ensure!(options.dry_run, "analysis SHA is only supported for dry-run previews");
+        anyhow::ensure!(
+            analysis_sha.len() == 40 && analysis_sha.bytes().all(|byte| byte.is_ascii_hexdigit()),
+            "analysis SHA must be a full immutable 40-character commit SHA"
+        );
+        self.release_with_expected_head(options, None, Some(analysis_sha))
     }
 
     fn release_with_expected_head(
         &self,
         options: &ReleaseOptions,
         expected_head: Option<&str>,
+        analysis_sha: Option<&str>,
     ) -> Result<ReleaseReport> {
         self.github.ensure_token()?;
         if options.create_pr {
@@ -264,19 +283,25 @@ impl ReleasePublisher {
             }
             validate_release_branch(&options.release_branch)?;
         }
-        let analysis = self.analyze(options, expected_head)?;
+        let analysis = self.analyze(options, expected_head, analysis_sha)?;
         analysis.ensure_manifest_not_behind_latest_tag()?;
-        if options.phase == ReleasePhase::Tag {
-            return self.release_manifest_version(options, analysis);
-        }
         // A merged release pull request leaves the bump on the base branch with
         // no tag. Bumping again would open a fresh pull request for a version
         // nobody asked for and leave the merged one unreleased forever, so the
         // version already on the branch is what gets tagged.
-        if options.create_pr && analysis.manifest_unreleased() {
-            return self.release_manifest_version(options, analysis);
-        }
-        self.release_bumped_version(options, analysis)
+        let report = if options.phase == ReleasePhase::Tag
+            || (options.create_pr && analysis.manifest_unreleased())
+        {
+            self.release_manifest_version(options, analysis)?
+        } else {
+            self.release_bumped_version(options, analysis)?
+        };
+        anyhow::ensure!(
+            expected_head.is_none() || report.outcome != ReleaseOutcome::SkippedRace,
+            "release branch advanced after validating {}; the requested release was not performed",
+            expected_head.unwrap_or_default()
+        );
+        Ok(report)
     }
 
     /// Bump the manifest version from the conventional commits, then commit it.
@@ -305,8 +330,7 @@ impl ReleasePublisher {
             return Ok(report);
         }
 
-        let plan =
-            self.version_rewrite_plan(options, &analysis.head_sha, &next_version.to_string())?;
+        let plan = self.version_rewrite_plan(options, &analysis, &next_version.to_string())?;
         let mut file_updates = plan.file_updates;
         let extra = extra_file_updates(&options.repo_root, &options.extra_files, &file_updates)?;
         file_updates.extend(extra);
@@ -327,19 +351,27 @@ impl ReleasePublisher {
     fn version_rewrite_plan(
         &self,
         options: &ReleaseOptions,
-        analyzed_head: &str,
+        analysis: &Analysis,
         next_version: &str,
     ) -> Result<versioning::VersionRewritePlan> {
-        // PR dry runs deliberately analyze main while previewing local PR
-        // contents. Preserve that read-only contract; write paths below bind
-        // every consulted source to the exact analyzed tree instead.
-        if options.dry_run {
+        // Legacy manual dry runs can still inspect local data. An explicit
+        // candidate preview uses the same immutable-source checks as a writer.
+        if options.dry_run && analysis.preview_sources.is_none() {
             return versioning::plan_read_only_rewrite(&options.repo_root, next_version);
         }
         let repo_root = options.repo_root.canonicalize()?;
-        let tracked =
-            self.github.regular_files_at_commit(&options.owner, &options.repo, analyzed_head)?;
-        if versioning::tracked_nested_lockfiles(&tracked.keys().cloned().collect()).next().is_none()
+        let tracked = match &analysis.preview_sources {
+            Some(tracked) => tracked.clone(),
+            None => self.github.regular_files_at_commit(
+                &options.owner,
+                &options.repo,
+                &analysis.head_sha,
+            )?,
+        };
+        if !options.dry_run
+            && versioning::tracked_nested_lockfiles(&tracked.keys().cloned().collect())
+                .next()
+                .is_none()
         {
             return versioning::plan_version_rewrite(&options.repo_root, next_version);
         }
@@ -431,22 +463,17 @@ impl ReleasePublisher {
     /// Read the branch head, the manifest version, the latest release tag, and
     /// the commits since that tag (or the recent history before the first
     /// release).
-    fn analyze(&self, options: &ReleaseOptions, expected_head: Option<&str>) -> Result<Analysis> {
+    fn analyze(
+        &self,
+        options: &ReleaseOptions,
+        expected_head: Option<&str>,
+        analysis_sha: Option<&str>,
+    ) -> Result<Analysis> {
         let owner = &options.owner;
         let repo = &options.repo;
-        let branch = match options.base_branch.as_deref().map(str::trim) {
-            Some(branch) if !branch.is_empty() => branch.to_owned(),
-            _ => self.github.default_branch(owner, repo)?,
-        };
-        let head_sha = self.github.branch_head_sha(owner, repo, &branch)?;
-        if let Some(expected) = expected_head {
-            anyhow::ensure!(
-                head_sha == expected,
-                "release branch '{branch}' head {head_sha} does not match expected head {expected}; validate the current head before releasing"
-            );
-        }
-
-        let current_version = versioning::current_version(&options.repo_root)?;
+        let (branch, head_sha) = self.analysis_source(options, expected_head, analysis_sha)?;
+        let (preview_sources, current_version) =
+            self.analysis_manifest(options, &head_sha, analysis_sha.is_some())?;
         let current = Version::parse(&current_version).with_context(|| {
             format!("invalid current version '{current_version}' in Cargo.toml")
         })?;
@@ -466,6 +493,7 @@ impl ReleasePublisher {
         Ok(Analysis {
             branch,
             head_sha,
+            preview_sources,
             current_version,
             current,
             last_tag: last_tag.map(|tag| tag.name),
@@ -473,6 +501,57 @@ impl ReleasePublisher {
             commits: conventional::classify_commits(&range.commits),
             truncated: range.truncated,
         })
+    }
+
+    /// Resolve history independently from manifest loading so both keep one
+    /// explicit immutable source, while writers retain the current-head guard.
+    fn analysis_source(
+        &self,
+        options: &ReleaseOptions,
+        expected_head: Option<&str>,
+        analysis_sha: Option<&str>,
+    ) -> Result<(String, String)> {
+        let branch = match options.base_branch.as_deref().map(str::trim) {
+            Some(branch) if !branch.is_empty() => branch.to_owned(),
+            _ => self.github.default_branch(&options.owner, &options.repo)?,
+        };
+        let head_sha = match analysis_sha {
+            Some(sha) => sha.to_owned(),
+            None => self.github.branch_head_sha(&options.owner, &options.repo, &branch)?,
+        };
+        if let Some(expected) = expected_head {
+            anyhow::ensure!(
+                head_sha == expected,
+                "release branch '{branch}' head {head_sha} does not match expected head {expected}; validate the current head before releasing"
+            );
+        }
+        Ok((branch, head_sha))
+    }
+
+    /// Authenticate and parse the same root-manifest snapshot for previews.
+    fn analysis_manifest(
+        &self,
+        options: &ReleaseOptions,
+        head_sha: &str,
+        immutable_preview: bool,
+    ) -> Result<(Option<BTreeMap<String, String>>, String)> {
+        if !immutable_preview {
+            return Ok((None, versioning::current_version(&options.repo_root)?));
+        }
+        let tracked =
+            self.github.regular_files_at_commit(&options.owner, &options.repo, head_sha)?;
+        let root = options.repo_root.canonicalize()?;
+        let manifest = root.join("Cargo.toml");
+        let contents = fs::read_to_string(&manifest)?;
+        let originals = BTreeMap::from([(manifest, contents.clone())]);
+        self.github.validate_release_sources(
+            &options.owner,
+            &options.repo,
+            &root,
+            &tracked,
+            &originals,
+        )?;
+        Ok((Some(tracked), versioning::current_version_from_source(&contents)?))
     }
 
     /// Publish the prepared release. The cheap head re-read gives a clear

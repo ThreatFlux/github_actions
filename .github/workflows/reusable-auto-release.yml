@@ -94,6 +94,9 @@ on:
         description: Private key for the GitHub App identified by github-app-id. Store it as an organization or repository secret.
         required: false
     outputs:
+      analysis-sha:
+        description: Immutable candidate commit actually analyzed by the preview runtime.
+        value: ${{ jobs.preview.outputs.analysis-sha }}
       released:
         description: Whether a release was created (true or false).
         value: ${{ jobs.release.outputs.released || jobs.preview.outputs.released || 'false' }}
@@ -174,6 +177,10 @@ jobs:
             exit 0
           fi
           if [[ "$DRY_RUN" != true && "$EVENT_NAME" != workflow_run && "$CURRENT_REF" != refs/heads/main ]]; then
+            if [[ "$EVENT_NAME" == workflow_dispatch ]]; then
+              echo "::error::A manual release must target current main; the request was not performed."
+              exit 1
+            fi
             echo "should-release=false" >> "$GITHUB_OUTPUT"
             exit 0
           fi
@@ -181,6 +188,10 @@ jobs:
             main_sha="$(gh api "repos/$GITHUB_REPOSITORY/commits/main" --jq .sha)"
             if [[ "$main_sha" != "$TARGET_SHA" ]]; then
               echo "main advanced; refusing to release stale $TARGET_SHA"
+              if [[ "$EVENT_NAME" == workflow_dispatch ]]; then
+                echo "::error::The requested manual release was not performed; dispatch again against current main."
+                exit 1
+              fi
               echo "should-release=false" >> "$GITHUB_OUTPUT"
               exit 0
             fi
@@ -209,6 +220,10 @@ jobs:
             if [[ "$(jq 'length' <<< "$runs")" -ge 100 ]]; then
               echo "Required workflow '$workflow' history needs complete pagination; refusing an ambiguous gate"
               echo "should-release=false" >> "$GITHUB_OUTPUT"
+              if [[ "$EVENT_NAME" == workflow_dispatch && "$DRY_RUN" != true ]]; then
+                echo "::error::The manual release was not performed because its required-check history is incomplete."
+                exit 1
+              fi
               exit 0
             fi
             # Completion time cannot order attempts. First runs use creation;
@@ -240,6 +255,10 @@ jobs:
             if [[ "$status" != completed:success ]]; then
               echo "Required workflow '$workflow' is '$status' for $ci_sha"
               echo "should-release=false" >> "$GITHUB_OUTPUT"
+              if [[ "$EVENT_NAME" == workflow_dispatch && "$DRY_RUN" != true ]]; then
+                echo "::error::The manual release was not performed because its required checks are not successful."
+                exit 1
+              fi
               exit 0
             fi
           done
@@ -254,6 +273,7 @@ jobs:
       contents: read
       pull-requests: read
     outputs:
+      analysis-sha: ${{ steps.release.outputs.analysis-sha }}
       released: ${{ steps.release.outputs.released }}
       version: ${{ steps.release.outputs.version }}
       tag: ${{ steps.release.outputs.tag }}
@@ -268,6 +288,22 @@ jobs:
           repository: ${{ job.workflow_repository || 'ThreatFlux/github_actions' }}
           ref: ${{ job.workflow_sha }}
           persist-credentials: false
+      - name: Verify candidate-preview runtime capability
+        env:
+          ACTION_ROOT: .
+        run: |
+          set -euo pipefail
+          image="$(awk '$1 == "FROM" { print $2; exit }' "${ACTION_ROOT}/runtime/Dockerfile")"
+          if [[ ! "${image}" =~ ^ghcr\.io/[a-z0-9._/-]+:[A-Za-z0-9._-]+@sha256:[a-f0-9]{64}$ ]]; then
+            echo "expected an immutable GHCR runtime pin" >&2
+            exit 1
+          fi
+          help="$(docker run --rm "${image}" release --help)"
+          if ! grep -Fq -- '--analysis-sha' <<< "${help}"; then
+            echo "the pinned runtime cannot bind preview analysis to a candidate; use a released workflow with a capable runtime" >&2
+            exit 1
+          fi
+
       # Fetch only regular Cargo manifests and lockfiles. Candidate source,
       # scripts, local actions and Git configuration never enter this job.
       - name: Fetch preview manifests and locks as data
@@ -285,6 +321,7 @@ jobs:
           repo: .preview-target
           token: ${{ github.token }}
           expected-head: ''
+          analysis-sha: ${{ needs.check.outputs.target-sha }}
           bump: ${{ inputs.bump }}
           tag-prefix: ${{ inputs.tag-prefix }}
           update-major-alias: ${{ inputs.update-major-alias }}
@@ -292,6 +329,17 @@ jobs:
           dry-run: true
           create-pr: ${{ inputs.create-pr }}
           release-branch: ${{ inputs.release-branch }}
+      - name: Verify preview analysis source
+        env:
+          TARGET_SHA: ${{ needs.check.outputs.target-sha }}
+          ANALYZED_SHA: ${{ steps.release.outputs.analysis-sha }}
+        run: |
+          set -euo pipefail
+          if [[ ! "${TARGET_SHA}" =~ ^[a-f0-9]{40}$ || "${ANALYZED_SHA}" != "${TARGET_SHA}" ]]; then
+            echo "the preview runtime did not authenticate the requested candidate commit" >&2
+            exit 1
+          fi
+
       - name: Show the downstream dispatch plan (dry run)
         if: inputs.dry-run && inputs.dispatch-workflows != ''
         env:

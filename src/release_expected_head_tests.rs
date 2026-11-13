@@ -152,12 +152,11 @@ fn matching_initial_head_retains_the_mid_run_race_check() {
     let no_tag = server.mock("POST", "/repos/acme/demo/git/tags").expect(0).create();
     let no_release = server.mock("POST", "/repos/acme/demo/releases").expect(0).create();
 
-    let report = publisher(&server)
+    let error = publisher(&server)
         .release_at_head(&options(temp_dir.path()), "basecommitsha")
-        .expect("race report");
+        .expect_err("a guarded release cannot report a successful race skip");
 
-    assert_eq!(report.outcome, ReleaseOutcome::SkippedRace);
-    assert_eq!(report.commit_sha, None);
+    assert!(error.to_string().contains("requested release was not performed"));
     for mock in
         [initial_head, moved_head, tags, compare, tag_lookup, no_advance, no_tag, no_release]
     {

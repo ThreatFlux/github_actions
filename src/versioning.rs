@@ -43,6 +43,14 @@ pub fn current_version(repo_root: &Path) -> Result<String> {
     })
 }
 
+/// Parse the exact manifest bytes already authenticated against an immutable
+/// source, without reopening a path that could change during the HTTP read.
+pub(crate) fn current_version_from_source(contents: &str) -> Result<String> {
+    let document = contents.parse::<DocumentMut>().context("parse validated Cargo manifest")?;
+    version_from_document(&document)
+        .context("unable to determine current version from validated Cargo manifest")
+}
+
 /// Plan the rewrite of every member manifest and the lockfile to
 /// `new_version`, without touching the filesystem.
 pub fn plan_version_rewrite(repo_root: &Path, new_version: &str) -> Result<VersionRewritePlan> {
@@ -183,10 +191,9 @@ fn member_manifests_from_paths(
         let Some(parent) = manifest.parent() else {
             continue;
         };
-        let Ok(relative) = parent.strip_prefix(repo_root) else {
+        let Some(relative) = workspace_relative_directory(repo_root, parent) else {
             continue;
         };
-        let relative = relative.to_string_lossy().replace('\\', "/");
         if patterns.iter().any(|pattern| matches_member_pattern(pattern, &relative))
             && !excludes.iter().any(|pattern| matches_member_pattern(pattern, &relative))
         {
@@ -195,6 +202,16 @@ fn member_manifests_from_paths(
     }
 
     manifests
+}
+
+fn workspace_relative_directory(root: &Path, directory: &Path) -> Option<String> {
+    let ancestor = root.ancestors().find(|ancestor| directory.starts_with(ancestor))?;
+    let mut relative = PathBuf::new();
+    for _ in root.strip_prefix(ancestor).ok()?.components() {
+        relative.push("..");
+    }
+    relative.push(directory.strip_prefix(ancestor).ok()?);
+    Some(relative.to_string_lossy().replace('\\', "/"))
 }
 
 fn workspace_path_list(root_document: &DocumentMut, key: &str) -> Vec<String> {
