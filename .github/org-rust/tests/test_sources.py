@@ -14,6 +14,45 @@ from targets import RustImages, stable_channel
 
 
 class SourceTests(unittest.TestCase):
+    def test_real_api_wrapper_allows_immutable_three_dot_compare_path(self):
+        path = (
+            "/repos/ThreatFlux/example/compare/"
+            + fixtures.SOURCE
+            + "..."
+            + fixtures.COMMIT
+        )
+        github = GitHub(secrets.token_hex(16))
+        with mock.patch(
+            "api.fetch", return_value=(b'{"status":"ahead"}', {})
+        ) as request:
+            self.assertEqual(github.api(path), {"status": "ahead"})
+        self.assertEqual(request.call_args.args[0], "https://api.github.com" + path)
+
+    def test_real_api_wrapper_rejects_literal_and_encoded_traversal_before_https(self):
+        github = GitHub(secrets.token_hex(16))
+        paths = [
+            "/repos/x/../other",
+            "/repos/x/./other",
+            "/repos/x/%2e%2e/other",
+            "/repos/x/%2e/other",
+            "/repos/x/%2E%2e%2fother",
+            "/repos/x/%5c..%5cother",
+            "/repos/x/%00other",
+            "/repos/x/%0aother",
+            "/repos/x/%7fother",
+            "/repos/x/\tother",
+            "/repos/x/\nother",
+            "//example.com/path",
+            "/repos/x#fragment",
+            "https://example.com/path",
+        ]
+        for path in paths:
+            with mock.patch("api.fetch") as request, self.subTest(
+                path=path
+            ), self.assertRaises(PolicyError):
+                github.api(path)
+            request.assert_not_called()
+
     def test_known_git_blob_identity_is_protocol_bound(self):
         self.assertEqual(
             object_id(b"hello\n"), "ce013625030ba8dba906f756967f9e9ca394464a"

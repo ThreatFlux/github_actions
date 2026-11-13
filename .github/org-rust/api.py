@@ -6,7 +6,7 @@ import json
 import re
 import urllib.error
 import urllib.request
-from urllib.parse import urlsplit
+from urllib.parse import unquote, urlsplit
 
 
 class PolicyError(RuntimeError):
@@ -98,13 +98,34 @@ def safe_path(value):
     return value
 
 
+def control_characters(value):
+    return any(ord(character) < 32 or ord(character) == 127 for character in value)
+
+
+def validate_api_path(path):
+    if not isinstance(path, str) or control_characters(path):
+        raise PolicyError("Invalid GitHub API path")
+    parsed = urlsplit(path)
+    decoded = unquote(parsed.path)
+    if (
+        not path.startswith("/")
+        or parsed.scheme
+        or parsed.netloc
+        or parsed.fragment
+        or decoded.startswith("//")
+        or "\\" in decoded
+        or control_characters(decoded)
+        or any(part in {".", ".."} for part in decoded.split("/"))
+    ):
+        raise PolicyError("Invalid GitHub API path")
+
+
 class GitHub:
     def __init__(self, token):
         self.token = token
 
     def api(self, path, payload=None, missing=False):
-        if not path.startswith("/") or ".." in path or "\\" in path:
-            raise PolicyError("Invalid GitHub API path")
+        validate_api_path(path)
         body, _ = fetch("https://api.github.com" + path, self.token, payload)
         if body is None:
             if missing:
