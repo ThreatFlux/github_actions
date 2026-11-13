@@ -147,10 +147,37 @@ jobs:
             for workflow in ci security docker; do
               # GITHUB_TOKEN version commits need explicitly dispatched checks.
               # PR and scheduled runs cannot substitute for these main checks.
+              # jq variables are intentionally literal, not shell expansions.
+              # shellcheck disable=SC2016
               status="$(gh run list --repo "${GITHUB_REPOSITORY}" --workflow="${workflow}.yml" \
                 --branch=main --commit="${TARGET_SHA}" --limit=100 \
-                --json event,status,conclusion,createdAt,updatedAt,databaseId --jq \
-                '[.[] | select(.event == "push" or .event == "workflow_dispatch")] | sort_by(.updatedAt, .createdAt, .databaseId) | last | if . == null then "missing" else (.status + ":" + (.conclusion // "")) end')"
+                --json event,status,conclusion,attempt,startedAt,createdAt,databaseId --jq '
+                def epoch:
+                  if type == "string" then (try fromdateiso8601 catch null) else null end;
+                def validation_time:
+                  if (.attempt | type) != "number" then null
+                  elif .attempt < 1 or (.attempt | floor) != .attempt then null
+                  elif (.createdAt | epoch) == null then null
+                  elif .attempt == 1 then (.createdAt | epoch)
+                  elif (.startedAt | epoch) == null then null
+                  elif (.startedAt | epoch) < (.createdAt | epoch) then null
+                  else (.startedAt | epoch) end;
+                # Completion order is not validation order. REST startedAt resets
+                # on rerun; ordinary runs keep their creation-time ordering.
+                if type != "array" then "completed:unverifiable"
+                elif length >= 100 then "completed:truncated"
+                else [.[] | select(.event == "push" or .event == "workflow_dispatch")] as $eligible
+                | if ($eligible | length) == 0 then "missing"
+                  # A queued rerun can still expose the previous start time.
+                  elif any($eligible[]; .status != "completed") then "in_flight"
+                  else [$eligible[] | . + {validation_time: validation_time}] as $timed
+                  | if any($timed[]; .validation_time == null) then "completed:unverifiable"
+                    else ($timed | map(.validation_time) | max) as $latest
+                    | if all($timed[] | select(.validation_time == $latest); .conclusion == "success")
+                      then "completed:success" else "completed:failure" end
+                    end
+                  end
+                end')"
               echo "${workflow}=${status}"
               if [[ "${status}" != completed:success ]]; then
                 all_passed=false

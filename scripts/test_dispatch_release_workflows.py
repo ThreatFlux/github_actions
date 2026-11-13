@@ -189,8 +189,11 @@ class WorkflowWiringTests(unittest.TestCase):
         self.text = WORKFLOW.read_text(encoding="utf-8")
 
     def step(self, name: str) -> str:
-        """Return the body of the named step in reusable-auto-release.yml, up to the next step."""
-        match = re.search(rf"^      - name: {re.escape(name)}\n(.*?)(?=^      - name: |\Z)", self.text, re.M | re.S)
+        """Return the named step without absorbing the next job's permissions or environment."""
+        match = re.search(
+            rf"^      - name: {re.escape(name)}\n(.*?)(?=^      - name: |^  [a-zA-Z0-9_-]+:\s*$|\Z)",
+            self.text, re.M | re.S,
+        )
         self.assertIsNotNone(match, f"step {name!r} not found")
         return match.group(1)
 
@@ -221,6 +224,8 @@ class WorkflowWiringTests(unittest.TestCase):
         self.assertIn("if: inputs.dry-run && inputs.dispatch-workflows != ''", step)
         self.assertIn("dispatch_release_workflows.py --plan-only", step)
         self.assertNotIn("GH_TOKEN", step)
+        self.assertNotIn("secrets.", step)
+        self.assertNotIn("permission-contents: write", step)
 
     def test_app_token_is_scoped_and_used_for_every_release_write(self) -> None:
         """The App token is repository-scoped with conditional permissions, and the Release step writes with it."""

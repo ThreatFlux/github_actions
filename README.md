@@ -453,8 +453,12 @@ To attribute release commits and pull requests to an App instead of
 
 App authentication attributes API commits and pull requests to the App;
 cryptographic commit signing still requires a separate signing-key policy.
-Configure both values together — a half-configured App fails the workflow
-instead of silently falling back.
+Configure both values together — a half-configured App fails a write run
+instead of silently falling back. Reusable dry-run previews use a separate
+read-only `github.token` job; they do not read the App key, mint installation
+tokens, or validate write credentials. Their dispatch plan assumes valid write
+configuration and selects the App policy from the public `github-app-id`.
+The `release-token` and default-token paths have the same dispatch policy.
 
 Unlike `GITHUB_TOKEN`, an App token's writes start workflows. The release pull
 request it opens runs your `pull_request` CI, and the tag it pushes runs your
@@ -619,23 +623,36 @@ jobs:
 
 What a dry run does, in either mode:
 
-- **The gate still applies.** The `check` job runs unchanged, so a dry run
-  only reaches the action when the `required-workflows` all passed for the
-  target commit (and, for `workflow_run` triggers, the triggering run
-  succeeded in this repository). A skipped gate means no analysis and no log
-  line.
+- **The gate still applies.** Required workflows must have successful latest
+  eligible runs for the requested commit. Read-only previews accept push,
+  pull-request, and manual-dispatch checks for that exact SHA; a pull-request
+  merge preview checks its actual PR head's CI while analyzing manifests
+  and lockfiles fetched from the merge revision. Configured write checks must
+  be successful main-push runs, and every write must target the exact current
+  main SHA. Missing, pending, failed, or potentially truncated required
+  histories stop the gate with a diagnostic.
+  First attempts are ordered by creation time and reruns by their latest
+  attempt start, never by completion time. Any eligible in-flight run or
+  ambiguous attempt timestamp blocks the gate; tied latest attempts must all
+  succeed.
 - **Reads only.** The action reads the default branch (when `base-branch` is
   empty), the base branch head, the tag list, the commits since the highest
   `<tag-prefix>X.Y.Z` tag (the commit list when there is none), and whether
-  the candidate tag already exists. It still needs a token for those reads.
+  the candidate tag already exists. Reusable previews use a separate job
+  with read-only `github.token` permissions and no write-secret references.
+  Only regular Cargo manifests and lockfiles are fetched at the validated
+  revision, with their blob identities checked; candidate source, scripts,
+  local actions and Git configuration are never checked out in that job.
 - **Writes nothing to the repository.** No blob, tree, or commit is created;
   the base branch and the release branch do not move; no pull request is
   opened or edited; no tag, major alias, or GitHub Release is created.
   `Dispatch downstream release workflows` is skipped: it requires
   `released == 'true'`, which a dry run never reports, and it also checks
   `dry-run` directly. Instead, `Show the downstream dispatch plan (dry run)`
-  logs which workflows the real run would dispatch, or why it would skip them
-  (the GitHub App token pushed the tag), without running `gh`.
+  runs in the read-only preview job and logs the policy without running `gh`:
+  a public App ID selects the App path; otherwise the release-token/default
+  path applies. It assumes valid write credentials instead of validating or
+  minting them.
 - **Local files only.** The would-be release notes are written to
   `notes-file` in the runner workspace, and the outputs are written to
   `$GITHUB_OUTPUT`.
@@ -651,8 +668,12 @@ What a dry run does, in either mode:
   nothing was written to the repository. When nothing would happen, the log
   gives the reason instead (`No release needed: ...` or
   `Skipped release: tag <tag> already exists ...`).
-- **Failures.** A dry run fails exactly where the real run would, including
-  the manifest-behind-tag check below.
+- **Failures.** Repository and version-analysis failures, including the
+  manifest-behind-tag check below, still apply. A preview does not validate
+  credentials or prove write permissions. The smoke workflow probes actual
+  App authentication separately on trusted main: missing configuration is
+  reported explicitly, while partial configuration or token/probe failure
+  fails the smoke run. PR and manual feature previews cannot access that key.
 
 What the computed version means depends on the mode:
 
