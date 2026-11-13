@@ -471,32 +471,9 @@ impl ReleasePublisher {
     ) -> Result<Analysis> {
         let owner = &options.owner;
         let repo = &options.repo;
-        let branch = match options.base_branch.as_deref().map(str::trim) {
-            Some(branch) if !branch.is_empty() => branch.to_owned(),
-            _ => self.github.default_branch(owner, repo)?,
-        };
-        let head_sha = match analysis_sha {
-            Some(sha) => sha.to_owned(),
-            None => self.github.branch_head_sha(owner, repo, &branch)?,
-        };
-        if let Some(expected) = expected_head {
-            anyhow::ensure!(
-                head_sha == expected,
-                "release branch '{branch}' head {head_sha} does not match expected head {expected}; validate the current head before releasing"
-            );
-        }
-
-        let (preview_sources, current_version) = if analysis_sha.is_some() {
-            let tracked = self.github.regular_files_at_commit(owner, repo, &head_sha)?;
-            let root = options.repo_root.canonicalize()?;
-            let manifest = root.join("Cargo.toml");
-            let contents = fs::read_to_string(&manifest)?;
-            let originals = BTreeMap::from([(manifest, contents.clone())]);
-            self.github.validate_release_sources(owner, repo, &root, &tracked, &originals)?;
-            (Some(tracked), versioning::current_version_from_source(&contents)?)
-        } else {
-            (None, versioning::current_version(&options.repo_root)?)
-        };
+        let (branch, head_sha) = self.analysis_source(options, expected_head, analysis_sha)?;
+        let (preview_sources, current_version) =
+            self.analysis_manifest(options, &head_sha, analysis_sha.is_some())?;
         let current = Version::parse(&current_version).with_context(|| {
             format!("invalid current version '{current_version}' in Cargo.toml")
         })?;
@@ -524,6 +501,57 @@ impl ReleasePublisher {
             commits: conventional::classify_commits(&range.commits),
             truncated: range.truncated,
         })
+    }
+
+    /// Resolve history independently from manifest loading so both keep one
+    /// explicit immutable source, while writers retain the current-head guard.
+    fn analysis_source(
+        &self,
+        options: &ReleaseOptions,
+        expected_head: Option<&str>,
+        analysis_sha: Option<&str>,
+    ) -> Result<(String, String)> {
+        let branch = match options.base_branch.as_deref().map(str::trim) {
+            Some(branch) if !branch.is_empty() => branch.to_owned(),
+            _ => self.github.default_branch(&options.owner, &options.repo)?,
+        };
+        let head_sha = match analysis_sha {
+            Some(sha) => sha.to_owned(),
+            None => self.github.branch_head_sha(&options.owner, &options.repo, &branch)?,
+        };
+        if let Some(expected) = expected_head {
+            anyhow::ensure!(
+                head_sha == expected,
+                "release branch '{branch}' head {head_sha} does not match expected head {expected}; validate the current head before releasing"
+            );
+        }
+        Ok((branch, head_sha))
+    }
+
+    /// Authenticate and parse the same root-manifest snapshot for previews.
+    fn analysis_manifest(
+        &self,
+        options: &ReleaseOptions,
+        head_sha: &str,
+        immutable_preview: bool,
+    ) -> Result<(Option<BTreeMap<String, String>>, String)> {
+        if !immutable_preview {
+            return Ok((None, versioning::current_version(&options.repo_root)?));
+        }
+        let tracked =
+            self.github.regular_files_at_commit(&options.owner, &options.repo, head_sha)?;
+        let root = options.repo_root.canonicalize()?;
+        let manifest = root.join("Cargo.toml");
+        let contents = fs::read_to_string(&manifest)?;
+        let originals = BTreeMap::from([(manifest, contents.clone())]);
+        self.github.validate_release_sources(
+            &options.owner,
+            &options.repo,
+            &root,
+            &tracked,
+            &originals,
+        )?;
+        Ok((Some(tracked), versioning::current_version_from_source(&contents)?))
     }
 
     /// Publish the prepared release. The cheap head re-read gives a clear

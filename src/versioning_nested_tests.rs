@@ -546,3 +546,6 @@ fn symlink_lockfile_is_not_a_release_consumer() {
     };
     assert!(error.to_string().contains("missing, non-regular or outside its analyzed path"));
 }
+
+#[path = "versioning_nested_membership_tests.rs"]
+mod membership;

@@ -13,6 +13,8 @@ on:
       - "rust-toolchain.toml"
       - "scripts/check_static_image.py"
       - "scripts/smoke_container_https.py"
+      - "scripts/candidate_runtime.py"
+      - "scripts/test_candidate_runtime.py"
       - ".dockerignore"
       - "Cargo.toml"
       - "Cargo.lock"
@@ -22,6 +24,16 @@ on:
     - cron: "0 4 * * 1"
   workflow_dispatch:
     inputs:
+      candidate-runtime:
+        description: Publish only an explicitly reviewed source-SHA candidate runtime
+        required: false
+        default: false
+        type: boolean
+      candidate-source-sha:
+        description: Exact 40-character commit on the dispatched codex branch (candidate mode only)
+        required: false
+        default: ""
+        type: string
       release-prep:
         description: Set by Auto Release when this build publishes the runtime image for a committed version bump
         required: false
@@ -62,11 +74,25 @@ jobs:
       # contains a secret value, and the reference can contain the Docker Hub
       # user name. The sign job rebuilds the reference from the same inputs.
       dockerhub_enabled: ${{ steps.images.outputs.dockerhub_enabled }}
+      candidate: ${{ steps.candidate.outputs.enabled }}
+      image_ref: ${{ steps.image_ref.outputs.value }}
     steps:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
+
+      # Candidate publication is an explicit, upstream-only maintainer action.
+      # It cannot update ordinary runtime/base aliases or start a release.
+      - name: Validate candidate runtime source and dispatch actors
+        id: candidate
+        env:
+          GH_TOKEN: ${{ github.token }}
+          CANDIDATE_RUNTIME: ${{ inputs.candidate-runtime == true }}
+          CANDIDATE_SOURCE_SHA: ${{ inputs.candidate-source-sha }}
+          RELEASE_PREP: ${{ inputs.release-prep == true }}
+          REPOSITORY_IS_FORK: ${{ github.event.repository.fork }}
+        run: python3 scripts/candidate_runtime.py
 
       - name: Lowercase image name
         id: lowercase
@@ -96,7 +122,7 @@ jobs:
       # reads those secrets and no docker.io tag is generated.
       - name: Check Docker Hub credentials
         id: dockerhub
-        if: github.event_name != 'pull_request' && env.PUBLISH_DOCKERHUB == 'true'
+        if: github.event_name != 'pull_request' && steps.candidate.outputs.enabled != 'true' && env.PUBLISH_DOCKERHUB == 'true'
         env:
           DOCKERHUB_USERNAME: ${{ secrets.DOCKERHUB_USERNAME }}
           DOCKERHUB_TOKEN: ${{ secrets.DOCKERHUB_TOKEN }}
@@ -161,6 +187,7 @@ jobs:
 
       - name: Extract runtime metadata
         id: meta
+        if: steps.candidate.outputs.enabled != 'true'
         uses: docker/metadata-action@dc802804100637a589fabce1cb79ff13a1411302 # v6.2.0
         with:
           images: ${{ steps.images.outputs.images }}
@@ -173,8 +200,22 @@ jobs:
             type=sha,prefix=
             type=raw,value=latest,enable={{is_default_branch}}
 
+      - name: Label the source-bound candidate runtime
+        id: candidate_meta
+        if: steps.candidate.outputs.enabled == 'true'
+        uses: docker/metadata-action@dc802804100637a589fabce1cb79ff13a1411302 # v6.2.0
+        with:
+          images: ghcr.io/${{ steps.lowercase.outputs.image_name }}
+          flavor: latest=false
+          tags: type=raw,value=candidate-${{ github.sha }}
+          labels: |
+            org.opencontainers.image.source=https://github.com/${{ github.repository }}
+            org.opencontainers.image.revision=${{ github.sha }}
+            org.opencontainers.image.version=candidate-${{ github.sha }}
+
       - name: Extract base image metadata
         id: base_meta
+        if: steps.candidate.outputs.enabled != 'true'
         uses: docker/metadata-action@dc802804100637a589fabce1cb79ff13a1411302 # v6.2.0
         with:
           images: ${{ steps.images.outputs.images }}
@@ -183,7 +224,7 @@ jobs:
             type=raw,value=base-rust-latest,enable={{is_default_branch}}
 
       - name: Build base image
-        if: github.event_name != 'pull_request'
+        if: github.event_name != 'pull_request' && steps.candidate.outputs.enabled != 'true'
         uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
         with:
           context: .
@@ -229,8 +270,8 @@ jobs:
           context: .
           platforms: ${{ steps.platforms.outputs.value }}
           push: true
-          tags: ${{ steps.meta.outputs.tags }}
-          labels: ${{ steps.meta.outputs.labels }}
+          tags: ${{ steps.candidate.outputs.image || steps.meta.outputs.tags }}
+          labels: ${{ steps.candidate_meta.outputs.labels || steps.meta.outputs.labels }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
           build-args: |
@@ -240,6 +281,22 @@ jobs:
             BINARY_NAME=${{ env.BINARY_NAME }}
             BINARY_PACKAGE=${{ env.BINARY_PACKAGE }}
             SBOM_MANIFEST_PATH=${{ env.SBOM_MANIFEST_PATH }}
+
+      - name: Resolve the published runtime image reference
+        if: github.event_name != 'pull_request'
+        id: image_ref
+        env:
+          CANDIDATE: ${{ steps.candidate.outputs.enabled }}
+          DIGEST: ${{ steps.build.outputs.digest }}
+          IMAGE_NAME: ${{ steps.lowercase.outputs.image_name }}
+        run: |
+          set -euo pipefail
+          if [[ "$CANDIDATE" == true ]]; then
+            [[ "$DIGEST" =~ ^sha256:[0-9a-f]{64}$ ]]
+            echo "value=${REGISTRY}/${IMAGE_NAME}@${DIGEST}" >> "$GITHUB_OUTPUT"
+          else
+            echo "value=${REGISTRY}/${IMAGE_NAME}:${GITHUB_SHA::7}" >> "$GITHUB_OUTPUT"
+          fi
 
       - name: Upload image artifact
         if: github.event_name == 'pull_request'
@@ -313,11 +370,13 @@ jobs:
 
       - name: Pull image
         if: github.event_name != 'pull_request'
-        run: docker pull ${{ env.REGISTRY }}/${{ needs.build.outputs.image_name }}:${{ steps.sha.outputs.short }}
+        env:
+          IMAGE: ${{ needs.build.outputs.image_ref }}
+        run: docker pull "$IMAGE"
 
       - name: Validate static runtime and HTTPS API behavior
         env:
-          IMAGE: ${{ github.event_name == 'pull_request' && format('{0}:scan', needs.build.outputs.image_name) || format('{0}/{1}:{2}', env.REGISTRY, needs.build.outputs.image_name, steps.sha.outputs.short) }}
+          IMAGE: ${{ github.event_name == 'pull_request' && format('{0}:scan', needs.build.outputs.image_name) || needs.build.outputs.image_ref }}
         run: |
           python3 scripts/check_static_image.py "${IMAGE}"
           python3 scripts/smoke_container_https.py "${IMAGE}"
@@ -329,7 +388,7 @@ jobs:
           version: v0.76.2
           image-ref: >-
             ${{ github.event_name == 'pull_request' && format('{0}:scan', needs.build.outputs.image_name) ||
-            format('{0}/{1}:{2}', env.REGISTRY, needs.build.outputs.image_name, steps.sha.outputs.short) }}
+            needs.build.outputs.image_ref }}
           format: sarif
           output: trivy-results.sarif
           severity: UNKNOWN,LOW,MEDIUM,HIGH,CRITICAL
@@ -366,9 +425,9 @@ jobs:
 
   sign:
     name: Sign Container
-    needs: [build, scan]
+    needs: [build, scan, sbom]
     runs-on: ${{ vars.RUST_TEMPLATE_RUNNER_UBUNTU || 'ubuntu-latest' }}
-    if: github.event_name != 'pull_request' && (github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/v'))
+    if: github.event_name != 'pull_request' && (github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/v') || needs.build.outputs.candidate == 'true')
     permissions:
       contents: read
       packages: write
@@ -387,9 +446,17 @@ jobs:
           password: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Sign container image
-        run: cosign sign --yes ${{ env.REGISTRY }}/${{ needs.build.outputs.image_name }}@${{ needs.build.outputs.digest }}
         env:
           COSIGN_EXPERIMENTAL: 1
+          CANDIDATE: ${{ needs.build.outputs.candidate }}
+          IMAGE: ${{ env.REGISTRY }}/${{ needs.build.outputs.image_name }}@${{ needs.build.outputs.digest }}
+        run: |
+          set -euo pipefail
+          if [[ "$CANDIDATE" == true ]]; then
+            cosign sign --yes -a "source-sha=${GITHUB_SHA}" -a runtime-channel=candidate "$IMAGE"
+          else
+            cosign sign --yes "$IMAGE"
+          fi
 
       # The build pushed one multi-arch index to both registries, so the Docker
       # Hub copy has the same digest. Sign it in this job too, with the same
@@ -419,7 +486,7 @@ jobs:
   release-handoff:
     name: Hand Off to Auto Release
     needs: [build, scan, sign, sbom]
-    if: inputs.release-prep && github.ref == 'refs/heads/main'
+    if: inputs.release-prep && needs.build.outputs.candidate != 'true' && github.ref == 'refs/heads/main'
     runs-on: ${{ vars.RUST_TEMPLATE_RUNNER_UBUNTU || 'ubuntu-latest' }}
     permissions:
       actions: write
@@ -453,6 +520,6 @@ jobs:
         uses: anchore/sbom-action@66cbf4bc1f1c0d2edc94016e65bc221b6bb0ad6c # v0.24.3
         with:
           syft-version: v1.57.1
-          image: ${{ env.REGISTRY }}/${{ needs.build.outputs.image_name }}:${{ steps.sha.outputs.short }}
+          image: ${{ needs.build.outputs.image_ref }}
           artifact-name: sbom.spdx.json
           format: spdx-json

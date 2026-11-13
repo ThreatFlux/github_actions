@@ -174,6 +174,19 @@ write configuration and selects the App policy from the public `github-app-id`;
 the `release-token` and default `GITHUB_TOKEN` paths share a dispatch policy.
 Only real write runs validate the configured App pair and use its token.
 
+The preview first checks that the immutable action runtime supports
+`--analysis-sha`, then requires its returned `analysis-sha` to equal the
+requested candidate. An older runtime fails instead of silently reporting
+moving-main analysis. To bootstrap a runtime change, maintainers can manually
+dispatch this repository's Docker workflow on a reviewed `codex/` branch with
+`candidate-runtime: true` and its exact `candidate-source-sha`. The source and
+both dispatch actors are verified before publishing only a full-source-SHA
+candidate tag. Both architecture checks, SBOM generation and digest signing
+must pass before pinning that candidate digest for PR validation. Candidate
+publication does not move normal or base-image aliases, publish a stable
+package, or invoke release handoff. The normal main release still performs
+its version bump, runtime sealing and immutable stable publication.
+
 The App token is scoped to the current repository. Rotate the private key by
 replacing the secret and revoke old keys in the App settings; for the
 ThreatFlux `threatflux-automation` App,

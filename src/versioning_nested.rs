@@ -10,7 +10,7 @@ use toml_edit::{DocumentMut, Item};
 use super::{
     SourceFiles, VersionRewritePlan, dependency_table_paths, matches_member_pattern,
     member_manifests_from_paths, plan_lockfile_update, plan_with_sources, set_dependency_version,
-    source_document, workspace_path_list,
+    source_document, workspace_path_list, workspace_relative_directory,
 };
 use crate::{cargo, model::FileUpdate, remote};
 
@@ -122,7 +122,7 @@ fn tracked_members(
                 relative.as_str() == "Cargo.toml" || relative.ends_with("/Cargo.toml")
             })
             .map(|relative| repo_root.join(relative))
-            .filter(|file| file.starts_with(scope_root)),
+            .filter(|file| file.starts_with(repo_root)),
     )
 }
 
@@ -328,10 +328,9 @@ impl<'a> ConsumerContext<'a> {
         let Some(directory) = manifest.parent() else {
             return Ok(false);
         };
-        let Ok(relative) = directory.strip_prefix(root) else {
+        let Some(relative) = workspace_relative_directory(root, directory) else {
             return Ok(false);
         };
-        let relative = relative.to_string_lossy().replace('\\', "/");
         if self.workspace_excludes.iter().any(|pattern| matches_member_pattern(pattern, &relative))
         {
             return Ok(false);

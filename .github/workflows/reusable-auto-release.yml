@@ -284,6 +284,22 @@ jobs:
           repository: ${{ job.workflow_repository || 'ThreatFlux/github_actions' }}
           ref: ${{ job.workflow_sha }}
           persist-credentials: false
+      - name: Verify candidate-preview runtime capability
+        env:
+          ACTION_ROOT: .
+        run: |
+          set -euo pipefail
+          image="$(awk '$1 == "FROM" { print $2; exit }' "${ACTION_ROOT}/runtime/Dockerfile")"
+          if [[ ! "${image}" =~ ^ghcr\.io/[a-z0-9._/-]+:[A-Za-z0-9._-]+@sha256:[a-f0-9]{64}$ ]]; then
+            echo "expected an immutable GHCR runtime pin" >&2
+            exit 1
+          fi
+          help="$(docker run --rm "${image}" release --help)"
+          if ! grep -Fq -- '--analysis-sha' <<< "${help}"; then
+            echo "the pinned runtime cannot bind preview analysis to a candidate; use a released workflow with a capable runtime" >&2
+            exit 1
+          fi
+
       # Fetch only regular Cargo manifests and lockfiles. Candidate source,
       # scripts, local actions and Git configuration never enter this job.
       - name: Fetch preview manifests and locks as data
@@ -309,6 +325,17 @@ jobs:
           dry-run: true
           create-pr: ${{ inputs.create-pr }}
           release-branch: ${{ inputs.release-branch }}
+      - name: Verify preview analysis source
+        env:
+          TARGET_SHA: ${{ needs.check.outputs.target-sha }}
+          ANALYZED_SHA: ${{ steps.release.outputs.analysis-sha }}
+        run: |
+          set -euo pipefail
+          if [[ ! "${TARGET_SHA}" =~ ^[a-f0-9]{40}$ || "${ANALYZED_SHA}" != "${TARGET_SHA}" ]]; then
+            echo "the preview runtime did not authenticate the requested candidate commit" >&2
+            exit 1
+          fi
+
       - name: Show the downstream dispatch plan (dry run)
         if: inputs.dry-run && inputs.dispatch-workflows != ''
         env:

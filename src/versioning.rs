@@ -191,10 +191,9 @@ fn member_manifests_from_paths(
         let Some(parent) = manifest.parent() else {
             continue;
         };
-        let Ok(relative) = parent.strip_prefix(repo_root) else {
+        let Some(relative) = workspace_relative_directory(repo_root, parent) else {
             continue;
         };
-        let relative = relative.to_string_lossy().replace('\\', "/");
         if patterns.iter().any(|pattern| matches_member_pattern(pattern, &relative))
             && !excludes.iter().any(|pattern| matches_member_pattern(pattern, &relative))
         {
@@ -203,6 +202,16 @@ fn member_manifests_from_paths(
     }
 
     manifests
+}
+
+fn workspace_relative_directory(root: &Path, directory: &Path) -> Option<String> {
+    let ancestor = root.ancestors().find(|ancestor| directory.starts_with(ancestor))?;
+    let mut relative = PathBuf::new();
+    for _ in root.strip_prefix(ancestor).ok()?.components() {
+        relative.push("..");
+    }
+    relative.push(directory.strip_prefix(ancestor).ok()?);
+    Some(relative.to_string_lossy().replace('\\', "/"))
 }
 
 fn workspace_path_list(root_document: &DocumentMut, key: &str) -> Vec<String> {
