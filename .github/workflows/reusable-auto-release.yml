@@ -39,7 +39,8 @@ on:
       dry-run:
         description: >-
           Compute and log the would-be version, tag, and file rewrites without pushing a commit, branch, tag, pull request, or GitHub Release, and
-          without dispatching workflows. The required-workflows gate still applies.
+          without dispatching workflows. Required workflows must pass for the requested commit (the PR head for a PR merge preview).
+          Previews use a read-only token; writes still require current-main push checks.
         required: false
         default: false
         type: boolean
@@ -95,25 +96,25 @@ on:
     outputs:
       released:
         description: Whether a release was created (true or false).
-        value: ${{ jobs.release.outputs.released }}
+        value: ${{ jobs.release.outputs.released || jobs.preview.outputs.released || 'false' }}
       version:
         description: The released version without the tag prefix.
-        value: ${{ jobs.release.outputs.version }}
+        value: ${{ jobs.release.outputs.version || jobs.preview.outputs.version }}
       tag:
         description: The created release tag.
-        value: ${{ jobs.release.outputs.tag }}
+        value: ${{ jobs.release.outputs.tag || jobs.preview.outputs.tag }}
       release-url:
         description: URL of the created GitHub Release.
-        value: ${{ jobs.release.outputs.release-url }}
+        value: ${{ jobs.release.outputs.release-url || jobs.preview.outputs.release-url }}
       release-pr-number:
         description: Number of the created or updated automated release pull request.
-        value: ${{ jobs.release.outputs.release-pr-number }}
+        value: ${{ jobs.release.outputs.release-pr-number || jobs.preview.outputs.release-pr-number }}
       release-pr-url:
         description: URL of the created or updated automated release pull request.
-        value: ${{ jobs.release.outputs.release-pr-url }}
+        value: ${{ jobs.release.outputs.release-pr-url || jobs.preview.outputs.release-pr-url }}
       release-branch:
         description: Branch used for the automated release pull request.
-        value: ${{ jobs.release.outputs.release-branch }}
+        value: ${{ jobs.release.outputs.release-branch || jobs.preview.outputs.release-branch }}
 
 permissions:
   contents: read
@@ -161,8 +162,13 @@ jobs:
           TRIGGER_BRANCH: ${{ github.event.workflow_run.head_branch }}
           CURRENT_REF: ${{ github.ref }}
           DRY_RUN: ${{ inputs.dry-run }}
+          PR_HEAD_SHA: ${{ github.event.pull_request.head.sha }}
         run: |
           set -euo pipefail
+          if [[ "$DRY_RUN" != true && ( "$EVENT_NAME" == pull_request || "$EVENT_NAME" == pull_request_target ) ]]; then
+            echo "should-release=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
           if [[ "$DRY_RUN" != true && "$EVENT_NAME" == workflow_run && ( "$TRIGGER_CONCLUSION" != success || "$TRIGGER_REPOSITORY" != "$GITHUB_REPOSITORY" || "$TRIGGER_EVENT" != push || "$TRIGGER_BRANCH" != main ) ]]; then
             echo "should-release=false" >> "$GITHUB_OUTPUT"
             exit 0
@@ -183,22 +189,104 @@ jobs:
             echo "should-release=true" >> "$GITHUB_OUTPUT"
             exit 0
           fi
+          ci_sha="$TARGET_SHA"
+          if [[ "$DRY_RUN" == true && "$EVENT_NAME" == pull_request ]]; then
+            # GitHub checks out the PR's synthetic merge, while the Actions
+            # runs API associates its CI with the actual PR head commit.
+            [[ "$PR_HEAD_SHA" =~ ^[0-9a-f]{40}$ ]] || { echo "Invalid PR head SHA" >&2; exit 1; }
+            ci_sha="$PR_HEAD_SHA"
+          fi
           IFS=',' read -ra workflows <<< "$REQUIRED_WORKFLOWS"
           for workflow in "${workflows[@]}"; do
             workflow="$(xargs <<< "$workflow")"
             [[ -n "$workflow" ]] || continue
-            conclusion="$(gh run list --repo="$GITHUB_REPOSITORY" --workflow="$workflow" --branch=main --event=push --commit="$TARGET_SHA" --limit=1 --json conclusion --jq '.[0].conclusion // ""')"
-            if [[ "$conclusion" != success ]]; then
-              echo "Required workflow '$workflow' is '$conclusion' for $TARGET_SHA"
+            filters=()
+            if [[ "$DRY_RUN" != true ]]; then filters+=(--branch=main --event=push); fi
+            runs="$(gh run list --repo="$GITHUB_REPOSITORY" --workflow="$workflow" "${filters[@]}" --commit="$ci_sha" --limit=100 \
+              --json databaseId,event,headSha,headBranch,status,conclusion,createdAt,updatedAt)"
+            # Refuse a potentially truncated history instead of accepting an
+            # older success whose newer failed rerun may be outside this page.
+            if [[ "$(jq 'length' <<< "$runs")" -ge 100 ]]; then
+              echo "Required workflow '$workflow' history needs complete pagination; refusing an ambiguous gate"
+              echo "should-release=false" >> "$GITHUB_OUTPUT"
+              exit 0
+            fi
+            status="$(jq -r --arg sha "$ci_sha" --argjson preview "$DRY_RUN" '
+              [.[] | select(.headSha == $sha and
+                (if $preview then (.event == "push" or .event == "pull_request" or .event == "workflow_dispatch")
+                 else (.event == "push" and .headBranch == "main") end))]
+              | sort_by(.updatedAt, .createdAt, .databaseId) | last
+              | if . == null then "missing" else (.status + ":" + (.conclusion // "")) end' <<< "$runs")"
+            if [[ "$status" != completed:success ]]; then
+              echo "Required workflow '$workflow' is '$status' for $ci_sha"
               echo "should-release=false" >> "$GITHUB_OUTPUT"
               exit 0
             fi
           done
           echo "should-release=true" >> "$GITHUB_OUTPUT"
+  preview:
+    name: Preview release without writes
+    needs: check
+    if: ${{ inputs.dry-run && needs.check.outputs.should-release == 'true' }}
+    runs-on: ubuntu-latest
+    permissions:
+      actions: read
+      contents: read
+      pull-requests: read
+    outputs:
+      released: ${{ steps.release.outputs.released }}
+      version: ${{ steps.release.outputs.version }}
+      tag: ${{ steps.release.outputs.tag }}
+      release-url: ${{ steps.release.outputs.release-url }}
+      release-pr-number: ${{ steps.release.outputs.release-pr-number }}
+      release-pr-url: ${{ steps.release.outputs.release-pr-url }}
+      release-branch: ${{ steps.release.outputs.release-branch }}
+    steps:
+      - name: Checkout preview target
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          ref: ${{ needs.check.outputs.target-sha }}
+      - name: Checkout the action at the workflow ref
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: ${{ job.workflow_repository || 'ThreatFlux/github_actions' }}
+          ref: ${{ job.workflow_sha }}
+          path: .release-action
+          persist-credentials: false
+      - name: Compute release preview
+        id: release
+        uses: ./.release-action
+        with:
+          command: release
+          token: ${{ github.token }}
+          expected-head: ''
+          bump: ${{ inputs.bump }}
+          tag-prefix: ${{ inputs.tag-prefix }}
+          update-major-alias: ${{ inputs.update-major-alias }}
+          notes-file: ${{ inputs.notes-file }}
+          dry-run: true
+          create-pr: ${{ inputs.create-pr }}
+          release-branch: ${{ inputs.release-branch }}
+      - name: Show the downstream dispatch plan (dry run)
+        if: inputs.dispatch-workflows != ''
+        env:
+          RELEASED_BY: ${{ inputs.github-app-id != '' && 'github-app' || 'github-token' }}
+          DISPATCH_FOR_APP_RELEASE: ${{ inputs.dispatch-on-app-token }}
+          TAG: ${{ steps.release.outputs.tag }}
+          VERSION: ${{ steps.release.outputs.version }}
+          DISPATCH_WORKFLOWS: ${{ inputs.dispatch-workflows }}
+          VERSION_WORKFLOW: ${{ inputs.dispatch-version-workflow }}
+        run: |
+          echo "Plan only: assuming complete write credentials. An App ID selects the App policy; release-token and GITHUB_TOKEN use the same dispatch policy. No write credentials are read, validated or minted by this preview."
+          python3 .release-action/scripts/dispatch_release_workflows.py --plan-only \
+            --repository "${GITHUB_REPOSITORY}" --released-by "${RELEASED_BY}" \
+            --dispatch-for-app-release "${DISPATCH_FOR_APP_RELEASE}" --tag "${TAG}" --version "${VERSION}" \
+            --workflows "${DISPATCH_WORKFLOWS}" --version-workflow "${VERSION_WORKFLOW}"
   release:
     name: Auto Release
     needs: check
-    if: needs.check.outputs.should-release == 'true'
+    if: ${{ !inputs.dry-run && needs.check.outputs.should-release == 'true' }}
     runs-on: ubuntu-latest
     permissions:
       actions: write
@@ -286,15 +374,13 @@ jobs:
         uses: ./.release-action
         with:
           command: release
-          # PR dry runs intentionally analyze a checkout that can differ from
-          # main. Bind writes to the validated head without blocking that preview.
-          expected-head: ${{ !inputs.dry-run && needs.check.outputs.target-sha || '' }}
+          expected-head: ${{ needs.check.outputs.target-sha }}
           token: ${{ steps.github-app-token.outputs.token || secrets.release-token || github.token }}
           bump: ${{ inputs.bump }}
           tag-prefix: ${{ inputs.tag-prefix }}
           update-major-alias: ${{ inputs.update-major-alias }}
           notes-file: ${{ inputs.notes-file }}
-          dry-run: ${{ inputs.dry-run }}
+          dry-run: false
           create-pr: ${{ inputs.create-pr }}
           release-branch: ${{ inputs.release-branch }}
       # scripts/dispatch_release_workflows.py (tested in this repository)
@@ -319,24 +405,6 @@ jobs:
           VERSION_WORKFLOW: ${{ inputs.dispatch-version-workflow }}
         run: >-
           python3 .release-action/scripts/dispatch_release_workflows.py
-          --repository "${GITHUB_REPOSITORY}" --released-by "${RELEASED_BY}"
-          --dispatch-for-app-release "${DISPATCH_FOR_APP_RELEASE}" --tag "${TAG}" --version "${VERSION}"
-          --workflows "${DISPATCH_WORKFLOWS}" --version-workflow "${VERSION_WORKFLOW}"
-
-      # Dry runs only log what the dispatch step would do; --plan-only never
-      # runs gh.
-      - name: Show the downstream dispatch plan (dry run)
-        if: inputs.dry-run && inputs.dispatch-workflows != ''
-        env:
-          RELEASED_BY: >-
-            ${{ steps.github-app-token.outcome == 'success' && 'github-app' || env.HAS_RELEASE_TOKEN == 'true' && 'release-token' || 'github-token' }}
-          DISPATCH_FOR_APP_RELEASE: ${{ inputs.dispatch-on-app-token }}
-          TAG: ${{ steps.release.outputs.tag }}
-          VERSION: ${{ steps.release.outputs.version }}
-          DISPATCH_WORKFLOWS: ${{ inputs.dispatch-workflows }}
-          VERSION_WORKFLOW: ${{ inputs.dispatch-version-workflow }}
-        run: >-
-          python3 .release-action/scripts/dispatch_release_workflows.py --plan-only
           --repository "${GITHUB_REPOSITORY}" --released-by "${RELEASED_BY}"
           --dispatch-for-app-release "${DISPATCH_FOR_APP_RELEASE}" --tag "${TAG}" --version "${VERSION}"
           --workflows "${DISPATCH_WORKFLOWS}" --version-workflow "${VERSION_WORKFLOW}"

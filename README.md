@@ -140,12 +140,12 @@ cargo run -- release \
   --token "$GITHUB_TOKEN"
 ```
 
-`release` runs entirely through the GitHub REST API — no `git`, `gh`, or `cargo` binaries are needed at runtime — so it works inside minimal containers:
+`release` runs entirely through the GitHub REST API â€” no `git`, `gh`, or `cargo` binaries are needed at runtime â€” so it works inside minimal containers:
 
 1. Reads the current version from `Cargo.toml` (`[package].version`, falling back to `[workspace.package].version`).
-2. Finds the latest `--tag-prefix` semver tag and classifies the conventional commits since it (`feat:` → minor, `fix:` → patch, `!`/`BREAKING CHANGE` → major). Merge commits are skipped. When no commit warrants a release it exits successfully with `released=false`; `--bump major|minor|patch` forces a release.
+2. Finds the latest `--tag-prefix` semver tag and classifies the conventional commits since it (`feat:` â†’ minor, `fix:` â†’ patch, `!`/`BREAKING CHANGE` â†’ major). Merge commits are skipped. When no commit warrants a release it exits successfully with `released=false`; `--bump major|minor|patch` forces a release.
 3. Rewrites the version across workspace member manifests, internal dependency pins, and `Cargo.lock`. Independently locked tracked consumers such as `fuzz/` also update the owned path package and its explicit lock references; their own package versions remain unchanged.
-4. Creates the release commit directly on the base branch (fast-forward only — if the branch advanced past the analyzed head, the run skips cleanly), the `vX.Y.Z` tag (annotated by default so provenance checks like `git cat-file -t` pass; `--tag-style lightweight` opts out), an optional moving major alias tag (`--update-major-alias`), and the GitHub Release with grouped release notes: Breaking Changes, Features, and Bug Fixes. A release with none of those (for example `--bump patch` over `ci:`, `build:`, `chore:`, and `docs:` commits) lists its other conventional commits under Maintenance instead, leaving out the tool's own `chore: release vX.Y.Z` bump commit.
+4. Creates the release commit directly on the base branch (fast-forward only â€” if the branch advanced past the analyzed head, the run skips cleanly), the `vX.Y.Z` tag (annotated by default so provenance checks like `git cat-file -t` pass; `--tag-style lightweight` opts out), an optional moving major alias tag (`--update-major-alias`), and the GitHub Release with grouped release notes: Breaking Changes, Features, and Bug Fixes. A release with none of those (for example `--bump patch` over `ci:`, `build:`, `chore:`, and `docs:` commits) lists its other conventional commits under Maintenance instead, leaving out the tool's own `chore: release vX.Y.Z` bump commit.
 5. Writes release notes to `--notes-file` and `released`/`version`/`tag`/`commit`/`release-url`/`notes-file` outputs to `$GITHUB_OUTPUT` when set.
 
 Automation that gates a specific commit should pass `--expected-head <full-commit-sha>` (action input `expected-head`). The publisher rejects a different branch head before reading release history or preparing writes, then retains its mid-run race checks. The reusable release workflow forwards the exact commit accepted by its validation gate for writes; read-only PR dry runs retain their existing preview behavior. Direct CLI and library callers can omit the guard for the existing manual release behavior; library callers can opt in with `ReleasePublisher::release_at_head` without changing `ReleaseOptions`.
@@ -156,13 +156,13 @@ Nested consumers are selected through actual in-repository path dependencies, in
 
 #### Splitting a release across two runs
 
-`--phase` exists for one problem: an artifact that has to be built *from* the released version cannot be referenced *by* that release, because the version-tagged artifact only exists once the tag does. A container action pinning its own runtime image is the canonical case — and releasing in one pass is why `v0.7.0` shipped a `0.6.2` binary.
+`--phase` exists for one problem: an artifact that has to be built *from* the released version cannot be referenced *by* that release, because the version-tagged artifact only exists once the tag does. A container action pinning its own runtime image is the canonical case â€” and releasing in one pass is why `v0.7.0` shipped a `0.6.2` binary.
 
 Splitting the release breaks the cycle:
 
 1. `--phase bump` bumps the manifest and commits it, then stops. `released=false`, `version` holds the pending version, and `commit` holds the version commit. Nothing is tagged, so the version stays claimable.
 2. Build and publish whatever has to carry that version. It is built from a tree whose manifest already reads the released version.
-3. `--phase tag` releases the version the manifest already holds — no second bump — and stages `--extra-files` into the commit the tag points at, so a digest resolved in step 2 lands inside the tag.
+3. `--phase tag` releases the version the manifest already holds â€” no second bump â€” and stages `--extra-files` into the commit the tag points at, so a digest resolved in step 2 lands inside the tag.
 
 The tagged tree and the artifact's source then differ only in the files staged in step 3. `--phase tag` skips when the manifest version is already tagged, so a re-run after a failure finishes the pending release instead of starting another. It also releases regardless of whether the commit range still warrants a bump, since the bump decision was already made in step 1. Neither phase combines with `--create-pr`, which separates the bump from the tag by its own means.
 
@@ -201,7 +201,7 @@ One action ships every command. Reference it as `ThreatFlux/github_actions@<ref>
 | `update` | Move GitHub Actions and/or cargo dependencies to their latest upstream version, locally or on a pull request. |
 | `status` | Report current versus latest versions without writing anything. |
 | `policy` | Report script usage and baseline workflow policy findings without writing anything. |
-| `release` | Bump the Cargo version from conventional commits and publish the release commit, tag, and GitHub Release — or stage them on a release pull request. |
+| `release` | Bump the Cargo version from conventional commits and publish the release commit, tag, and GitHub Release â€” or stage them on a release pull request. |
 
 The action is a Docker container action built from
 [`runtime/Dockerfile`](runtime/Dockerfile), which pulls a digest-pinned
@@ -329,7 +329,7 @@ jobs:
 ```
 
 `create-pr: "true"` publishes through the GitHub API rather than editing the
-checkout, so the job itself needs no write permission — but the *token* does.
+checkout, so the job itself needs no write permission â€” but the *token* does.
 Updating files under `.github/workflows/` requires the `workflow` scope, which
 the default `GITHUB_TOKEN` does not have; use a PAT or GitHub App token there.
 Without `create-pr`, `update` edits the checked-out files and you commit them.
@@ -398,7 +398,7 @@ latest tag, so a run that bumped a second time would keep proposing new
 versions for commits the merged pull request already covered and never
 publish any of them. Once the manifest version is tagged, later runs bump
 from it as usual, and merges whose commits are only `chore:`/`docs:` produce
-no release at all — the action exits successfully with `released=false`.
+no release at all â€” the action exits successfully with `released=false`.
 
 ### Tokens and downstream pipelines
 
@@ -408,7 +408,7 @@ GitHub suppresses workflow triggers for events created with the default
 
 1. **Same-workflow chaining (no extra secrets):** gate follow-on jobs on
    `steps.release.outputs.released == 'true'`, or dispatch the tag pipelines
-   explicitly — `workflow_dispatch` is exempt from the suppression rule. The
+   explicitly â€” `workflow_dispatch` is exempt from the suppression rule. The
    dispatching job needs `permissions: actions: write`.
 2. **GitHub App or PAT token:** pass it as `token` and the created tag triggers
    `on: push: tags:` workflows natively.
@@ -422,7 +422,7 @@ only touch Cargo manifests.
 
 Direct-mode `release` pushes the release commit to the base branch
 (fast-forward only). On a protected branch, add a bypass for the identity the
-token represents — for rulesets, add the GitHub Actions app or your own GitHub
+token represents â€” for rulesets, add the GitHub Actions app or your own GitHub
 App to the bypass list. `create-pr: "true"` is the alternative that respects
 branch protection: it never writes to the protected branch directly.
 
@@ -453,8 +453,12 @@ To attribute release commits and pull requests to an App instead of
 
 App authentication attributes API commits and pull requests to the App;
 cryptographic commit signing still requires a separate signing-key policy.
-Configure both values together — a half-configured App fails the workflow
-instead of silently falling back.
+Configure both values together â€” a half-configured App fails a write run
+instead of silently falling back. Reusable dry-run previews use a separate
+read-only `github.token` job; they do not read the App key, mint installation
+tokens, or validate write credentials. Their dispatch plan assumes valid write
+configuration and selects the App policy from the public `github-app-id`.
+The `release-token` and default-token paths have the same dispatch policy.
 
 Unlike `GITHUB_TOKEN`, an App token's writes start workflows. The release pull
 request it opens runs your `pull_request` CI, and the tag it pushes runs your
@@ -470,7 +474,7 @@ trigger. The `release-token` and `GITHUB_TOKEN` paths keep dispatching. With
 
 This repository releases itself, and it is a container action, so its runtime
 image has to be pinned to an image built from the release being cut. That is
-circular in a single pass — `docker.yml` derives version tags from the git tag,
+circular in a single pass â€” `docker.yml` derives version tags from the git tag,
 so `ghcr.io/threatflux/github_actions:0.7.2` cannot exist before `v0.7.2` does.
 `v0.7.0` shipped a `0.6.2` binary for exactly this reason.
 
@@ -478,15 +482,15 @@ so `ghcr.io/threatflux/github_actions:0.7.2` cannot exist before `v0.7.2` does.
 
 | Phase | Trigger | What it does |
 |---|---|---|
-| 1 — bump | `CI`, `Security`, and `Docker` all green on the exact head | Pins the runtime to the head's image so this run executes a current binary, then `phase: bump` commits the version bump and stops. Dispatches full `ci.yml`, `security.yml`, and `docker.yml` (`release-prep=true`) runs for that version commit. |
-| 2 — tag | `docker.yml` hands off after build, scan, signing, and SBOM; all three workflows must succeed on the exact current head | Resolves the new image's digest, **verifies its `--version` equals the manifest version**, rewrites both Dockerfile pins, then `phase: tag` stages those pins into the commit it tags. Only a confirmed release promotes the sealed digest to `:X.Y.Z` and its newest eligible `:X.Y` / `:X` aliases. |
+| 1 â€” bump | `CI`, `Security`, and `Docker` all green on the exact head | Pins the runtime to the head's image so this run executes a current binary, then `phase: bump` commits the version bump and stops. Dispatches full `ci.yml`, `security.yml`, and `docker.yml` (`release-prep=true`) runs for that version commit. |
+| 2 â€” tag | `docker.yml` hands off after build, scan, signing, and SBOM; all three workflows must succeed on the exact current head | Resolves the new image's digest, **verifies its `--version` equals the manifest version**, rewrites both Dockerfile pins, then `phase: tag` stages those pins into the commit it tags. Only a confirmed release promotes the sealed digest to `:X.Y.Z` and its newest eligible `:X.Y` / `:X` aliases. |
 
 Consequences worth knowing:
 
 - **The tag ships a runtime that reports its own version.** The tagged tree and
   the image's source differ only in the two Dockerfiles, which do not affect the
   image.
-- **A release takes as long as a multi-arch image build** (roughly 40–60 minutes
+- **A release takes as long as a multi-arch image build** (roughly 40â€“60 minutes
   on QEMU) because phase 2 waits for the image. It costs no extra build:
   `docker.yml` is no longer dispatched for the tag, since retagging the verified
   digest already produces the version tags, and rebuilding would move them to a
@@ -496,7 +500,7 @@ Consequences worth knowing:
   use explicit dispatches, which are exempt from that suppression.
 - **A committed-but-untagged version is the resumable state.** Phase detection
   reads the manifest version at `main` and checks whether its tag exists, so any
-  later run — the weekly cron, a push, or a manual dispatch — finishes a release
+  later run â€” the weekly cron, a push, or a manual dispatch â€” finishes a release
   that stalled after phase 1 rather than bumping again. `workflow_dispatch`
   accepts an explicit `phase` to force either half. Only an actual HTTP 404
   means the tag is absent; permission, transport, and server errors stop the
@@ -564,9 +568,9 @@ runtime still predates the guard refuses writes; consumers should pin the
 completed release SHA after its runtime pins have been updated. Read-only dry
 runs remain available during that publication cycle.
 
-For Cargo repositories that want the whole release gate — required-workflow
+For Cargo repositories that want the whole release gate â€” required-workflow
 checks, optional GitHub App authentication, and downstream workflow dispatches
-— call the reusable workflow instead of wiring the action yourself:
+â€” call the reusable workflow instead of wiring the action yourself:
 
 ```yaml
 name: Auto Release
@@ -619,23 +623,29 @@ jobs:
 
 What a dry run does, in either mode:
 
-- **The gate still applies.** The `check` job runs unchanged, so a dry run
-  only reaches the action when the `required-workflows` all passed for the
-  target commit (and, for `workflow_run` triggers, the triggering run
-  succeeded in this repository). A skipped gate means no analysis and no log
-  line.
+- **The gate still applies.** Required workflows must have successful latest
+  eligible runs for the requested commit. Read-only previews accept push,
+  pull-request, and manual-dispatch checks for that exact SHA; a pull-request
+  merge preview checks its actual PR head's CI while retaining the merge
+  checkout for analysis. Configured write checks must be successful main-push
+  runs, and every write must target the exact current main SHA. Missing,
+  pending, failed, or
+  potentially truncated required histories stop the gate with a diagnostic.
 - **Reads only.** The action reads the default branch (when `base-branch` is
   empty), the base branch head, the tag list, the commits since the highest
   `<tag-prefix>X.Y.Z` tag (the commit list when there is none), and whether
-  the candidate tag already exists. It still needs a token for those reads.
+  the candidate tag already exists. Reusable previews use a separate job
+  with read-only `github.token` permissions and no write-secret references.
 - **Writes nothing to the repository.** No blob, tree, or commit is created;
   the base branch and the release branch do not move; no pull request is
   opened or edited; no tag, major alias, or GitHub Release is created.
   `Dispatch downstream release workflows` is skipped: it requires
   `released == 'true'`, which a dry run never reports, and it also checks
   `dry-run` directly. Instead, `Show the downstream dispatch plan (dry run)`
-  logs which workflows the real run would dispatch, or why it would skip them
-  (the GitHub App token pushed the tag), without running `gh`.
+  runs in the read-only preview job and logs the policy without running `gh`:
+  a public App ID selects the App path; otherwise the release-token/default
+  path applies. It assumes valid write credentials instead of validating or
+  minting them.
 - **Local files only.** The would-be release notes are written to
   `notes-file` in the runner workspace, and the outputs are written to
   `$GITHUB_OUTPUT`.
@@ -651,8 +661,12 @@ What a dry run does, in either mode:
   nothing was written to the repository. When nothing would happen, the log
   gives the reason instead (`No release needed: ...` or
   `Skipped release: tag <tag> already exists ...`).
-- **Failures.** A dry run fails exactly where the real run would, including
-  the manifest-behind-tag check below.
+- **Failures.** Repository and version-analysis failures, including the
+  manifest-behind-tag check below, still apply. A preview does not validate
+  credentials or prove write permissions. The smoke workflow probes actual
+  App authentication separately on trusted main: missing configuration is
+  reported explicitly, while partial configuration or token/probe failure
+  fails the smoke run. PR and manual feature previews cannot access that key.
 
 What the computed version means depends on the mode:
 
@@ -680,7 +694,7 @@ deprecated.
 | Before | After |
 |---|---|
 | `uses: ThreatFlux/github_actions/release@v0` | `uses: ThreatFlux/github_actions@v0` plus `command: release` |
-| `uses: ThreatFlux/github_actions@v0` (maintainer) | unchanged, but state `command:` explicitly — it defaults to `pin` |
+| `uses: ThreatFlux/github_actions@v0` (maintainer) | unchanged, but state `command:` explicitly â€” it defaults to `pin` |
 
 Every `release/` input keeps its name and default on the unified action, and
 all eight release outputs are unchanged, so migrating is the two-line edit
@@ -696,7 +710,7 @@ arguments (`command`, `repo`, `token`, `owner`, `repo-name`, `base-branch`,
 `dry-run`). Every other input reaches the binary through the `INPUT_<NAME>`
 environment variables GitHub sets for container actions. That keeps the action
 working while [`runtime/Dockerfile`](runtime/Dockerfile) still pins a pre-0.6.0
-image — but that older binary ignores `INPUT_*` variables entirely.
+image â€” but that older binary ignores `INPUT_*` variables entirely.
 
 Until the first post-merge release (0.6.0) publishes and Dependabot bumps the
 `/runtime` pin (yielding 0.6.1), these inputs silently fall back to their

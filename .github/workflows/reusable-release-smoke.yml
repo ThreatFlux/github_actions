@@ -1,15 +1,12 @@
 name: Reusable Release Smoke
 
-# Dry-runs reusable-auto-release.yml the way a consumer calls it, once with the
-# threatflux-automation GitHub App and once with GITHUB_TOKEN, so changes to
-# its token handling and dispatch decision run for real before they ship. A
-# dry run writes nothing: no commit, branch, tag, Release, pull request, or
-# workflow dispatch. bump: patch forces a would-be release so the dispatch
-# plan step has a tag to reason about.
+# Preview the App and default-token dispatch policies with read-only tokens.
+# bump: patch produces a would-be tag for the plan-only dispatch step. Neither
+# preview mints or receives an App token or writes to the repository.
 #
-# Pull requests only get the GITHUB_TOKEN path: a pull request runs its own
-# copy of this file, so the job holding the org App private key runs only for
-# the reviewed default-branch version (pushes to main and manual dispatches).
+# Probe real App authentication separately, only from trusted main. That job
+# checks the installation through read requests and never checks out candidate
+# code or passes its token to a preview. Feature dispatches cannot read the key.
 on:
   pull_request:
     branches: [main]
@@ -28,11 +25,62 @@ on:
 permissions: {}
 
 jobs:
+  app-auth:
+    name: Probe the GitHub App installation on main
+    if: ${{ !startsWith(github.event_name, 'pull_request') && github.ref == 'refs/heads/main' }}
+    runs-on: ${{ vars.RUST_TEMPLATE_RUNNER_UBUNTU || 'ubuntu-latest' }}
+    timeout-minutes: 5
+    permissions:
+      contents: read
+    env:
+      APP_ID: ${{ vars.TF_AUTOMATION_APP_ID }}
+      HAS_APP_PRIVATE_KEY: ${{ secrets.TF_AUTOMATION_APP_PRIVATE_KEY != '' }}
+    steps:
+      - name: Validate the App credential pair
+        id: config
+        run: |
+          set -euo pipefail
+          if [[ -z "$APP_ID" && "$HAS_APP_PRIVATE_KEY" == false ]]; then
+            echo "::notice::App authentication is not configured; skipping the installation probe"
+            echo "configured=false" >> "$GITHUB_OUTPUT"
+          elif [[ -z "$APP_ID" || "$HAS_APP_PRIVATE_KEY" != true ]]; then
+            echo "::error::TF_AUTOMATION_APP_ID and TF_AUTOMATION_APP_PRIVATE_KEY must be configured together"
+            exit 1
+          else
+            echo "configured=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Create the scoped installation token
+        id: app
+        if: steps.config.outputs.configured == 'true'
+        uses: actions/create-github-app-token@64ab729a6294000f5aa4a4bc0b73d1f32bc45510 # v3.3.0
+        with:
+          client-id: ${{ vars.TF_AUTOMATION_APP_ID }}
+          private-key: ${{ secrets.TF_AUTOMATION_APP_PRIVATE_KEY }}
+          owner: ${{ github.repository_owner }}
+          repositories: ${{ github.event.repository.name }}
+          permission-contents: write
+
+      - name: Read the installation and repository
+        if: steps.config.outputs.configured == 'true'
+        env:
+          GH_TOKEN: ${{ steps.app.outputs.token }}
+          EXPECTED_REPOSITORY: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+          repositories="$(gh api installation/repositories --jq '.repositories[].full_name')"
+          grep -Fxq "$EXPECTED_REPOSITORY" <<< "$repositories" \
+            || { echo "App token does not expose the expected installation repository" >&2; exit 1; }
+          repository="$(gh api "repos/$EXPECTED_REPOSITORY" --jq .full_name)"
+          [[ "$repository" == "$EXPECTED_REPOSITORY" ]] \
+            || { echo "App token repository probe returned the wrong repository" >&2; exit 1; }
+          echo "App installation and repository reads succeeded"
+
   github-app:
-    name: Dry run with the GitHub App
+    name: Dry run with the GitHub App policy
     if: github.event_name != 'pull_request'
-    # The called workflow declares these for its release job; a dry run only
-    # reads, and the App token it mints is what the plan reasons about.
+    # The reusable workflow declares a writer job; its separate preview job
+    # explicitly reduces these permission ceilings to read-only scopes.
     permissions:
       actions: write
       contents: write
@@ -44,8 +92,6 @@ jobs:
       dispatch-workflows: release.yml,docker.yml
       dispatch-version-workflow: release.yml
       github-app-id: ${{ vars.TF_AUTOMATION_APP_ID }}
-    secrets:
-      github-app-private-key: ${{ secrets.TF_AUTOMATION_APP_PRIVATE_KEY }}
 
   github-token:
     name: Dry run with GITHUB_TOKEN
@@ -62,9 +108,10 @@ jobs:
 
   verify:
     name: Verify dry runs released nothing
-    needs: [github-app, github-token]
-    # The App job is skipped on pull requests; check whatever ran.
-    if: ${{ !cancelled() && needs.github-token.result == 'success' && needs.github-app.result != 'failure' }}
+    needs: [app-auth, github-app, github-token]
+    # Authentication is skipped outside trusted main; a probe failure still
+    # fails the workflow. Check both read-only policies whenever they ran.
+    if: ${{ !cancelled() && needs.github-token.result == 'success' && needs.github-app.result != 'failure' && needs.app-auth.result != 'failure' }}
     runs-on: ${{ vars.RUST_TEMPLATE_RUNNER_UBUNTU || 'ubuntu-latest' }}
     timeout-minutes: 5
     steps:

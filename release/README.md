@@ -1,7 +1,7 @@
 # ThreatFlux Auto Release Action (deprecated)
 
 > **Deprecated.** This sub-action has been folded into the root action. Use
-> `ThreatFlux/github_actions@v0` with `command: release` instead — same inputs,
+> `ThreatFlux/github_actions@v0` with `command: release` instead â€” same inputs,
 > same outputs, same behavior. See
 > [Migrating to the Unified Action](../README.md#migrating-to-the-unified-action)
 > in the root README, including the version-skew note that applies while the
@@ -14,7 +14,7 @@
 Automatic Cargo releases on merge to main: bump the version from
 [Conventional Commits](https://www.conventionalcommits.org/), rewrite
 `Cargo.toml`/`Cargo.lock`, and create the release commit, tag, and GitHub
-Release with generated notes — entirely through the GitHub REST API. No `git`,
+Release with generated notes â€” entirely through the GitHub REST API. No `git`,
 `gh`, or `cargo` binaries run at release time, and the action starts in
 seconds because it pulls a prebuilt image instead of compiling from source.
 
@@ -88,7 +88,7 @@ jobs:
         run: echo "Released ${{ steps.release.outputs.tag }} -> ${{ steps.release.outputs.release-url }}"
 ```
 
-Merges whose commits are only `chore:`/`docs:`/etc. produce no release — the
+Merges whose commits are only `chore:`/`docs:`/etc. produce no release â€” the
 action exits successfully with `released=false`. That no-op is also what stops
 release commits from triggering an endless release loop.
 
@@ -116,8 +116,13 @@ outputs, while `released` remains `false`.
 
 The reusable workflow keeps consumer files small while retaining the common
 release safeguards. `required-workflows` is a comma-separated list of workflow
-names that must have a successful run for the target commit, regardless of the
-event that triggered that run. `dispatch-workflows` is a
+names whose latest eligible runs must succeed for the exact requested commit.
+Read-only previews accept push, pull-request, and manual-dispatch checks; a
+pull-request merge preview gates on the actual PR head's CI while retaining
+its merge checkout for analysis. Configured write checks must be main-push runs,
+and every write must target the exact current main SHA. Missing, pending,
+failed, or potentially truncated
+histories stop the gate. `dispatch-workflows` is a
 comma-separated list of workflow files to run after a release; set
 `dispatch-version-workflow` when one of them accepts a `version` input. These
 features replace the duplicated `gh run list` and `gh workflow run` shell
@@ -162,6 +167,13 @@ configured, the workflow falls back to `release-token` and finally the default
 App; cryptographic commit signing still requires a separate signing-key policy
 on the repository.
 
+Reusable dry-run previews execute in a separate job with read-only
+`github.token` permissions. They do not read write secrets, mint an App token,
+or validate write credentials. The plan-only dispatch step assumes complete
+write configuration and selects the App policy from the public `github-app-id`;
+the `release-token` and default `GITHUB_TOKEN` paths share a dispatch policy.
+Only real write runs validate the configured App pair and use its token.
+
 The App token is scoped to the current repository. Rotate the private key by
 replacing the secret and revoke old keys in the App settings; for the
 ThreatFlux `threatflux-automation` App,
@@ -169,12 +181,17 @@ ThreatFlux `threatflux-automation` App,
 `scripts/rotate-automation-app-key.sh` does the rotation.
 
 [`reusable-release-smoke.yml`](../.github/workflows/reusable-release-smoke.yml)
-dry-runs this workflow whenever it changes: with `GITHUB_TOKEN` on pull
-requests, and also with the App once the change is on `main`, because the App
-key is never handed to pull-request code. If App
-configuration is absent or token creation fails, the workflow does not silently
-fall back from a partially configured App; validate the App ID, installation,
-and secret before enabling it in a protected release workflow.
+dry-runs the default-token policy on pull requests and also the public App-ID
+policy on non-PR runs. Both previews use read-only tokens and receive no App
+key. A separate job probes actual App authentication only for non-PR runs on
+`refs/heads/main`, without checking out candidate code or passing its token
+to either preview. It requests the existing repository-scoped Contents-write
+installation token and uses it only for installation/repository reads. Missing
+both App settings produces an explicit notice; partial configuration or any
+token/probe failure fails the smoke run. Manual feature runs
+skip this credential probe. Validate the App ID, installation, and secret
+before enabling real writes in a protected release workflow.
+
 ## How Versions Are Computed
 
 Commits since the latest `<tag-prefix>X.Y.Z` tag are classified by their
@@ -205,7 +222,7 @@ re-run. Dry runs fail the same way.
 
 | Input | Default | Description |
 |---|---|---|
-| `token` | `${{ github.token }}` | Token used for analysis and release creation. Needs `contents: write`. |
+| `token` | `${{ github.token }}` | Token used for analysis and release creation. Analysis needs read access; writes need `contents: write`. |
 | `owner` / `repo-name` | from `GITHUB_REPOSITORY` | Target repository coordinates. |
 | `repo` | `.` | Path to the checked-out repository (source of `Cargo.toml`). |
 | `base-branch` | repository default branch | Branch to release from. |
@@ -241,7 +258,7 @@ tag-triggered (`on: push: tags:`) workflows. Pick one of:
 
 1. **Same-workflow chaining (no extra secrets):** run follow-on jobs in the
    same workflow gated on `needs.release.outputs.released == 'true'`, or
-   dispatch tag pipelines explicitly — `workflow_dispatch` is exempt from the
+   dispatch tag pipelines explicitly â€” `workflow_dispatch` is exempt from the
    suppression rule:
 
    ```yaml
@@ -262,7 +279,7 @@ tag-triggered (`on: push: tags:`) workflows. Pick one of:
 
 The action pushes the release commit directly to the base branch
 (fast-forward only). On a protected branch, add a bypass for the identity the
-token represents — for rulesets, add the GitHub Actions app (or your GitHub
+token represents â€” for rulesets, add the GitHub Actions app (or your GitHub
 App) to the bypass list. A PR-based fallback mode is on the roadmap.
 
 ## Concurrency and Races
