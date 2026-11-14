@@ -78,6 +78,7 @@ Options:
 - `--fail-on-findings`: make `policy` exit non-zero when it finds script usage or policy violations
 - `--extra-files`: comma-separated files to stage into the release commit alongside the version rewrites
 - `--phase`: `all` (default), `bump` to commit the version bump without tagging it, or `tag` to release the version the manifest already holds
+- `--draft-release`: leave a new release unpublished for separately verified native assets; defaults to `false`
 - `--expected-head`: optional exact branch commit that passed validation; fail before release analysis or writes if the branch head differs
 - `--analysis-sha`: immutable candidate commit for a read-only preview; bind commit history and consulted Cargo data to this source, never the moving main head
 
@@ -151,6 +152,27 @@ cargo run -- release \
 
 Automation that gates a specific commit should pass `--expected-head <full-commit-sha>` (action input `expected-head`). A different head or a later publication race fails the guarded request. Read-only reusable previews instead pass `analysis-sha`, binding history and all consulted Cargo data to the requested immutable commit. That input requires `--dry-run` and cannot be combined with `--expected-head`. Library callers can use `preview_at_commit` or `release_at_head` without changing `ReleaseOptions`. Legacy direct dry runs without an analysis SHA retain their local-data behavior.
 
+Native publishers on repositories with immutable releases can opt into
+`--draft-release` (action/reusable workflow input `draft-release: true`). The
+default remains `false`, preserving the existing Cargo release behavior. Library
+callers use `ReleasePublisher::with_draft_release(true)` without changing
+`ReleaseOptions` or the existing `GitHubClient::create_release` API.
+
+With this option, `released=true` means the release object was created and
+`release-draft=true` identifies it as unpublished. Neither output proves native
+asset completion. The caller must bind the tag to its exact source, attach and
+verify its complete expected asset inventory, then explicitly publish the draft
+once. GitHub recommends this [draft, attach, publish sequence](https://docs.github.com/en/code-security/concepts/supply-chain-security/immutable-releases)
+for immutable releases. The central publisher never publishes the draft later.
+
+An existing tag still returns `released=false`; a retry never overwrites,
+deletes or republishes its draft or published release. After an asset upload or
+dispatch failure, the native workflow must verify the existing draft/source and
+resume its own bounded completion policy. An incomplete published immutable
+release needs a new version; this option does not repair it. Consumers must pin
+a newly qualified central release and sealed runtime supporting `--draft-release`.
+The reusable writer refuses an older runtime before obtaining its write token.
+
 Release mode requires a token with `contents: write` on the target repository. The `workflow` scope is not required because release commits only touch Cargo manifests.
 
 Nested consumers are selected through actual in-repository path dependencies, including renamed and inherited requirements. Write releases discover nested manifest/lock pairs from the analyzed tree and verify every source used to include or exclude a consumer against its regular-file blob; untracked sources, symlinks, registry entries and historical package copies cannot become owned release entries. Explicit and implicit nested workspace members and safe in-repository explicit `package.workspace` inheritance are supported without changing consumer package versions. Unrelated historical fixtures that have no owned path dependency remain untouched. The publisher stops with an actionable error for owned patch/replace redirection, stale or missing required owned path lock entries, and ambiguous local path identities. Refresh that active consumer lock before retrying; historical package copies are not guessed to be current owned packages. Explicit candidate previews require consulted Cargo data to match their immutable commit; candidate scripts, source code and Git configuration are never executed.
@@ -219,6 +241,7 @@ prebuilt image, so it starts in seconds instead of compiling from source.
 | `base-branch` | `update`, `release` | repository default branch | Base of the dependency pull request, or the branch to release from. |
 | `dry-run` | all | `false` | Analyze and report without writing files, commits, tags, releases, or pull requests. |
 | `create-pr` | `update`, `release` | `false` | Open a dependency-update pull request, or stage the release on a release pull request instead of publishing directly. |
+| `draft-release` | `release` | `false` | Create an unpublished draft object; the native caller owns verified asset completion and explicit publication. |
 | `commit-message` | `update`, `release` | per command | `Update dependencies` for `update`; `chore: release v{version}` for `release`. |
 | `workflows-path` | `pin`, `update`, `status`, `policy` | `.github/workflows` | Workflow directory relative to the repository root. |
 | `github-actions` | `update`, `status` | `false` | Include GitHub Actions workflow updates. |
@@ -248,6 +271,7 @@ Every output is set by `release` and is empty for the other commands.
 | Output | Description |
 |---|---|
 | `released` | `true` when a release was created, otherwise `false`. |
+| `release-draft` | `true` only for a newly created unpublished draft; native asset completion and publication remain pending. |
 | `version` | Released version without the tag prefix (also set on dry runs and tag-exists skips). |
 | `tag` | Created release tag. |
 | `commit` | SHA of the commit the release created; with `phase: bump` this is the version commit the `tag` phase builds on. |

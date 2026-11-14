@@ -178,6 +178,7 @@ struct CommitParent {}
 #[derive(Debug, Deserialize)]
 struct CreatedReleaseResponse {
     html_url: String,
+    draft: Option<bool>,
 }
 
 #[derive(Debug, Serialize)]
@@ -246,6 +247,7 @@ struct CreateReleaseRequest<'a> {
     target_commitish: &'a str,
     name: &'a str,
     body: &'a str,
+    draft: bool,
 }
 
 #[derive(Debug, Serialize)]
@@ -795,14 +797,43 @@ impl GitHubClient {
         body: &str,
         target_commitish: &str,
     ) -> Result<ReleaseInfo> {
-        let payload = CreateReleaseRequest { tag_name, target_commitish, name, body };
+        let payload = CreateReleaseRequest { tag_name, target_commitish, name, body, draft: false };
+        self.post_release(owner, repository, &payload)
+    }
+
+    /// Create an unpublished release object; attaching assets and publishing
+    /// the complete release remain the caller's explicit responsibility.
+    pub fn create_draft_release(
+        &self,
+        owner: &str,
+        repository: &str,
+        tag_name: &str,
+        name: &str,
+        body: &str,
+        target_commitish: &str,
+    ) -> Result<ReleaseInfo> {
+        let payload = CreateReleaseRequest { tag_name, target_commitish, name, body, draft: true };
+        self.post_release(owner, repository, &payload)
+    }
+
+    fn post_release(
+        &self,
+        owner: &str,
+        repository: &str,
+        payload: &CreateReleaseRequest<'_>,
+    ) -> Result<ReleaseInfo> {
+        let tag_name = payload.tag_name;
         let response =
-            self.post_json(&format!("/repos/{owner}/{repository}/releases"), &payload, || {
+            self.post_json(&format!("/repos/{owner}/{repository}/releases"), payload, || {
                 format!("create release {tag_name} for {owner}/{repository}")
             })?;
         let release = response.json::<CreatedReleaseResponse>().with_context(|| {
             format!("failed to decode release response for {owner}/{repository}")
         })?;
+        anyhow::ensure!(
+            release.draft.unwrap_or(false) == payload.draft,
+            "created release {tag_name} did not report the requested draft state"
+        );
         Ok(ReleaseInfo { url: release.html_url })
     }
 
