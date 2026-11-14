@@ -1,6 +1,6 @@
 //! Hosted end-to-end CLI/environment to release-request draft controls.
 
-use std::fs;
+use std::{fs, path::Path};
 
 use clap::Parser as _;
 use mockito::{Matcher, Mock, Server, ServerGuard};
@@ -53,6 +53,91 @@ fn read_mocks(server: &mut ServerGuard, case: Case, writes: usize) -> Vec<Mock> 
     vec![head, tags, compare, tag]
 }
 
+fn release_arguments(
+    root: &Path,
+    case: Case,
+    explicit: Option<&str>,
+) -> crate::release_cli::ReleaseArgs {
+    let mut arguments = vec![
+        "bin",
+        "release",
+        "--owner",
+        "acme",
+        "--repo-name",
+        "demo",
+        "--base-branch",
+        "main",
+        "--token",
+        "test-owned-token",
+    ];
+    if let Some(value) = explicit {
+        arguments.extend(["--draft-release", value]);
+    }
+    let mut args = release_args(parse(&arguments));
+    let requested = !matches!(case, Case::Published);
+    assert_eq!(args.draft_release, requested);
+    args.repo = root.to_path_buf();
+    args.notes_file = root.join("notes.md");
+    args.github_output = Some(root.join("outputs"));
+    args.phase = PhaseArg::Tag;
+    args.dry_run = matches!(case, Case::DryRun);
+    args.expected_head = Some("basecommitsha".to_owned());
+    args
+}
+
+fn write_mocks(server: &mut ServerGuard, case: Case, requested: bool, writes: usize) -> Vec<Mock> {
+    let tag_object = server
+        .mock("POST", "/repos/acme/demo/git/tags")
+        .match_body(Matcher::Regex(r#""object":"basecommitsha""#.to_owned()))
+        .expect(writes)
+        .with_status(201)
+        .with_body(r#"{"sha":"tagobjectsha"}"#)
+        .create();
+    let tag_ref = server
+        .mock("POST", "/repos/acme/demo/git/refs")
+        .match_body(Matcher::Regex(r#""sha":"tagobjectsha""#.to_owned()))
+        .expect(writes)
+        .with_status(201)
+        .with_body(r#"{"ref":"refs/tags/v0.2.4"}"#)
+        .create();
+    let returned_draft = requested && !matches!(case, Case::WrongResponse);
+    let release = server.mock("POST", "/repos/acme/demo/releases")
+        .match_body(Matcher::AllOf(vec![
+            Matcher::Regex(format!(r#""draft":{requested}"#)),
+            Matcher::Regex(r#""tag_name":"v0.2.4""#.to_owned()),
+            Matcher::Regex(r#""target_commitish":"basecommitsha""#.to_owned()),
+        ])).expect(writes).with_status(if matches!(case, Case::Rejected) { 422 } else { 201 })
+        .with_body(format!(r#"{{"html_url":"https://github.com/acme/demo/releases/tag/v0.2.4","draft":{returned_draft}}}"#)).create();
+    let no_publish = server.mock("PATCH", Matcher::Any).expect(0).create();
+    let no_delete = server.mock("DELETE", Matcher::Any).expect(0).create();
+    let no_dispatch =
+        server.mock("POST", Matcher::Regex("/actions/workflows/".to_owned())).expect(0).create();
+    vec![tag_object, tag_ref, release, no_publish, no_delete, no_dispatch]
+}
+
+fn assert_result(root: &Path, case: Case, result: anyhow::Result<()>) {
+    let writes =
+        usize::from(!matches!(case, Case::DryRun | Case::ExistingTag | Case::HeadMismatch));
+    let requested = !matches!(case, Case::Published);
+    if matches!(case, Case::HeadMismatch | Case::Rejected | Case::WrongResponse) {
+        let error = result.expect_err("refusal remains blocking");
+        if matches!(case, Case::HeadMismatch) {
+            assert!(error.to_string().contains("does not match expected head"));
+        } else if matches!(case, Case::WrongResponse) {
+            assert!(error.to_string().contains("requested draft state"));
+        }
+        assert!(!root.join("outputs").exists());
+    } else {
+        result.expect("release result");
+        let output = fs::read_to_string(root.join("outputs")).expect("outputs");
+        assert!(output.contains(&format!("released={}\n", writes == 1)));
+        assert!(output.contains(&format!("release-draft={}\n", writes == 1 && requested)));
+        if writes == 1 {
+            assert!(output.contains("commit=basecommitsha\n"));
+        }
+    }
+}
+
 fn exercise(case: Case, environment: &[(&str, &str)], explicit: Option<&str>) {
     with_env(environment, || {
         let root = tempfile::tempdir().expect("fixture repository");
@@ -61,83 +146,17 @@ fn exercise(case: Case, environment: &[(&str, &str)], explicit: Option<&str>) {
             "[package]\nname = \"demo\"\nversion = \"0.2.4\"\n",
         )
         .expect("fixture manifest");
-        let mut arguments = vec![
-            "bin",
-            "release",
-            "--owner",
-            "acme",
-            "--repo-name",
-            "demo",
-            "--base-branch",
-            "main",
-            "--token",
-            "test-owned-token",
-        ];
-        if let Some(value) = explicit {
-            arguments.extend(["--draft-release", value]);
-        }
-        let mut args = release_args(parse(&arguments));
-        let requested = !matches!(case, Case::Published);
-        assert_eq!(args.draft_release, requested);
-        args.repo = root.path().to_path_buf();
-        args.notes_file = root.path().join("notes.md");
-        args.github_output = Some(root.path().join("outputs"));
-        args.phase = PhaseArg::Tag;
-        args.dry_run = matches!(case, Case::DryRun);
-        args.expected_head = Some("basecommitsha".to_owned());
+        let args = release_arguments(root.path(), case, explicit);
+        let requested = args.draft_release;
 
         let mut server = Server::new();
         let writes =
             usize::from(!matches!(case, Case::DryRun | Case::ExistingTag | Case::HeadMismatch));
         let mut mocks = read_mocks(&mut server, case, writes);
-        let tag_object = server
-            .mock("POST", "/repos/acme/demo/git/tags")
-            .match_body(Matcher::Regex(r#""object":"basecommitsha""#.to_owned()))
-            .expect(writes)
-            .with_status(201)
-            .with_body(r#"{"sha":"tagobjectsha"}"#)
-            .create();
-        let tag_ref = server
-            .mock("POST", "/repos/acme/demo/git/refs")
-            .match_body(Matcher::Regex(r#""sha":"tagobjectsha""#.to_owned()))
-            .expect(writes)
-            .with_status(201)
-            .with_body(r#"{"ref":"refs/tags/v0.2.4"}"#)
-            .create();
-        let returned_draft = requested && !matches!(case, Case::WrongResponse);
-        let release = server.mock("POST", "/repos/acme/demo/releases")
-            .match_body(Matcher::AllOf(vec![
-                Matcher::Regex(format!(r#""draft":{requested}"#)),
-                Matcher::Regex(r#""tag_name":"v0.2.4""#.to_owned()),
-                Matcher::Regex(r#""target_commitish":"basecommitsha""#.to_owned()),
-            ])).expect(writes).with_status(if matches!(case, Case::Rejected) { 422 } else { 201 })
-            .with_body(format!(r#"{{"html_url":"https://github.com/acme/demo/releases/tag/v0.2.4","draft":{returned_draft}}}"#)).create();
-        let no_publish = server.mock("PATCH", Matcher::Any).expect(0).create();
-        let no_delete = server.mock("DELETE", Matcher::Any).expect(0).create();
-        let no_dispatch = server
-            .mock("POST", Matcher::Regex("/actions/workflows/".to_owned()))
-            .expect(0)
-            .create();
+        mocks.extend(write_mocks(&mut server, case, requested, writes));
 
         let result = crate::release_cli::run_release(args, Some(server.url()));
-        if matches!(case, Case::HeadMismatch | Case::Rejected | Case::WrongResponse) {
-            let error = result.expect_err("refusal remains blocking");
-            if matches!(case, Case::HeadMismatch) {
-                assert!(error.to_string().contains("does not match expected head"));
-            } else if matches!(case, Case::WrongResponse) {
-                assert!(error.to_string().contains("requested draft state"));
-            }
-            assert!(!root.path().join("outputs").exists());
-        } else {
-            result.expect("release result");
-            let output = fs::read_to_string(root.path().join("outputs")).expect("outputs");
-            assert!(output.contains(&format!("released={}\n", writes == 1)));
-            assert!(output.contains(&format!("release-draft={}\n", writes == 1 && requested)));
-            if writes == 1 {
-                assert!(output.contains("commit=basecommitsha\n"));
-            }
-        }
-        mocks.extend([tag_object, tag_ref, release, no_publish, no_delete, no_dispatch]);
+        assert_result(root.path(), case, result);
         for mock in mocks {
             mock.assert();
         }

@@ -337,47 +337,50 @@ fn dry_run_lines(report: &ReleaseReport, notes_file: &Path) -> Vec<String> {
     lines
 }
 
+fn print_version_committed(report: &ReleaseReport) {
+    println!(
+        "Committed version {} ({} -> {}); tag and release are still pending.",
+        report.next_version.as_deref().unwrap_or_default(),
+        report.current_version,
+        report.next_version.as_deref().unwrap_or_default()
+    );
+    if let Some(commit_sha) = &report.commit_sha {
+        println!("- version commit {commit_sha}");
+    }
+    for file in &report.files_updated {
+        println!("- updated {}", file.display());
+    }
+    println!("- publish the runtime image for this commit, then re-run with --phase tag");
+}
+
+fn print_release_pull_request(report: &ReleaseReport, notes_file: &Path) {
+    let action =
+        if report.outcome == ReleaseOutcome::PullRequestCreated { "Created" } else { "Updated" };
+    println!(
+        "{action} automated release PR for {} ({} -> {}).",
+        report.tag.as_deref().unwrap_or_default(),
+        report.current_version,
+        report.next_version.as_deref().unwrap_or_default()
+    );
+    if let Some(branch) = &report.release_branch {
+        println!("- release branch {branch}");
+    }
+    if let Some(url) = &report.pull_request_url {
+        println!("- pull request {url}");
+    }
+    for file in &report.files_updated {
+        println!("- updated {}", file.display());
+    }
+    println!("- release notes written to {}", notes_file.display());
+}
+
 /// Print the human-readable summary of a release run to the action log.
 fn print_release_report(report: &ReleaseReport, notes_file: &Path, draft_release: bool) {
     match report.outcome {
         ReleaseOutcome::Released => print_released(report, notes_file, draft_release),
-        ReleaseOutcome::VersionCommitted => {
-            println!(
-                "Committed version {} ({} -> {}); tag and release are still pending.",
-                report.next_version.as_deref().unwrap_or_default(),
-                report.current_version,
-                report.next_version.as_deref().unwrap_or_default()
-            );
-            if let Some(commit_sha) = &report.commit_sha {
-                println!("- version commit {commit_sha}");
-            }
-            for file in &report.files_updated {
-                println!("- updated {}", file.display());
-            }
-            println!("- publish the runtime image for this commit, then re-run with --phase tag");
-        }
+        ReleaseOutcome::VersionCommitted => print_version_committed(report),
         ReleaseOutcome::PullRequestCreated | ReleaseOutcome::PullRequestUpdated => {
-            let action = if report.outcome == ReleaseOutcome::PullRequestCreated {
-                "Created"
-            } else {
-                "Updated"
-            };
-            println!(
-                "{action} automated release PR for {} ({} -> {}).",
-                report.tag.as_deref().unwrap_or_default(),
-                report.current_version,
-                report.next_version.as_deref().unwrap_or_default()
-            );
-            if let Some(branch) = &report.release_branch {
-                println!("- release branch {branch}");
-            }
-            if let Some(url) = &report.pull_request_url {
-                println!("- pull request {url}");
-            }
-            for file in &report.files_updated {
-                println!("- updated {}", file.display());
-            }
-            println!("- release notes written to {}", notes_file.display());
+            print_release_pull_request(report, notes_file);
         }
         ReleaseOutcome::DryRun => {
             for line in dry_run_lines(report, notes_file) {
