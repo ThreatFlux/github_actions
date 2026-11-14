@@ -16,6 +16,11 @@ name: Reusable Auto Release
 on:
   workflow_call:
     inputs:
+      draft-release:
+        description: Create a draft release; native assets must be attached and verified before the caller explicitly publishes it.
+        required: false
+        default: false
+        type: boolean
       bump:
         description: Version bump strategy (auto, major, minor, patch).
         required: false
@@ -94,6 +99,9 @@ on:
         description: Private key for the GitHub App identified by github-app-id. Store it as an organization or repository secret.
         required: false
     outputs:
+      release-draft:
+        description: True for a created draft release object; never a claim of native asset completion or publication.
+        value: ${{ jobs.release.outputs.release-draft || jobs.preview.outputs.release-draft || 'false' }}
       analysis-sha:
         description: Immutable candidate commit actually analyzed by the preview runtime.
         value: ${{ jobs.preview.outputs.analysis-sha }}
@@ -275,6 +283,7 @@ jobs:
     outputs:
       analysis-sha: ${{ steps.release.outputs.analysis-sha }}
       released: ${{ steps.release.outputs.released }}
+      release-draft: ${{ steps.release.outputs.release-draft }}
       version: ${{ steps.release.outputs.version }}
       tag: ${{ steps.release.outputs.tag }}
       release-url: ${{ steps.release.outputs.release-url }}
@@ -328,6 +337,7 @@ jobs:
           notes-file: ${{ inputs.notes-file }}
           dry-run: true
           create-pr: ${{ inputs.create-pr }}
+          draft-release: ${{ inputs.draft-release }}
           release-branch: ${{ inputs.release-branch }}
       - name: Verify preview analysis source
         env:
@@ -372,6 +382,7 @@ jobs:
       HAS_RELEASE_TOKEN: ${{ secrets.release-token != '' }}
     outputs:
       released: ${{ steps.release.outputs.released }}
+      release-draft: ${{ steps.release.outputs.release-draft }}
       version: ${{ steps.release.outputs.version }}
       tag: ${{ steps.release.outputs.tag }}
       release-url: ${{ steps.release.outputs.release-url }}
@@ -401,6 +412,7 @@ jobs:
         if: ${{ !inputs.dry-run }}
         env:
           ACTION_ROOT: .release-action
+          DRAFT_RELEASE: ${{ inputs.draft-release }}
         run: |
           set -euo pipefail
           image="$(awk '$1 == "FROM" { print $2; exit }' "${ACTION_ROOT}/runtime/Dockerfile")"
@@ -411,6 +423,10 @@ jobs:
           help="$(docker run --rm "${image}" release --help)"
           if ! grep -Fq -- '--expected-head' <<< "${help}"; then
             echo "the pinned runtime cannot enforce expected-head; use a released workflow with a guard-capable runtime" >&2
+            exit 1
+          fi
+          if [[ "$DRAFT_RELEASE" == true ]] && ! grep -Fq -- '--draft-release' <<< "${help}"; then
+            echo "the pinned runtime cannot enforce draft-release; use a released workflow with a draft-capable runtime" >&2
             exit 1
           fi
 
@@ -454,6 +470,7 @@ jobs:
           notes-file: ${{ inputs.notes-file }}
           dry-run: false
           create-pr: ${{ inputs.create-pr }}
+          draft-release: ${{ inputs.draft-release }}
           release-branch: ${{ inputs.release-branch }}
       # scripts/dispatch_release_workflows.py (tested in this repository)
       # decides from --released-by: an App-pushed tag already started the

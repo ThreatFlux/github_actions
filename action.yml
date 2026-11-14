@@ -94,6 +94,10 @@ inputs:
     default: "false"
 
   # Release inputs (release only).
+  draft-release:
+    description: Create an unpublished draft release for verified native assets; the caller must attach, verify, and explicitly publish it. (release only)
+    required: false
+    default: "false"
   expected-head:
     description: Exact branch commit validated by the caller. Fail before release analysis or writes if the branch head differs. Leave empty for manual release analysis. (release only)
     required: false
@@ -143,6 +147,8 @@ inputs:
     default: ""
 
 outputs:
+  release-draft:
+    description: True only when this run created a draft release object. Does not mean native assets are complete or the release is published.
   analysis-sha:
     description: Immutable candidate commit actually analyzed by the preview runtime; empty for legacy runtimes or normal releases.
   released:

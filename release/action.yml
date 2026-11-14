@@ -8,6 +8,10 @@ branding:
   color: blue
 
 inputs:
+  draft-release:
+    description: Create an unpublished draft release; attaching and verifying native assets and publishing it remain the caller's responsibility.
+    required: false
+    default: "false"
   token:
     description: GitHub token with contents write permission on the target repository.
     required: false
@@ -62,6 +66,8 @@ inputs:
     default: "false"
 
 outputs:
+  release-draft:
+    description: True only for a created draft release object; native asset completion and publication remain pending.
   released:
     description: Whether a release was created (true or false).
   version:

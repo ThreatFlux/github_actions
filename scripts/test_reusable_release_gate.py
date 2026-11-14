@@ -349,7 +349,7 @@ class ReleaseGateTests(unittest.TestCase):
             "should-release=true",
         )
 
-    def runtime_capability(self, help_text, immutable=True):
+    def runtime_capability(self, help_text, immutable=True, draft_release=False):
         source = WORKFLOW.read_text(encoding="utf-8")
         step = source.split(
             "      - name: Verify validated-head runtime capability\n", 1
@@ -375,6 +375,7 @@ class ReleaseGateTests(unittest.TestCase):
                 os.environ,
                 ACTION_ROOT=str(root),
                 FAKE_HELP=help_text,
+                DRAFT_RELEASE=str(draft_release).lower(),
                 PATH=str(root) + os.pathsep + os.environ["PATH"],
             )
             return run_gate_script(script, env)
@@ -387,6 +388,20 @@ class ReleaseGateTests(unittest.TestCase):
     def test_guard_capable_immutable_runtime_is_accepted(self):
         result = self.runtime_capability("Options: --expected-head <EXPECTED_HEAD>")
         self.assertEqual(result.returncode, 0, result.stderr)
+
+    def test_draft_request_refuses_an_older_runtime_before_writes(self):
+        result = self.runtime_capability("Options: --expected-head", draft_release=True)
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("cannot enforce draft-release", result.stderr)
+
+    def test_draft_capable_runtime_preserves_the_validated_head_guard(self):
+        result = self.runtime_capability(
+            "Options: --expected-head --draft-release", draft_release=True
+        )
+        self.assertEqual(result.returncode, 0, result.stderr)
+        missing_head = self.runtime_capability("--draft-release", draft_release=True)
+        self.assertNotEqual(missing_head.returncode, 0)
+        self.assertIn("cannot enforce expected-head", missing_head.stderr)
 
     def test_runtime_capability_check_refuses_a_mutable_image(self):
         result = self.runtime_capability("--expected-head", immutable=False)
@@ -407,12 +422,14 @@ class ReleaseGateTests(unittest.TestCase):
             release,
         )
         self.assertIn("dry-run: false", release)
+        self.assertIn("draft-release: ${{ inputs.draft-release }}", release)
         self.assertIn(
             "if: ${{ !inputs.dry-run && needs.check.outputs.should-release == 'true' }}",
             source,
         )
         self.assertIn("expected-head: ''", preview)
         self.assertIn("dry-run: true", preview)
+        self.assertIn("draft-release: ${{ inputs.draft-release }}", preview)
         self.assertIn("token: ${{ github.token }}", preview)
         self.assertNotIn("secrets.", preview)
         self.assertNotIn(": write", preview)

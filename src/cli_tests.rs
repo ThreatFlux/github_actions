@@ -16,6 +16,9 @@ use super::{
 };
 use crate::input_env::testing::with_env;
 
+#[path = "cli_release_draft_tests.rs"]
+mod draft_release;
+
 /// Runs the real startup pipeline: normalize the environment and command line,
 /// then parse.
 fn parse(args: &[&str]) -> Cli {
