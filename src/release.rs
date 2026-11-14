@@ -223,12 +223,22 @@ struct PreparedRelease {
 #[derive(Debug, Clone)]
 pub struct ReleasePublisher {
     github: GitHubClient,
+    draft_release: bool,
 }
 
 impl ReleasePublisher {
     #[must_use]
     pub const fn new(github: GitHubClient) -> Self {
-        Self { github }
+        Self { github, draft_release: false }
+    }
+
+    /// Create a draft release object so a native publisher can attach and
+    /// verify its complete asset inventory before explicitly publishing it.
+    /// This changes no tag, source, phase, or pull-request guard.
+    #[must_use]
+    pub const fn with_draft_release(mut self, draft_release: bool) -> Self {
+        self.draft_release = draft_release;
+        self
     }
 
     /// Analyze the commits since the latest release tag and release, propose,
@@ -728,14 +738,19 @@ impl ReleasePublisher {
         }
 
         let notes = report.notes.clone().unwrap_or_default();
-        let release = self.github.create_release(
-            owner,
-            repo,
-            &prepared.tag,
-            &format!("Release {}", prepared.tag),
-            &notes,
-            commit_sha,
-        )?;
+        let name = format!("Release {}", prepared.tag);
+        let release = if self.draft_release {
+            self.github.create_draft_release(
+                owner,
+                repo,
+                &prepared.tag,
+                &name,
+                &notes,
+                commit_sha,
+            )?
+        } else {
+            self.github.create_release(owner, repo, &prepared.tag, &name, &notes, commit_sha)?
+        };
         report.release_url = Some(release.url);
         report.outcome = ReleaseOutcome::Released;
         Ok(())

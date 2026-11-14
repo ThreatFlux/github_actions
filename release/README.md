@@ -20,6 +20,14 @@ seconds because it pulls a prebuilt image instead of compiling from source.
 
 ## Quick Start
 
+Native consumers with immutable releases can set `draft-release: true` only
+after pinning a qualified central release and runtime that support it. The
+default stays `false`. `released=true` then means a draft object was created;
+`release-draft=true` does not certify native assets or publication. The native
+workflow must verify the exact source and full expected asset inventory before
+explicitly publishing the draft. See the root README for existing-tag, retry
+and immutable-release recovery boundaries.
+
 Reusable workflow (recommended):
 
 ```yaml
@@ -245,6 +253,7 @@ re-run. Dry runs fail the same way.
 | `notes-file` | `release_notes.md` | Where generated release notes are written (also on dry runs). |
 | `commit-message` | `chore: release v{version}` | Release commit message template. |
 | `create-pr` | `false` | Create or update an automated release pull request instead of publishing directly. |
+| `draft-release` | `false` | Create an unpublished draft object for a separate verified native-asset publication step. |
 | `release-branch` | `automation/release` | Automation-owned branch; must use the `automation/release` prefix. |
 | `github-app-id` | empty | Optional App ID (or client ID) used with the `github-app-private-key` secret. |
 | `dispatch-on-app-token` | `false` | Reusable workflow only: also dispatch `dispatch-workflows` when the GitHub App token cut the release. Leave `false` when they trigger on `push: tags`, or they run twice. |
@@ -258,6 +267,7 @@ re-run. Dry runs fail the same way.
 | `version` | Version without the tag prefix (also set on dry runs and tag-exists skips). |
 | `tag` | Release tag name. |
 | `release-url` | URL of the created GitHub Release. |
+| `release-draft` | True only for a newly created unpublished draft; does not mean native assets are complete. |
 | `release-pr-number` | Number of the created or updated automated release pull request. |
 | `release-pr-url` | URL of the created or updated automated release pull request. |
 | `release-branch` | Branch used for the automated release pull request. |

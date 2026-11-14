@@ -17,6 +17,10 @@ use github_actions_maintainer::{
 use crate::resolve_repository;
 
 #[derive(Debug, Args)]
+#[allow(
+    clippy::struct_excessive_bools,
+    reason = "independent CLI boolean inputs are not mutually exclusive release states"
+)]
 pub struct ReleaseArgs {
     /// Repository root containing Cargo.toml.
     #[arg(long, env = "INPUT_REPO", default_value = ".")]
@@ -78,6 +82,11 @@ pub struct ReleaseArgs {
     /// of publishing directly to the base branch.
     #[arg(long, env = "INPUT_CREATE-PR", default_value_t = false, num_args = 0..=1, default_missing_value = "true")]
     pub create_pr: bool,
+
+    /// Leave the created release as a draft until a native publisher has
+    /// attached and verified all assets. Does not publish that draft later.
+    #[arg(long, env = "INPUT_DRAFT-RELEASE", default_value_t = false, num_args = 0..=1, default_missing_value = "true")]
+    pub draft_release: bool,
 
     /// Automation-owned branch used for the release pull request.
     #[arg(long, env = "INPUT_RELEASE-BRANCH", default_value = "automation/release")]
@@ -177,7 +186,7 @@ pub fn run_release(args: ReleaseArgs, github_api_base_url: Option<String>) -> Re
         args.token,
     )?;
     let (owner, repo_name) = resolve_repository(args.owner.as_deref(), args.repo_name.as_deref())?;
-    let publisher = ReleasePublisher::new(github);
+    let publisher = ReleasePublisher::new(github).with_draft_release(args.draft_release);
     let options = ReleaseOptions {
         repo_root: args.repo,
         owner,
@@ -213,6 +222,11 @@ pub fn run_release(args: ReleaseArgs, github_api_base_url: Option<String>) -> Re
 
     if let Some(output_path) = &args.github_output {
         let mut outputs = report.github_outputs(&args.notes_file);
+        outputs.push_str(if report.outcome == ReleaseOutcome::Released && args.draft_release {
+            "release-draft=true\n"
+        } else {
+            "release-draft=false\n"
+        });
         if let Some(sha) = analysis_sha {
             outputs.push_str("analysis-sha=");
             outputs.push_str(sha);
@@ -227,16 +241,20 @@ pub fn run_release(args: ReleaseArgs, github_api_base_url: Option<String>) -> Re
         })?;
     }
 
-    print_release_report(&report, &args.notes_file);
+    print_release_report(&report, &args.notes_file, args.draft_release);
+    if args.draft_release && report.outcome == ReleaseOutcome::Released {
+        println!("- draft release only: native assets and explicit publication are still pending");
+    }
     if let Some(sha) = analysis_sha {
         println!("- analyzed immutable candidate {sha}");
     }
     Ok(())
 }
 
-fn print_released(report: &ReleaseReport, notes_file: &Path) {
+fn print_released(report: &ReleaseReport, notes_file: &Path, draft_release: bool) {
+    let action = if draft_release { "Created draft release" } else { "Released" };
     println!(
-        "Released {} ({} -> {}).",
+        "{action} {} ({} -> {}).",
         report.tag.as_deref().unwrap_or_default(),
         report.current_version,
         report.next_version.as_deref().unwrap_or_default()
@@ -320,9 +338,9 @@ fn dry_run_lines(report: &ReleaseReport, notes_file: &Path) -> Vec<String> {
 }
 
 /// Print the human-readable summary of a release run to the action log.
-fn print_release_report(report: &ReleaseReport, notes_file: &Path) {
+fn print_release_report(report: &ReleaseReport, notes_file: &Path, draft_release: bool) {
     match report.outcome {
-        ReleaseOutcome::Released => print_released(report, notes_file),
+        ReleaseOutcome::Released => print_released(report, notes_file, draft_release),
         ReleaseOutcome::VersionCommitted => {
             println!(
                 "Committed version {} ({} -> {}); tag and release are still pending.",
