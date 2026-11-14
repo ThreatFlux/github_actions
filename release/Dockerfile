@@ -1,7 +1,7 @@
 # Prebuilt github-actions-maintainer runtime image from this repository's
 # docker.yml pipeline. Dependabot (docker ecosystem, /release directory) bumps
 # this pin after each release; keep the tag in sync with the digest.
-FROM ghcr.io/threatflux/github_actions:0.7.12@sha256:d3b9a18c2b96da5247b12d02885dc3bd43d60464ba5454311b2b70e5f61dc5b0
+FROM ghcr.io/threatflux/github_actions:0.7.13@sha256:bf8922472e95e97a114a4b86174ffc63b5b9abd3fe1ccf13164fb34cab77edf9
 
 # Images built from the root Dockerfile are distroless Debian 13 (no shell)
 # whose default user is nonroot (65532). GitHub Docker actions run with the
