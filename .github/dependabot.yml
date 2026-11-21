@@ -1,77 +1,39 @@
+---
 version: 2
-updates:
-  - package-ecosystem: cargo
-    directory: /
+
+multi-ecosystem-groups:
+  nightly-dependencies:
     schedule:
       interval: cron
       cronjob: "0 6 * * *"
       timezone: UTC
-    open-pull-requests-limit: 10
-    groups:
-      rust-minor-patch:
-        patterns:
-          - "*"
-        update-types:
-          - minor
-          - patch
-    labels:
-      - dependencies
-      - rust
     commit-message:
       prefix: "chore(deps)"
 
+updates:
+  - package-ecosystem: cargo
+    directory: /
+    patterns: ["*"]
+    multi-ecosystem-group: nightly-dependencies
+    labels:
+      - dependencies
+      - rust
+
   - package-ecosystem: github-actions
     directory: /
-    schedule:
-      interval: cron
-      cronjob: "0 6 * * *"
-      timezone: UTC
-    open-pull-requests-limit: 5
-    groups:
-      github-actions:
-        patterns:
-          - "*"
+    patterns: ["*"]
+    multi-ecosystem-group: nightly-dependencies
     labels:
       - dependencies
       - github-actions
-    commit-message:
-      prefix: "chore(ci)"
 
   - package-ecosystem: docker
-    directory: /
-    schedule:
-      interval: cron
-      cronjob: "0 6 * * *"
-      timezone: UTC
-    open-pull-requests-limit: 3
+    directories:
+      - /
+      - /release
+      - /runtime
+    patterns: ["*"]
+    multi-ecosystem-group: nightly-dependencies
     labels:
       - dependencies
       - docker
-    commit-message:
-      prefix: "chore(docker)"
-
-  - package-ecosystem: docker
-    directory: /release
-    schedule:
-      interval: cron
-      cronjob: "0 6 * * *"
-      timezone: UTC
-    open-pull-requests-limit: 3
-    labels:
-      - dependencies
-      - docker
-    commit-message:
-      prefix: "chore(docker)"
-
-  - package-ecosystem: docker
-    directory: /runtime
-    schedule:
-      interval: cron
-      cronjob: "0 6 * * *"
-      timezone: UTC
-    open-pull-requests-limit: 3
-    labels:
-      - dependencies
-      - docker
-    commit-message:
-      prefix: "chore(docker)"
