@@ -50,10 +50,13 @@ Use this when the automated flow is insufficient (e.g., pre-release versions, ho
    git add Cargo.toml docs/CHANGELOG.md
    git commit -m "chore: release v1.2.3"
    ```
-5. Tag the reviewed release commit:
+5. Set `RELEASE_SHA` to the reviewed PR's merge commit SHA from GitHub. Verify
+   that commit is on the current `main` history and tag it explicitly:
    ```bash
-   git tag v1.2.3
-   git push origin refs/tags/v1.2.3
+   git fetch origin main &&
+     git merge-base --is-ancestor "$RELEASE_SHA" origin/main &&
+     git tag v1.2.3 "$RELEASE_SHA" &&
+     git push origin refs/tags/v1.2.3
    ```
 
 ### What Happens Next
