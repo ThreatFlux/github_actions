@@ -133,14 +133,25 @@ fn classify_breaking_merge(
 
 fn has_breaking_trailer(message: &str) -> bool {
     let lines: Vec<_> = message.trim_end().lines().collect();
-    let Some(separator) = lines.iter().rposition(|line| line.trim().is_empty()) else {
-        return false;
-    };
-    let start = separator + 1;
-    lines.get(start).is_some_and(|line| TRAILER_RE.is_match(line))
-        && (start..lines.len()).any(|index| {
-            BREAKING_TRAILER_RE.is_match(lines[index]) && !inside_markdown_fence(&lines[..index])
-        })
+    let mut end = lines.len();
+    while let Some(separator) = lines[..end].iter().rposition(|line| line.trim().is_empty()) {
+        let start = separator + 1;
+        let paragraph = &lines[start..end];
+        if let Some(first) = paragraph.first() {
+            if !TRAILER_RE.is_match(first) {
+                break;
+            }
+            if paragraph.iter().enumerate().any(|(offset, line)| {
+                BREAKING_TRAILER_RE.is_match(line)
+                    && !inside_markdown_fence(&lines[..start + offset])
+            }) {
+                return true;
+            }
+        }
+        // A blank line can separate two trailers, including a multiline value.
+        end = separator;
+    }
+    false
 }
 
 /// A terminal paragraph in an unfinished code block is still quoted text.
@@ -305,6 +316,7 @@ mod tests {
             "feat(api)!: replace the endpoint",
             "Merge branch 'api'\n\n```call `old()` before migration```\n\nBREAKING CHANGE: remove old()",
             "Merge branch 'api'\n\nThe new route is documented.\n\nBREAKING CHANGE: use the new route\nUpdate the token scope as well.",
+            "Merge branch 'api'\n\nBREAKING CHANGE: remove the old endpoint.\n\nRefs: #28",
             "fix(api): replace the endpoint\r\n\r\nRefs: #28\r\nBREAKING-CHANGE: switch to the new route\r\n  and update the token scope\r\nAcked-by: Maintainers",
         ] {
             let commits = reviewed_history(&[HistoryCommit::fixture(message, 2)], false);
@@ -339,6 +351,8 @@ mod tests {
             "Merge branch 'api'\n\n~~~text\n\nBREAKING CHANGE: a quote in an open fence",
             "Merge branch 'api'\n\nBREAKING CHANGE is explained in the documentation",
             "Merge branch 'api'\n\nBREAKING CHANGE: an old heading\n\nLater context with no trailer.",
+            "Merge branch 'api'\n\nBREAKING CHANGE: an old heading\n\nLater unrelated prose.\n\nRefs: #28",
+            "Merge branch 'api'\n\n```text\n\nBREAKING CHANGE: quoted history\n\nRefs: #28",
             "Merge branch 'api'\n\nBREAKING CHANGE:",
         ] {
             let commits = reviewed_history(&[HistoryCommit::fixture(message, 2)], true);
