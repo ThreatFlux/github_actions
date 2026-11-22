@@ -349,7 +349,9 @@ class ReleaseGateTests(unittest.TestCase):
             "should-release=true",
         )
 
-    def runtime_capability(self, help_text, immutable=True, draft_release=False):
+    def runtime_capability(
+        self, help_text, immutable=True, draft_release=False, pre_v1_breaking_minor=False
+    ):
         source = WORKFLOW.read_text(encoding="utf-8")
         step = source.split(
             "      - name: Verify validated-head runtime capability\n", 1
@@ -376,6 +378,7 @@ class ReleaseGateTests(unittest.TestCase):
                 ACTION_ROOT=str(root),
                 FAKE_HELP=help_text,
                 DRAFT_RELEASE=str(draft_release).lower(),
+                PRE_V1_BREAKING_MINOR=str(pre_v1_breaking_minor).lower(),
                 PATH=str(root) + os.pathsep + os.environ["PATH"],
             )
             return run_gate_script(script, env)
@@ -402,6 +405,15 @@ class ReleaseGateTests(unittest.TestCase):
         missing_head = self.runtime_capability("--draft-release", draft_release=True)
         self.assertNotEqual(missing_head.returncode, 0)
         self.assertIn("cannot enforce expected-head", missing_head.stderr)
+
+    def test_pre_v1_policy_requires_a_runtime_that_enforces_it(self):
+        result = self.runtime_capability("--expected-head", pre_v1_breaking_minor=True)
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("does not support pre-v1-breaking-minor", result.stderr)
+        supported = self.runtime_capability(
+            "--expected-head --pre-v1-breaking-minor", pre_v1_breaking_minor=True
+        )
+        self.assertEqual(supported.returncode, 0, supported.stderr)
 
     def test_runtime_capability_check_refuses_a_mutable_image(self):
         result = self.runtime_capability("--expected-head", immutable=False)
@@ -430,6 +442,8 @@ class ReleaseGateTests(unittest.TestCase):
         self.assertIn("expected-head: ''", preview)
         self.assertIn("dry-run: true", preview)
         self.assertIn("draft-release: ${{ inputs.draft-release }}", preview)
+        for job in (release, preview):
+            self.assertIn("pre-v1-breaking-minor: ${{ inputs.pre-v1-breaking-minor }}", job)
         self.assertIn("token: ${{ github.token }}", preview)
         self.assertNotIn("secrets.", preview)
         self.assertNotIn(": write", preview)

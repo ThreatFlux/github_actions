@@ -25,6 +25,8 @@ mod pr_flow;
 mod preview_source;
 
 const FEAT_AND_FIX: &str = r#"{"total_commits":2,"commits":[{"sha":"feataaaaaaa","commit":{"message":"feat: add thing"},"parents":[{}]},{"sha":"fixbbbbbbbb","commit":{"message":"fix: repair thing"},"parents":[{}]}]}"#;
+/// A fix and the squash-merged release commit that already accounts for it.
+const FIX_THEN_MERGED_RELEASE: &str = r#"{"total_commits":2,"commits":[{"sha":"fixbbbbbbbb","commit":{"message":"fix(testkit): stop log capture racing"},"parents":[{}]},{"sha":"releasecccc","commit":{"message":"chore: release v0.2.3 (#86)"},"parents":[{}]}]}"#;
 const CHORE_ONLY: &str = r#"{"total_commits":1,"commits":[{"sha":"choreaaaaaa","commit":{"message":"chore: tidy"},"parents":[{}]}]}"#;
 const TAGS_V023: &str = r#"[{"name":"v0.2.3","commit":{"sha":"tagsha"}}]"#;
 
@@ -124,6 +126,10 @@ fn mock_analysis(server: &mut ServerGuard, head_hits: usize, compare_body: &str)
 }
 
 fn mock_build_chain(server: &mut ServerGuard) -> Vec<Mock> {
+    mock_build_chain_with_parents(server, Matcher::Any)
+}
+
+fn mock_build_chain_with_parents(server: &mut ServerGuard, parents: Matcher) -> Vec<Mock> {
     vec![
         server
             .mock("GET", "/repos/acme/demo/git/commits/basecommitsha")
@@ -142,10 +148,19 @@ fn mock_build_chain(server: &mut ServerGuard) -> Vec<Mock> {
             .create(),
         server
             .mock("POST", "/repos/acme/demo/git/commits")
+            .match_body(parents)
             .with_status(201)
             .with_body(r#"{"sha":"newcommitsha"}"#)
             .create(),
     ]
+}
+
+fn mock_missing_release_branch(server: &mut ServerGuard) -> Mock {
+    server
+        .mock("GET", "/repos/acme/demo/git/ref/heads/automation/release")
+        .with_status(404)
+        .with_body(r#"{"message":"Not Found"}"#)
+        .create()
 }
 
 fn mock_finalize_chain(server: &mut ServerGuard, tag: &str) -> Vec<Mock> {
@@ -432,7 +447,7 @@ fn release_creates_automated_release_branch_and_pull_request() {
 #[test]
 fn release_tags_the_merged_release_pull_request_instead_of_opening_another() {
     // The merged release pull request left 0.2.3 on main with only v0.2.2
-    // tagged. Bumping again here would open a pull request for 0.3.0 and leave
+    // tagged. Bumping again here would open a pull request for 0.2.4 and leave
     // the merged 0.2.3 unreleased forever.
     let temp_dir = write_fixture_repo();
     let mut server = Server::new();
@@ -441,7 +456,7 @@ fn release_tags_the_merged_release_pull_request_instead_of_opening_another() {
     let _compare = server
         .mock("GET", "/repos/acme/demo/compare/v0.2.2...basecommitsha?per_page=100&page=1")
         .with_status(200)
-        .with_body(FEAT_AND_FIX)
+        .with_body(FIX_THEN_MERGED_RELEASE)
         .create();
     let _tag_missing = mock_tag_lookup(&mut server, "v0.2.3", 404, r#"{"message":"Not Found"}"#);
     let _no_release_branch = server

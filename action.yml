@@ -110,6 +110,10 @@ inputs:
     description: Version bump strategy. Use auto, major, minor, or patch. Leave empty to use the default (auto, derived from conventional commits). (release only)
     required: false
     default: ""
+  pre-v1-breaking-minor:
+    description: Infer a minor bump for breaking changes before 1.0. The default requires a major bump. (release only)
+    required: false
+    default: "false"
   tag-prefix:
     description: Prefix for release tags. Leave empty to use the default ("v"). (release only)
     required: false

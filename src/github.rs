@@ -614,7 +614,18 @@ impl GitHubClient {
         tree_sha: &str,
         parent_sha: &str,
     ) -> Result<String> {
-        let payload = CreateCommitRequest { message, tree: tree_sha, parents: vec![parent_sha] };
+        self.create_commit_with_parents(owner, repository, message, tree_sha, vec![parent_sha])
+    }
+
+    pub(crate) fn create_commit_with_parents(
+        &self,
+        owner: &str,
+        repository: &str,
+        message: &str,
+        tree_sha: &str,
+        parents: Vec<&str>,
+    ) -> Result<String> {
+        let payload = CreateCommitRequest { message, tree: tree_sha, parents };
         let response =
             self.post_json(&format!("/repos/{owner}/{repository}/git/commits"), &payload, || {
                 format!("create commit for {owner}/{repository}")

@@ -68,22 +68,34 @@ impl GitHubClient {
             let sha = tracked.get(&relative).with_context(|| {
                 format!("release source '{relative}' is not a tracked regular file")
             })?;
-            let description = || format!("read exact tracked release blob for '{relative}'");
-            let path = format!("/repos/{owner}/{repository}/git/blobs/{sha}");
-            let response = self.send_raw_with_retry(
-                || self.get(&path).header("Accept", "application/vnd.github.raw+json"),
-                &description,
-            )?;
-            if !response.status().is_success() {
-                return self.error_from_response(response, &description()).map(|_| ());
-            }
-            let contents = response.bytes().with_context(description)?;
+            let contents = self.release_source_blob(owner, repository, &relative, sha)?;
             ensure!(
                 contents.as_ref() == original.as_bytes(),
                 "release source '{relative}' differs from the analyzed commit; refusing ambient changes"
             );
         }
         Ok(())
+    }
+
+    pub(crate) fn release_source_blob(
+        &self,
+        owner: &str,
+        repository: &str,
+        relative: &str,
+        sha: &str,
+    ) -> Result<impl AsRef<[u8]> + use<>> {
+        let description = || format!("read exact tracked release blob for '{relative}'");
+        let path = format!("/repos/{owner}/{repository}/git/blobs/{sha}");
+        let response = self.send_raw_with_retry(
+            || self.get(&path).header("Accept", "application/vnd.github.raw+json"),
+            &description,
+        )?;
+        let response = if response.status().is_success() {
+            response
+        } else {
+            self.error_from_response(response, &description())?
+        };
+        response.bytes().with_context(description)
     }
 }
 

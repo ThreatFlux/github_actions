@@ -57,6 +57,10 @@ pub struct ReleaseArgs {
     #[arg(long, env = "INPUT_BUMP", value_enum, default_value_t = BumpArg::Auto)]
     pub bump: BumpArg,
 
+    /// Infer a minor version for breaking changes to a 0.x package.
+    #[arg(long, env = "INPUT_PRE-V1-BREAKING-MINOR", default_value_t = false, num_args = 0..=1, default_missing_value = "true")]
+    pub pre_v1_breaking_minor: bool,
+
     /// Prefix for release tags.
     #[arg(long, env = "INPUT_TAG-PREFIX", default_value = "v")]
     pub tag_prefix: String,
@@ -186,7 +190,9 @@ pub fn run_release(args: ReleaseArgs, github_api_base_url: Option<String>) -> Re
         args.token,
     )?;
     let (owner, repo_name) = resolve_repository(args.owner.as_deref(), args.repo_name.as_deref())?;
-    let publisher = ReleasePublisher::new(github).with_draft_release(args.draft_release);
+    let publisher = ReleasePublisher::new(github)
+        .with_draft_release(args.draft_release)
+        .with_pre_v1_breaking_minor(args.pre_v1_breaking_minor);
     let options = ReleaseOptions {
         repo_root: args.repo,
         owner,
