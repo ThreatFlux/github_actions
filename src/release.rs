@@ -607,10 +607,25 @@ impl ReleasePublisher {
             .and_then(|tag| tag.name.strip_prefix(options.tag_prefix.as_str()))
             .and_then(|version| Version::parse(version).ok());
         let range = match &last_tag {
-            Some(tag) => {
-                self.github.compare_commits(owner, repo, &tag.name, &head_sha, MAX_COMPARE_PAGES)?
+            Some(tag) => self.github.compare_commit_history(
+                owner,
+                repo,
+                &tag.name,
+                &head_sha,
+                MAX_COMPARE_PAGES,
+            )?,
+            None => {
+                self.github.list_commit_history(owner, repo, &head_sha, MAX_FIRST_RELEASE_PAGES)?
             }
-            None => self.github.list_commits(owner, repo, &head_sha, MAX_FIRST_RELEASE_PAGES)?,
+        };
+        let truncated = range.truncated;
+        let commits = if options.create_pr {
+            conventional::classify_reviewed_history(&range.commits, |sha, number, title| {
+                self.github.merged_pull_request_matches(owner, repo, number, sha, title)
+            })?
+        } else {
+            let range = crate::github::CommitRange::from(range);
+            conventional::classify_commits(&range.commits)
         };
 
         Ok(Analysis {
@@ -621,8 +636,8 @@ impl ReleasePublisher {
             current,
             last_tag: last_tag.map(|tag| tag.name),
             last_released,
-            commits: conventional::classify_commits(&range.commits),
-            truncated: range.truncated,
+            commits,
+            truncated,
         })
     }
 

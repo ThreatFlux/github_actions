@@ -150,6 +150,13 @@ struct PullRequestResponse {
 }
 
 #[derive(Debug, Deserialize)]
+struct MergedPullRequestResponse {
+    merged: bool,
+    merge_commit_sha: Option<String>,
+    title: String,
+}
+
+#[derive(Debug, Deserialize)]
 struct UserResponse {
     login: Option<String>,
 }
@@ -157,14 +164,51 @@ struct UserResponse {
 #[derive(Debug, Deserialize)]
 struct CompareResponse {
     total_commits: u64,
-    commits: Vec<RepoCommitResponse>,
+    commits: Vec<HistoryCommit>,
 }
 
 #[derive(Debug, Deserialize)]
-struct RepoCommitResponse {
+pub(crate) struct HistoryCommit {
     sha: String,
     commit: RepoCommitDetail,
     parents: Vec<CommitParent>,
+}
+
+impl HistoryCommit {
+    #[cfg(test)]
+    pub(crate) fn fixture(message: &str, parent_count: usize) -> Self {
+        Self {
+            sha: "0123456789abcdef".to_owned(),
+            commit: RepoCommitDetail { message: message.to_owned() },
+            parents: (0..parent_count).map(|_| CommitParent {}).collect(),
+        }
+    }
+
+    pub(crate) fn sha(&self) -> &str {
+        &self.sha
+    }
+
+    pub(crate) fn message(&self) -> &str {
+        &self.commit.message
+    }
+
+    pub(crate) const fn parent_count(&self) -> usize {
+        self.parents.len()
+    }
+}
+
+pub(crate) struct CommitHistory {
+    pub(crate) commits: Vec<HistoryCommit>,
+    pub(crate) truncated: bool,
+}
+
+impl From<CommitHistory> for CommitRange {
+    fn from(history: CommitHistory) -> Self {
+        Self {
+            commits: history.commits.into_iter().map(commit_info_from_response).collect(),
+            truncated: history.truncated,
+        }
+    }
 }
 
 #[derive(Debug, Deserialize)]
@@ -471,6 +515,29 @@ impl GitHubClient {
         Ok(repository.default_branch)
     }
 
+    pub(crate) fn merged_pull_request_matches(
+        &self,
+        owner: &str,
+        repository: &str,
+        number: u64,
+        merge_sha: &str,
+        title: &str,
+    ) -> Result<bool> {
+        let response = self.get_with_retry_allowing_not_found(
+            &format!("/repos/{owner}/{repository}/pulls/{number}"),
+            || format!("fetch merged pull request {number} for {owner}/{repository}"),
+        )?;
+        let Some(response) = response else {
+            return Ok(false);
+        };
+        let pull = response.json::<MergedPullRequestResponse>().with_context(|| {
+            format!("failed to decode pull request {number} for {owner}/{repository}")
+        })?;
+        Ok(pull.merged
+            && pull.merge_commit_sha.as_deref() == Some(merge_sha)
+            && pull.title == title)
+    }
+
     pub fn branch_head_sha(&self, owner: &str, repository: &str, branch: &str) -> Result<String> {
         let response = self.get_with_retry(
             &format!("/repos/{owner}/{repository}/git/ref/heads/{branch}"),
@@ -741,6 +808,17 @@ impl GitHubClient {
         head: &str,
         max_pages: u32,
     ) -> Result<CommitRange> {
+        self.compare_commit_history(owner, repository, base, head, max_pages).map(Into::into)
+    }
+
+    pub(crate) fn compare_commit_history(
+        &self,
+        owner: &str,
+        repository: &str,
+        base: &str,
+        head: &str,
+        max_pages: u32,
+    ) -> Result<CommitHistory> {
         let encoded_base = urlencoding::encode(base);
         let encoded_head = urlencoding::encode(head);
         let mut commits = Vec::new();
@@ -761,13 +839,13 @@ impl GitHubClient {
             if compare.commits.is_empty() {
                 break;
             }
-            commits.extend(compare.commits.into_iter().map(commit_info_from_response));
+            commits.extend(compare.commits);
             if commits.len() >= total_commits {
                 break;
             }
         }
         let truncated = commits.len() < total_commits;
-        Ok(CommitRange { commits, truncated })
+        Ok(CommitHistory { commits, truncated })
     }
 
     pub fn list_commits(
@@ -777,6 +855,16 @@ impl GitHubClient {
         head_sha: &str,
         max_pages: u32,
     ) -> Result<CommitRange> {
+        self.list_commit_history(owner, repository, head_sha, max_pages).map(Into::into)
+    }
+
+    pub(crate) fn list_commit_history(
+        &self,
+        owner: &str,
+        repository: &str,
+        head_sha: &str,
+        max_pages: u32,
+    ) -> Result<CommitHistory> {
         let encoded_head = urlencoding::encode(head_sha);
         let mut commits = Vec::new();
         let mut last_page_full = false;
@@ -787,16 +875,16 @@ impl GitHubClient {
                 ),
                 || format!("list commits for {owner}/{repository}"),
             )?;
-            let page_commits = response.json::<Vec<RepoCommitResponse>>().with_context(|| {
+            let page_commits = response.json::<Vec<HistoryCommit>>().with_context(|| {
                 format!("failed to decode commits response for {owner}/{repository}")
             })?;
             last_page_full = page_commits.len() == 100;
-            commits.extend(page_commits.into_iter().map(commit_info_from_response));
+            commits.extend(page_commits);
             if !last_page_full {
                 break;
             }
         }
-        Ok(CommitRange { commits, truncated: last_page_full })
+        Ok(CommitHistory { commits, truncated: last_page_full })
     }
 
     pub fn create_release(
@@ -1156,7 +1244,7 @@ impl GitHubClient {
     }
 }
 
-fn commit_info_from_response(commit: RepoCommitResponse) -> CommitInfo {
+fn commit_info_from_response(commit: HistoryCommit) -> CommitInfo {
     CommitInfo {
         sha: commit.sha,
         message: commit.commit.message,

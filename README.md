@@ -425,6 +425,18 @@ the action proposes a corrected version for review. An incomplete range
 prevents tagging. After a version is tagged, later runs bump from it as usual.
 Maintenance-only commits such as `chore:` and `docs:` produce no automatic bump.
 
+Reviewed release analysis also counts explicit breaking markers on two-parent
+merge commits. It accepts a conventional breaking subject or a
+`BREAKING CHANGE:` / `BREAKING-CHANGE:` trailer. The terminal trailer
+section may contain adjacent trailers and indented continuation paragraphs
+separated by blank lines. Markers inside Markdown code are ignored.
+With `PR_TITLE` merge messages, a classic GitHub merge wrapper can carry the
+breaking subject in its first non-empty body line. Release analysis requires
+GitHub to link that exact merge SHA to the named merged PR and corroborate the
+line with its title. The repository's current merge default is irrelevant to
+that historical comparison. Ordinary merge subjects,
+including release-bump merges, still do not contribute a bump.
+
 ### Tokens and downstream pipelines
 
 GitHub suppresses workflow triggers for events created with the default
