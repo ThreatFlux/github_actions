@@ -187,7 +187,7 @@ Splitting the release breaks the cycle:
 2. Build and publish whatever has to carry that version. It is built from a tree whose manifest already reads the released version.
 3. `--phase tag` releases the version the manifest already holds — no second bump — and stages `--extra-files` into the commit the tag points at, so a digest resolved in step 2 lands inside the tag.
 
-The tagged tree and the artifact's source then differ only in the files staged in step 3. `--phase tag` skips when the manifest version is already tagged, so a re-run after a failure finishes the pending release instead of starting another. It also releases regardless of whether the commit range still warrants a bump, since the bump decision was already made in step 1. Neither phase combines with `--create-pr`, which separates the bump from the tag by its own means.
+The tagged tree and the artifact's source then differ only in the files staged in step 3. `--phase tag` skips when the manifest version is already tagged and uses the previously chosen version regardless of the commit range. With `--create-pr`, `--phase bump` only proposes a version change, and `--phase tag --extra-files …` only proposes the supplied files on the release branch. After both merge, `--phase tag` with no extra files publishes the existing reviewed commit.
 
 This repository's own `auto-release.yml` runs both phases; see [Release flow](#release-flow).
 
@@ -508,22 +508,20 @@ so `ghcr.io/threatflux/github_actions:0.7.2` cannot exist before `v0.7.2` does.
 
 | Phase | Trigger | What it does |
 |---|---|---|
-| 1 — bump | `CI`, `Security`, and `Docker` all green on the exact head | Pins the runtime to the head's image so this run executes a current binary, then `phase: bump` commits the version bump and stops. Dispatches full `ci.yml`, `security.yml`, and `docker.yml` (`release-prep=true`) runs for that version commit. |
-| 2 — tag | `docker.yml` hands off after build, scan, signing, and SBOM; all three workflows must succeed on the exact current head | Resolves the new image's digest, **verifies its `--version` equals the manifest version**, rewrites both Dockerfile pins, then `phase: tag` stages those pins into the commit it tags. Only a confirmed release promotes the sealed digest to `:X.Y.Z` and its newest eligible `:X.Y` / `:X` aliases. |
+| 1 — bump | `CI`, `Security`, and `Docker` all green on the exact main head | Runs the signed image for that head and opens a version-bump PR. The approved merge starts the normal main checks and image build. |
+| 2 — tag | All three workflows succeed on the exact main head | Verifies the signed image's source revision and version, then opens a PR for the two runtime pins. After that PR merges, verifies the pinned image again and compares its source tree with the newly tested main head. Tags that reviewed commit and promotes the sealed digest to its version and eligible aliases. |
 
 Consequences worth knowing:
 
 - **The tag ships a runtime that reports its own version.** The tagged tree and
   the image's source differ only in the two Dockerfiles, which do not affect the
   image.
-- **A release takes as long as a multi-arch image build** (roughly 40–60 minutes
-  on QEMU) because phase 2 waits for the image. It costs no extra build:
-  `docker.yml` is no longer dispatched for the tag, since retagging the verified
-  digest already produces the version tags, and rebuilding would move them to a
-  digest the release does not pin.
-- **The version commit is pushed with `GITHUB_TOKEN`, so it starts no
-  push workflows.** Full CI, Security, the image build, and the handoff back
-  use explicit dispatches, which are exempt from that suppression.
+- The automation App opens proposals on dedicated branches so their PR checks
+  run normally. Each proposal needs owner review and a normal merge. The two
+  pin files are outside the root image's build context. If any other tree entry
+  changes before tagging, automation proposes a fresh pin for the new head.
+- The confirmed tag promotes the digest already reviewed in the pin PR.
+  `release.yml` builds and publishes the release assets from that tag.
 - **A committed-but-untagged version is the resumable state.** Phase detection
   reads the manifest version at `main` and checks whether its tag exists, so any
   later run — the weekly cron, a push, or a manual dispatch — finishes a release
@@ -537,11 +535,9 @@ Consequences worth knowing:
   run of each workflow is authoritative, with creation time and run ID breaking
   ties; a failed rerun blocks release. CI runs on every main push, including
   documentation-only changes. PR and scheduled
-  runs cannot substitute. The tag phase can wait up to ten minutes for the
-  Docker handoff run to finish, and also requires the image/version proof.
-  An ordinary main merge after the version bump needs its own successful
-  checks. Both release calls pass that validated SHA as `expected-head`, so
-  a subsequent branch advance is rejected before the publisher writes.
+  runs cannot substitute. Both reviewed merges need their own successful checks.
+  The tag path also requires the signature, image revision, pin and version
+  proofs. Every release call passes the validated SHA as `expected-head`.
 
 The version name in a `FROM name:version@sha256:digest` pin can be prospective:
 [BuildKit 0.35.0 resolves image references through containerd](https://github.com/moby/buildkit/blob/v0.35.0/util/imageutil/config.go),

@@ -8,12 +8,9 @@ concurrency:
 # A release runs in two phases, because a container action cannot pin a runtime
 # image built from its own release: docker.yml derives version tags from the git
 # tag, so an image for the released version only exists once the tag does.
-# Phase 1 commits the version bump and asks docker.yml to publish an image for
-# it; docker.yml hands back to phase 2, which pins that image and tags the
-# result. The tagged tree and the image's source then differ only in the two
-# Dockerfiles, which do not affect the image, so the tag ships a runtime that
-# reports its own version. Releasing in one pass is what left v0.7.0 shipping a
-# 0.6.2 binary.
+# Phase 1 opens the version-bump PR. Its reviewed merge starts the normal
+# main checks and image build. Phase 2 opens a PR for the signed image pins,
+# then tags the reviewed main commit once the pins and exact-head checks pass.
 on:
   workflow_run:
     # Docker gates phase 1: it proves an image exists for the commit being
@@ -145,7 +142,6 @@ jobs:
             all_passed=true
             terminal_failure=false
             for workflow in ci security docker; do
-              # GITHUB_TOKEN version commits need explicitly dispatched checks.
               # PR and scheduled runs cannot substitute for these main checks.
               # jq variables are intentionally literal, not shell expansions.
               # shellcheck disable=SC2016
@@ -216,18 +212,25 @@ jobs:
       contents: write
       actions: write
       packages: write
+      pull-requests: read
     steps:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
           ref: ${{ needs.check.outputs.target_sha }}
+          fetch-depth: 0
 
       - name: Select stable Buildx for digest promotion
         uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
         with:
           version: v0.39.0
           driver: docker
+
+      - name: Install cosign
+        uses: sigstore/cosign-installer@756fe2d284c7292c4e9b62c8a28f1e5629c59532 # v4.1.3
+        with:
+          cosign-release: v3.1.4
 
       - name: Resolve the runtime image for this commit
         id: runtime
@@ -259,40 +262,21 @@ jobs:
             echo "short=${short}"
           } >> "$GITHUB_OUTPUT"
 
-      # The whole point of the split: prove the image really was built from the
-      # bumped manifest before anything is tagged. A mismatch means the image
-      # predates the version commit, which is exactly the v0.7.0 failure.
-      - name: Verify the image reports the version being tagged
-        if: needs.check.outputs.phase == 'tag'
+      - name: Verify the signed runtime and select the release phase
+        id: verified_runtime
         env:
-          IMAGE: ${{ steps.runtime.outputs.image }}
-          DIGEST: ${{ steps.runtime.outputs.digest }}
+          HEAD_DIGEST: ${{ steps.runtime.outputs.digest }}
+          PHASE: ${{ needs.check.outputs.phase }}
+          TARGET_SHA: ${{ needs.check.outputs.target_sha }}
           VERSION: ${{ needs.check.outputs.version }}
-        run: |
-          set -euo pipefail
-          reported="$(docker run --rm "${IMAGE}@${DIGEST}" --version | awk '{ print $NF }')"
-          echo "image reports '${reported}', manifest expects '${VERSION}'"
-          if [[ "${reported}" != "${VERSION}" ]]; then
-            echo "runtime image ${DIGEST} reports ${reported}, not ${VERSION}; refusing to tag a mismatched runtime" >&2
-            exit 1
-          fi
+        run: bash scripts/select_release_runtime.sh
 
-      # A local container action is built when the step using it runs, so this
-      # rewrite also decides which binary the release steps below execute: the
-      # tag phase runs the very image it is about to pin, and the bump phase runs
-      # the current head's image rather than the previous release's.
-      #
-      # Only the tag phase stages the rewrite. The bump commit keeps the old pin
-      # because the image for its own version does not exist yet — publishing it
-      # is what the bump commit triggers.
-      - name: Pin runtime images to the resolved digest
+      - name: Pin proposal runtime images to the resolved digest
+        if: steps.verified_runtime.outputs.ready_to_tag != 'true'
         id: runtime_pin
         env:
           IMAGE: ${{ steps.runtime.outputs.image }}
-          DIGEST: ${{ steps.runtime.outputs.digest }}
-          # The tag phase pins a prospective display tag plus the existing
-          # digest. Docker resolves the digest without looking up that tag.
-          # Remote version aliases move only after the publisher succeeds.
+          DIGEST: ${{ steps.verified_runtime.outputs.digest }}
           REF_TAG: ${{ needs.check.outputs.phase == 'tag' && needs.check.outputs.version || steps.runtime.outputs.short }}
           PIN_FILES: runtime/Dockerfile release/Dockerfile
         run: |
@@ -304,42 +288,62 @@ jobs:
           done
           echo "files=${PIN_FILES// /,}" >> "$GITHUB_OUTPUT"
 
-      - name: Commit the version bump
-        id: bump
-        if: needs.check.outputs.phase == 'bump'
+      - name: Check for an existing proposal from this main commit
+        if: steps.verified_runtime.outputs.ready_to_tag != 'true'
+        id: proposal
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TARGET_SHA: ${{ needs.check.outputs.target_sha }}
+          BRANCH: ${{ needs.check.outputs.phase == 'tag' && 'automation/release/runtime' || 'automation/release/version' }}
+          BUMP: ${{ github.event.inputs.version_bump || 'auto' }}
+        run: |
+          set -euo pipefail
+          existing="$(gh api --method GET "repos/${GITHUB_REPOSITORY}/pulls" \
+            -f state=open -f base=main -f "head=${GITHUB_REPOSITORY_OWNER}:${BRANCH}" \
+            --jq '.[0].head.sha // empty')"
+          if [[ -n "${existing}" && "${BUMP}" == auto ]]; then
+            parent="$(gh api "repos/${GITHUB_REPOSITORY}/git/commits/${existing}" --jq '.parents | if length == 1 then .[0].sha else empty end')"
+            if [[ "${parent}" == "${TARGET_SHA}" ]]; then
+              echo "reuse=true" >> "$GITHUB_OUTPUT"
+            fi
+          fi
+          echo "branch=${BRANCH}" >> "$GITHUB_OUTPUT"
+
+      - name: Create a release proposal App token
+        if: steps.verified_runtime.outputs.ready_to_tag != 'true' && steps.proposal.outputs.reuse != 'true'
+        id: proposal_token
+        uses: actions/create-github-app-token@64ab729a6294000f5aa4a4bc0b73d1f32bc45510 # v3.3.0
+        with:
+          client-id: ${{ vars.TF_AUTOMATION_APP_ID }}
+          private-key: ${{ secrets.TF_AUTOMATION_APP_PRIVATE_KEY }}
+          owner: ${{ github.repository_owner }}
+          repositories: ${{ github.event.repository.name }}
+          permission-contents: write
+          permission-pull-requests: write
+
+      - name: Open or refresh the reviewed release proposal
+        id: propose
+        if: steps.verified_runtime.outputs.ready_to_tag != 'true' && steps.proposal.outputs.reuse != 'true'
         uses: ./
         with:
           command: release
-          token: ${{ secrets.GITHUB_TOKEN }}
+          token: ${{ steps.proposal_token.outputs.token }}
           expected-head: ${{ needs.check.outputs.target_sha }}
           bump: ${{ github.event.inputs.version_bump || 'auto' }}
-          phase: bump
+          phase: ${{ needs.check.outputs.phase }}
+          create-pr: "true"
+          release-branch: ${{ steps.proposal.outputs.branch }}
+          extra-files: ${{ needs.check.outputs.phase == 'tag' && steps.runtime_pin.outputs.files || '' }}
 
-      - name: Validate and publish the committed version
-        if: needs.check.outputs.phase == 'bump' && steps.bump.outputs.commit != '' && steps.bump.outputs.released != 'true'
+      - name: Report the release proposal
+        if: steps.propose.outputs.release-pr-url != ''
         env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          VERSION: ${{ steps.bump.outputs.version }}
-          COMMIT: ${{ steps.bump.outputs.commit }}
-        run: |
-          set -euo pipefail
-          echo "committed ${VERSION} as ${COMMIT}; building its runtime image"
-          # main now holds the version commit, and a push by GITHUB_TOKEN starts
-          # no workflows. Run the full CI and Security suites as well as Docker;
-          # the tag phase requires all three on the exact current main commit.
-          # release-prep hands back after image scan, signing, and SBOM finish.
-          main_sha="$(gh api "repos/${GITHUB_REPOSITORY}/commits/main" --jq .sha)"
-          if [[ "${main_sha}" != "${COMMIT}" ]]; then
-            echo "main advanced after the bump; its own checks must finish before release"
-            exit 0
-          fi
-          gh workflow run ci.yml --repo "$GITHUB_REPOSITORY" --ref main
-          gh workflow run security.yml --repo "$GITHUB_REPOSITORY" --ref main
-          gh workflow run docker.yml --repo "$GITHUB_REPOSITORY" --ref main -f release-prep=true
+          URL: ${{ steps.propose.outputs.release-pr-url }}
+        run: echo "Release proposal ${URL}" >> "$GITHUB_STEP_SUMMARY"
 
       - name: Tag and publish the committed version
         id: release
-        if: needs.check.outputs.phase == 'tag'
+        if: steps.verified_runtime.outputs.ready_to_tag == 'true'
         uses: ./
         with:
           command: release
@@ -347,7 +351,6 @@ jobs:
           expected-head: ${{ needs.check.outputs.target_sha }}
           update-major-alias: "true"
           phase: tag
-          extra-files: ${{ steps.runtime_pin.outputs.files }}
 
       # Refusals (existing tag, manifest behind latest, or changed head) must
       # never mutate registry aliases. The publisher rechecks the tag after
@@ -357,7 +360,7 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           EXPECTED_IMAGE: ${{ steps.runtime.outputs.image }}
-          EXPECTED_DIGEST: ${{ steps.runtime.outputs.digest }}
+          EXPECTED_DIGEST: ${{ steps.verified_runtime.outputs.digest }}
           VERSION: ${{ steps.release.outputs.version }}
         run: bash scripts/promote_release_image.sh
 
@@ -373,17 +376,3 @@ jobs:
           TAG: ${{ steps.release.outputs.tag }}
         run: |
           gh workflow run release.yml --repo "$GITHUB_REPOSITORY" --ref "$TAG" -f version="$VERSION"
-
-      # A runtime image predating the phased release ignores the phase input and
-      # publishes the whole release in one run. Nothing is left pending, so fall
-      # back to the previous behaviour and dispatch both tag pipelines.
-      - name: Trigger tag pipelines for an unphased runtime
-        if: needs.check.outputs.phase == 'bump' && steps.bump.outputs.released == 'true'
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          VERSION: ${{ steps.bump.outputs.version }}
-          TAG: ${{ steps.bump.outputs.tag }}
-        run: |
-          echo "::warning::the pinned runtime ignored the bump phase and released ${TAG} in one pass"
-          gh workflow run release.yml --repo "$GITHUB_REPOSITORY" --ref "$TAG" -f version="$VERSION"
-          gh workflow run docker.yml --repo "$GITHUB_REPOSITORY" --ref "$TAG"

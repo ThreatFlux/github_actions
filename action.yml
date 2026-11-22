@@ -141,8 +141,8 @@ inputs:
   phase:
     description: >-
       Which part of the release to perform: all (default) bumps, tags, and publishes in one run; bump commits the version bump and stops, so an
-      artifact built from the released version can be published before the tag exists; tag then tags the version the manifest already holds. Leave
-      empty to use the default ("all"). (release only)
+      artifact built from the released version can be published before the tag exists; tag then tags the version the manifest already holds. With
+      create-pr, bump proposes the version bump and tag proposes only extra-files. Leave empty to use the default ("all"). (release only)
     required: false
     default: ""
 

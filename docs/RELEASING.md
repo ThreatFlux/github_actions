@@ -21,14 +21,14 @@
 
 ## Automated Release (default)
 
-Releases are driven by [Conventional Commits](https://www.conventionalcommits.org/). When CI and security checks pass on `main`, the `auto-release.yml` workflow runs this repository's own [action](../action.yml) (`uses: ./` with `command: release`), which:
+Releases are driven by [Conventional Commits](https://www.conventionalcommits.org/). The [self-release workflow](../README.md#release-flow) advances after CI, Security, and Docker pass for the exact `main` commit.
 
-1. Analyzes commits since the last `v*` tag through the GitHub API.
-2. Determines the version bump (patch / minor / major) from commit prefixes; chore/docs-only merges produce no release.
-3. Rewrites `Cargo.toml` and `Cargo.lock`, commits directly to `main` (fast-forward only), creates the `v*` tag, moves the `v0` major alias tag, and creates the GitHub Release with generated notes.
-4. `auto-release.yml` then dispatches `release.yml` (build/package/publish) and `docker.yml` (GHCR images) on the new tag. This dispatch is explicit because tags created with `GITHUB_TOKEN` do not trigger `on: push: tags:` workflows on their own.
+1. Review and merge the version-bump PR for `Cargo.toml` and `Cargo.lock`. Chore- and docs-only changes do not normally warrant a bump.
+2. Review and merge the PR pinning both container action Dockerfiles to the signed runtime built for that version.
+3. After validation on `main`, automation creates the `v*` tag and GitHub Release, updates the major alias, and promotes the verified runtime digest.
+4. Automation explicitly dispatches `release.yml` on the new tag to build and publish the release assets.
 
-**No manual steps are required for routine releases.** A `workflow_dispatch` of `auto-release.yml` with a `version_bump` choice forces a release when no commit qualifies.
+A manual `auto-release.yml` dispatch with a `version_bump` choice can propose a release when no commit qualifies. Both PRs use the usual review rules.
 
 ## Manual Release
 
@@ -42,15 +42,15 @@ Use this when the automated flow is insufficient (e.g., pre-release versions, ho
    ```
 2. Update `CHANGELOG.md` — move items from `[Unreleased]` to a new version header.
 3. Bump the version in `Cargo.toml`.
-4. Commit:
+4. Commit on a feature branch and merge through the usual owner review:
    ```bash
    git add Cargo.toml docs/CHANGELOG.md
    git commit -m "chore: release v1.2.3"
    ```
-5. Tag:
+5. Tag the reviewed release commit:
    ```bash
    git tag v1.2.3
-   git push origin main --tags
+   git push origin refs/tags/v1.2.3
    ```
 
 ### What Happens Next

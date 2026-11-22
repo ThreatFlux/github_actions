@@ -112,7 +112,7 @@ pub enum ReleaseAction {
     /// GitHub Release, without bumping it. Only staged extra files, if any, are
     /// committed first.
     TagManifestVersion { branch: String },
-    /// Point `release_branch` at a version-bump commit on top of `base` and
+    /// Point `release_branch` at a prepared release commit on top of `base` and
     /// open or update its pull request into `base`. Nothing is tagged until the
     /// pull request merges.
     ProposeReleasePullRequest { release_branch: String, base: String },
@@ -286,21 +286,28 @@ impl ReleasePublisher {
     ) -> Result<ReleaseReport> {
         self.github.ensure_token()?;
         if options.create_pr {
-            if options.phase != ReleasePhase::All {
-                anyhow::bail!(
-                    "--create-pr cannot be combined with --phase: the release pull request already separates the version bump from the tag"
-                );
-            }
             validate_release_branch(&options.release_branch)?;
+            anyhow::ensure!(
+                options.phase != ReleasePhase::Tag || !options.extra_files.is_empty(),
+                "--phase tag with --create-pr requires --extra-files to propose"
+            );
         }
         let analysis = self.analyze(options, expected_head, analysis_sha)?;
         analysis.ensure_manifest_not_behind_latest_tag()?;
+        anyhow::ensure!(
+            options.phase != ReleasePhase::Bump
+                || !options.create_pr
+                || !analysis.manifest_unreleased(),
+            "the manifest already holds an untagged version; complete it before proposing another bump"
+        );
         // A merged release pull request leaves the bump on the base branch with
         // no tag. Bumping again would open a fresh pull request for a version
         // nobody asked for and leave the merged one unreleased forever, so the
         // version already on the branch is what gets tagged.
         let report = if options.phase == ReleasePhase::Tag
-            || (options.create_pr && analysis.manifest_unreleased())
+            || (options.phase == ReleasePhase::All
+                && options.create_pr
+                && analysis.manifest_unreleased())
         {
             self.release_manifest_version(options, analysis)?
         } else {
@@ -426,7 +433,14 @@ impl ReleasePublisher {
         // tag lands on the existing head instead of an empty commit.
         let file_updates = extra_file_updates(&options.repo_root, &options.extra_files, &[])?;
 
-        let action = ReleaseAction::TagManifestVersion { branch: analysis.branch.clone() };
+        let action = if options.create_pr && options.phase == ReleasePhase::Tag {
+            ReleaseAction::ProposeReleasePullRequest {
+                release_branch: options.release_branch.clone(),
+                base: analysis.branch.clone(),
+            }
+        } else {
+            ReleaseAction::TagManifestVersion { branch: analysis.branch.clone() }
+        };
         self.prepare_and_publish(options, analysis, version, tag, file_updates, action, report)
     }
 
@@ -621,17 +635,36 @@ impl ReleasePublisher {
         let branch_ref = format!("heads/{}", options.release_branch);
         self.update_release_branch(owner, repo, &branch_ref, commit_sha)?;
 
-        let title = format!("chore(release): {}", prepared.tag);
+        let pin_proposal = options.phase == ReleasePhase::Tag;
+        let (title, change) = if pin_proposal {
+            (
+                format!("chore(release): prepare artifacts for {}", prepared.tag),
+                format!(
+                    "This PR records the verified release files for `{}`. After review and merge into `{}`, the release workflow revalidates the resulting commit before publishing.",
+                    prepared.tag, prepared.branch
+                ),
+            )
+        } else {
+            (
+                format!("chore(release): {}", prepared.tag),
+                format!(
+                    "This PR updates the package version from `{}` to `{}`. Merging it into `{}` allows the release workflow to continue.",
+                    report.current_version, prepared.next_version, prepared.branch
+                ),
+            )
+        };
         let notes = report.notes.clone().unwrap_or_default();
-        let body = format!(
-            "Automated release update for `{}`.\n\nThis PR updates the package version from `{}` to `{}`. Merging it into `{}` allows the release workflow to publish the tag and GitHub release.\n\n{}\n\n<!-- automated-release-branch: {} -->",
-            prepared.tag,
-            report.current_version,
-            prepared.next_version,
-            prepared.branch,
-            notes,
-            options.release_branch,
-        );
+        let body = if options.phase == ReleasePhase::All {
+            format!(
+                "Automated release update for `{}`.\n\n{change}\n\n{notes}\n\n<!-- automated-release-branch: {} -->",
+                prepared.tag, options.release_branch,
+            )
+        } else {
+            format!(
+                "## Summary\n\n{change}\n\n## Validation\n\n- CI, Security, and Docker passed on the proposal base `{}`.\n- The proposal has its own GitHub checks. `make ci` was not run locally.\n\n## Checklist\n\n- [ ] Review the proposed release files and their GitHub checks.\n- [ ] Check security impact with the hosted Security and Docker results.\n- [x] Documentation and template bootstrap instructions need no changes for this release proposal.\n\n{notes}\n\n<!-- automated-release-branch: {} -->",
+                prepared.head_sha, options.release_branch,
+            )
+        };
         let pull_request = self.upsert_release_pull_request(
             owner,
             repo,
