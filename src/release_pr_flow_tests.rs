@@ -21,6 +21,34 @@ use super::{
 use crate::{BumpLevel, ReleaseOptions, ReleaseOutcome, ReleaseReport};
 
 const BREAKING_AFTER_RELEASE: &str = r#"{"total_commits":3,"commits":[{"sha":"fixbbbbbbbb","commit":{"message":"fix(testkit): stop log capture racing"},"parents":[{}]},{"sha":"releasecccc","commit":{"message":"chore: release v0.2.3 (#86)"},"parents":[{}]},{"sha":"breakingddd","commit":{"message":"feat(api)!: remove the legacy endpoint"},"parents":[{}]}]}"#;
+/// Only the GitHub two-parent merge carries the major marker.
+const BREAKING_MERGE: &str = r#"{
+    "sha":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "commit":{"message":"Merge pull request #28 from acme/api\n\nfeat(api)!: replace the endpoint"},
+    "parents":[{"sha":"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"},{"sha":"cccccccccccccccccccccccccccccccccccccccc"}]
+}"#;
+
+fn breaking_merge_range(reviewed_head: Option<&str>) -> String {
+    let Some(reviewed_head) = reviewed_head else {
+        return format!(r#"{{"total_commits":1,"commits":[{BREAKING_MERGE}]}}"#);
+    };
+    format!(
+        r#"{{"total_commits":2,"commits":[{BREAKING_MERGE},{{
+            "sha":"{reviewed_head}",
+            "commit":{{"message":"Merge pull request #88 from acme/automation/release\n\nchore(release): v1.0.0"}},
+            "parents":[{{"sha":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"}},{{"sha":"dddddddddddddddddddddddddddddddddddddddd"}}]
+        }}]}}"#
+    )
+}
+
+fn mock_pr_title_merge_messages(server: &mut ServerGuard) -> Mock {
+    server
+        .mock("GET", "/repos/acme/demo")
+        .with_status(200)
+        .with_body(r#"{"default_branch":"main","merge_commit_message":"PR_TITLE"}"#)
+        .create()
+}
+
 /// What lands after the merged release is tagged: tooling-only commits.
 const CI_ONLY: &str = r#"{"total_commits":1,"commits":[{"sha":"ciddddddddd","commit":{"message":"ci: repin release automation"},"parents":[{}]}]}"#;
 const NEXT_FIX: &str = r#"{"total_commits":1,"commits":[{"sha":"fixeeeeeeee","commit":{"message":"fix: repair another thing"},"parents":[{}]}]}"#;
@@ -278,6 +306,92 @@ fn breaking_commit_after_the_release_pull_request_opens_a_corrected_proposal() {
     assert_all(&build);
     assert_all(&pull_request);
     assert_all(&no_tagging);
+}
+
+#[test]
+fn breaking_merge_requires_a_corrected_proposal_before_tagging() {
+    let temp_dir = write_fixture_repo();
+    propose_breaking_merge_correction(temp_dir.path());
+    tag_reviewed_merge_correction(temp_dir.path());
+}
+
+fn propose_breaking_merge_correction(repo: &Path) {
+    let mut server = Server::new();
+    let range = mock_range(&mut server, 2, TAGS_V022, "v0.2.2", &breaking_merge_range(None));
+    let setting = mock_pr_title_merge_messages(&mut server);
+    let tag_missing = mock_tag_lookup(&mut server, "v1.0.0", 404, NOT_FOUND);
+    let build = mock_build_chain(&mut server);
+    let pull_request = mock_open_release_pull_request(&mut server, "1.0.0");
+    let no_tagging = mock_no_tagging(&mut server);
+
+    let report = run(&server, repo, false);
+
+    assert_eq!(report.outcome, ReleaseOutcome::PullRequestCreated);
+    assert_eq!(report.next_version.as_deref(), Some("1.0.0"));
+    assert_eq!(report.pull_request_number, Some(88));
+    assert_all(&range);
+    assert_all(&build);
+    assert_all(&pull_request);
+    assert_all(&no_tagging);
+    setting.assert();
+    tag_missing.assert();
+}
+
+fn tag_reviewed_merge_correction(repo: &Path) {
+    const REVIEWED_HEAD: &str = "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee";
+    fs::write(repo.join("Cargo.toml"), "[package]\nname = \"demo\"\nversion = \"1.0.0\"\n")
+        .expect("write adopted release version");
+    let mut server = Server::new();
+    let head = mock_head_ref(&mut server, REVIEWED_HEAD, 2);
+    let tags = mock_tags(&mut server, TAGS_V022);
+    let comparison = server
+        .mock(
+            "GET",
+            format!("/repos/acme/demo/compare/v0.2.2...{REVIEWED_HEAD}?per_page=100&page=1")
+                .as_str(),
+        )
+        .with_status(200)
+        .with_body(breaking_merge_range(Some(REVIEWED_HEAD)))
+        .create();
+    let setting = mock_pr_title_merge_messages(&mut server);
+    let tag_missing = mock_tag_lookup(&mut server, "v1.0.0", 404, NOT_FOUND);
+    let publication = mock_reviewed_correction_tag(&mut server, REVIEWED_HEAD);
+    let no_branch_writes = mock_no_commit_or_branch_writes(&mut server);
+
+    let report = publisher(&server)
+        .release_at_head(&create_pr_options(repo, false), REVIEWED_HEAD)
+        .expect("release the reviewed correction");
+
+    assert_eq!(report.outcome, ReleaseOutcome::Released);
+    assert_eq!(report.tag.as_deref(), Some("v1.0.0"));
+    assert_all(&[head, tags, comparison, setting, tag_missing]);
+    assert_all(&publication);
+    assert_all(&no_branch_writes);
+}
+
+fn mock_reviewed_correction_tag(server: &mut ServerGuard, head: &str) -> [Mock; 3] {
+    let tag = mock_once(
+        server,
+        "POST",
+        "/repos/acme/demo/git/tags",
+        &[r#""tag":"v1\.0\.0""#, &format!(r#""object":"{head}""#)],
+        r#"{"sha":"tagobjectsha"}"#,
+    );
+    let tag_ref = mock_once(
+        server,
+        "POST",
+        "/repos/acme/demo/git/refs",
+        &[r#""ref":"refs/tags/v1\.0\.0""#],
+        r#"{"ref":"refs/tags/v1.0.0"}"#,
+    );
+    let release = mock_once(
+        server,
+        "POST",
+        "/repos/acme/demo/releases",
+        &[r#""tag_name":"v1\.0\.0""#, "### Breaking Changes"],
+        r#"{"html_url":"https://github.com/acme/demo/releases/tag/v1.0.0"}"#,
+    );
+    [tag, tag_ref, release]
 }
 
 #[test]
