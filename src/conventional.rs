@@ -7,6 +7,7 @@
 
 use std::sync::LazyLock;
 
+use anyhow::Result;
 use regex::Regex;
 use semver::Version;
 
@@ -23,7 +24,7 @@ static BREAKING_BODY_RE: LazyLock<Regex> =
     LazyLock::new(|| Regex::new(r"(?m)^BREAKING[- ]CHANGE\b").expect("breaking regex is valid"));
 
 static GITHUB_MERGE_RE: LazyLock<Regex> = LazyLock::new(|| {
-    Regex::new(r"^Merge pull request #[1-9][0-9]* from [A-Za-z0-9-]+/[^\s]+$")
+    Regex::new(r"^Merge pull request #([1-9][0-9]*) from [A-Za-z0-9-]+/[^\s]+$")
         .expect("GitHub merge subject regex is valid")
 });
 
@@ -80,28 +81,28 @@ fn classify_commit(sha: &str, message: &str) -> ConventionalCommit {
 
 /// Identify a wrapped breaking subject that needs repository metadata to be
 /// distinguished from the first line of a PR body.
-pub(crate) fn wrapped_breaking_subject(commit: &HistoryCommit) -> Option<&str> {
-    if commit.parent_count() != 2 {
+fn wrapped_breaking_subject(message: &str) -> Option<(u64, &str)> {
+    let mut lines = message.lines();
+    let captures = GITHUB_MERGE_RE.captures(lines.next()?)?;
+    if !lines.next()?.trim().is_empty() {
         return None;
     }
-    let mut lines = commit.message().lines();
-    if !GITHUB_MERGE_RE.is_match(lines.next()?) || !lines.next()?.trim().is_empty() {
+    let title = lines.find(|line| !line.trim().is_empty())?;
+    if classify_message(title, "") != CommitKind::Breaking {
         return None;
     }
-    lines
-        .find(|line| !line.trim().is_empty())
-        .filter(|line| classify_message(line, "") == CommitKind::Breaking)
+    Some((captures[1].parse().ok()?, title))
 }
 
 pub(crate) fn classify_reviewed_history(
     commits: &[HistoryCommit],
-    merge_message_uses_pr_title: bool,
-) -> Vec<ConventionalCommit> {
+    mut confirm_pr_title: impl FnMut(&str, u64, &str) -> Result<bool>,
+) -> Result<Vec<ConventionalCommit>> {
     commits
         .iter()
         .filter_map(|commit| match commit.parent_count() {
-            0 | 1 => Some(classify_commit(commit.sha(), commit.message())),
-            2 => classify_breaking_merge(commit, merge_message_uses_pr_title),
+            0 | 1 => Some(Ok(classify_commit(commit.sha(), commit.message()))),
+            2 => classify_breaking_merge(commit, &mut confirm_pr_title).transpose(),
             _ => None,
         })
         .collect()
@@ -109,21 +110,25 @@ pub(crate) fn classify_reviewed_history(
 
 fn classify_breaking_merge(
     commit: &HistoryCommit,
-    merge_message_uses_pr_title: bool,
-) -> Option<ConventionalCommit> {
-    let subject = commit.message().lines().next()?.trim();
-    let title = merge_message_uses_pr_title.then(|| wrapped_breaking_subject(commit)).flatten();
-    if title.is_none()
-        && classify_message(subject, "") != CommitKind::Breaking
-        && !has_breaking_trailer(commit.message())
-    {
-        return None;
-    }
-    Some(ConventionalCommit {
+    confirm_pr_title: &mut impl FnMut(&str, u64, &str) -> Result<bool>,
+) -> Result<Option<ConventionalCommit>> {
+    let message = commit.message();
+    let subject = message.lines().next().unwrap_or_default().trim();
+    let breaking_subject =
+        if classify_message(subject, "") == CommitKind::Breaking || has_breaking_trailer(message) {
+            subject
+        } else if let Some((number, title)) = wrapped_breaking_subject(message)
+            && confirm_pr_title(commit.sha(), number, title)?
+        {
+            title
+        } else {
+            return Ok(None);
+        };
+    Ok(Some(ConventionalCommit {
         sha: commit.sha().to_owned(),
         kind: CommitKind::Breaking,
-        subject: title.unwrap_or(subject).to_owned(),
-    })
+        subject: breaking_subject.to_owned(),
+    }))
 }
 
 fn has_breaking_trailer(message: &str) -> bool {
@@ -131,11 +136,11 @@ fn has_breaking_trailer(message: &str) -> bool {
     let Some(separator) = lines.iter().rposition(|line| line.trim().is_empty()) else {
         return false;
     };
-    let footer = &lines[separator + 1..];
-    footer.first().is_some_and(|line| TRAILER_RE.is_match(line))
-        && footer.iter().all(|line| TRAILER_RE.is_match(line) || line.starts_with([' ', '\t']))
-        && footer.iter().any(|line| BREAKING_TRAILER_RE.is_match(line))
-        && !inside_markdown_fence(&lines[..separator])
+    let start = separator + 1;
+    lines.get(start).is_some_and(|line| TRAILER_RE.is_match(line))
+        && (start..lines.len()).any(|index| {
+            BREAKING_TRAILER_RE.is_match(lines[index]) && !inside_markdown_fence(&lines[..index])
+        })
 }
 
 /// A terminal paragraph in an unfinished code block is still quoted text.
@@ -156,7 +161,9 @@ fn inside_markdown_fence(lines: &[&str]) -> bool {
             {
                 fence = None;
             }
-            None if length >= 3 => fence = Some((marker, length)),
+            None if length >= 3 && (marker == b'~' || !text[length..].contains('`')) => {
+                fence = Some((marker, length));
+            }
             _ => {}
         }
     }
@@ -284,16 +291,24 @@ mod tests {
         }
     }
 
+    fn reviewed_history(
+        commits: &[HistoryCommit],
+        uses_pr_title: bool,
+    ) -> Vec<super::ConventionalCommit> {
+        classify_reviewed_history(commits, |_, _, _| Ok(uses_pr_title)).expect("reviewed history")
+    }
+
     #[test]
     fn reviewed_releases_classify_only_explicit_two_parent_breakage() {
         for message in [
             "feat(api)!: replace the endpoint",
-            "Merge branch 'api'\n\nThe new route is documented.\n\nBREAKING CHANGE: use the new route",
+            "Merge branch 'api'\n\n```call `old()` before migration```\n\nBREAKING CHANGE: remove old()",
+            "Merge branch 'api'\n\nThe new route is documented.\n\nBREAKING CHANGE: use the new route\nUpdate the token scope as well.",
             "fix(api): replace the endpoint\r\n\r\nRefs: #28\r\nBREAKING-CHANGE: switch to the new route\r\n  and update the token scope\r\nAcked-by: Maintainers",
         ] {
-            let commits = classify_reviewed_history(&[HistoryCommit::fixture(message, 2)], false);
+            let commits = reviewed_history(&[HistoryCommit::fixture(message, 2)], false);
             assert_eq!(required_bump(&commits), Some(BumpLevel::Major), "{message}");
-            let octopus = classify_reviewed_history(&[HistoryCommit::fixture(message, 3)], true);
+            let octopus = reviewed_history(&[HistoryCommit::fixture(message, 3)], true);
             assert!(octopus.is_empty(), "{message}");
         }
     }
@@ -303,8 +318,8 @@ mod tests {
         let title = "feat(api)!: replace the endpoint";
         let message = format!("Merge pull request #28 from acme/api\n\n\n{title}\n\nSome context.");
         let history = [HistoryCommit::fixture(&message, 2)];
-        assert_eq!(required_bump(&classify_reviewed_history(&history, false)), None);
-        let commits = classify_reviewed_history(&history, true);
+        assert_eq!(required_bump(&reviewed_history(&history, false)), None);
+        let commits = reviewed_history(&history, true);
         assert_eq!(required_bump(&commits), Some(BumpLevel::Major));
         assert_eq!(commits[0].subject, title);
     }
@@ -325,7 +340,7 @@ mod tests {
             "Merge branch 'api'\n\nBREAKING CHANGE: an old heading\n\nLater context with no trailer.",
             "Merge branch 'api'\n\nBREAKING CHANGE:",
         ] {
-            let commits = classify_reviewed_history(&[HistoryCommit::fixture(message, 2)], true);
+            let commits = reviewed_history(&[HistoryCommit::fixture(message, 2)], true);
             assert!(commits.is_empty(), "{message}");
         }
     }

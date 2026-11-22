@@ -41,12 +41,25 @@ fn breaking_merge_range(reviewed_head: Option<&str>) -> String {
     )
 }
 
-fn mock_pr_title_merge_messages(server: &mut ServerGuard) -> Mock {
-    server
-        .mock("GET", "/repos/acme/demo")
-        .with_status(200)
-        .with_body(r#"{"default_branch":"main","merge_commit_message":"PR_TITLE"}"#)
-        .create()
+fn mock_breaking_pr_merge(server: &mut ServerGuard, setting: Option<&str>) -> [Mock; 2] {
+    let metadata = setting.map_or_else(
+        || r#"{"default_branch":"main"}"#.to_owned(),
+        |setting| format!(r#"{{"default_branch":"main","merge_commit_message":"{setting}"}}"#),
+    );
+    [
+        server.mock("GET", "/repos/acme/demo").with_status(200).with_body(metadata).create(),
+        server
+            .mock("GET", "/repos/acme/demo/pulls/28")
+            .with_status(200)
+            .with_body(
+                r#"{
+                "merged": true,
+                "merge_commit_sha":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+                "title":"feat(api)!: replace the endpoint"
+            }"#,
+            )
+            .create(),
+    ]
 }
 
 /// What lands after the merged release is tagged: tooling-only commits.
@@ -318,7 +331,7 @@ fn breaking_merge_requires_a_corrected_proposal_before_tagging() {
 fn propose_breaking_merge_correction(repo: &Path) {
     let mut server = Server::new();
     let range = mock_range(&mut server, 2, TAGS_V022, "v0.2.2", &breaking_merge_range(None));
-    let setting = mock_pr_title_merge_messages(&mut server);
+    let merge = mock_breaking_pr_merge(&mut server, Some("PR_TITLE"));
     let tag_missing = mock_tag_lookup(&mut server, "v1.0.0", 404, NOT_FOUND);
     let build = mock_build_chain(&mut server);
     let pull_request = mock_open_release_pull_request(&mut server, "1.0.0");
@@ -333,7 +346,7 @@ fn propose_breaking_merge_correction(repo: &Path) {
     assert_all(&build);
     assert_all(&pull_request);
     assert_all(&no_tagging);
-    setting.assert();
+    assert_all(&merge);
     tag_missing.assert();
 }
 
@@ -353,7 +366,7 @@ fn tag_reviewed_merge_correction(repo: &Path) {
         .with_status(200)
         .with_body(breaking_merge_range(Some(REVIEWED_HEAD)))
         .create();
-    let setting = mock_pr_title_merge_messages(&mut server);
+    let merge = mock_breaking_pr_merge(&mut server, None);
     let tag_missing = mock_tag_lookup(&mut server, "v1.0.0", 404, NOT_FOUND);
     let publication = mock_reviewed_correction_tag(&mut server, REVIEWED_HEAD);
     let no_branch_writes = mock_no_commit_or_branch_writes(&mut server);
@@ -364,7 +377,8 @@ fn tag_reviewed_merge_correction(repo: &Path) {
 
     assert_eq!(report.outcome, ReleaseOutcome::Released);
     assert_eq!(report.tag.as_deref(), Some("v1.0.0"));
-    assert_all(&[head, tags, comparison, setting, tag_missing]);
+    assert_all(&[head, tags, comparison, tag_missing]);
+    assert_all(&merge);
     assert_all(&publication);
     assert_all(&no_branch_writes);
 }

@@ -151,6 +151,13 @@ struct PullRequestResponse {
 }
 
 #[derive(Debug, Deserialize)]
+struct MergedPullRequestResponse {
+    merged: bool,
+    merge_commit_sha: Option<String>,
+    title: String,
+}
+
+#[derive(Debug, Deserialize)]
 struct UserResponse {
     login: Option<String>,
 }
@@ -507,8 +514,34 @@ impl GitHubClient {
         &self,
         owner: &str,
         repository: &str,
+    ) -> Result<Option<bool>> {
+        Ok(self
+            .repository(owner, repository)?
+            .merge_commit_message
+            .map(|value| value == "PR_TITLE"))
+    }
+
+    pub(crate) fn merged_pull_request_matches(
+        &self,
+        owner: &str,
+        repository: &str,
+        number: u64,
+        merge_sha: &str,
+        title: Option<&str>,
     ) -> Result<bool> {
-        Ok(self.repository(owner, repository)?.merge_commit_message.as_deref() == Some("PR_TITLE"))
+        let response = self.get_with_retry_allowing_not_found(
+            &format!("/repos/{owner}/{repository}/pulls/{number}"),
+            || format!("fetch merged pull request {number} for {owner}/{repository}"),
+        )?;
+        let Some(response) = response else {
+            return Ok(false);
+        };
+        let pull = response.json::<MergedPullRequestResponse>().with_context(|| {
+            format!("failed to decode pull request {number} for {owner}/{repository}")
+        })?;
+        Ok(pull.merged
+            && pull.merge_commit_sha.as_deref() == Some(merge_sha)
+            && title.is_none_or(|title| pull.title == title))
     }
 
     fn repository(&self, owner: &str, repository: &str) -> Result<RepositoryResponse> {
