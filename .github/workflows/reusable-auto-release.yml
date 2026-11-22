@@ -452,6 +452,7 @@ jobs:
       - name: Create GitHub App installation token
         id: github-app-token
         if: inputs.github-app-id != '' && env.HAS_GITHUB_APP_PRIVATE_KEY == 'true'
+        # nosemgrep: third-party-action-not-pinned-to-commit-sha
         uses: $/.github/actions/mint-app-token
         with:
           client-id: ${{ inputs.github-app-id }}

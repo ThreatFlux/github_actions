@@ -312,6 +312,7 @@ jobs:
       - name: Create a release proposal App token
         if: steps.verified_runtime.outputs.ready_to_tag != 'true' && steps.proposal.outputs.reuse != 'true'
         id: proposal_token
+        # nosemgrep: third-party-action-not-pinned-to-commit-sha
         uses: $/.github/actions/mint-app-token
         with:
           client-id: ${{ vars.TF_AUTOMATION_APP_ID }}

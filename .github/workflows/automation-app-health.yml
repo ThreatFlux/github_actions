@@ -59,6 +59,7 @@ jobs:
       - name: Mint an App token
         id: app-token
         continue-on-error: true
+        # nosemgrep: third-party-action-not-pinned-to-commit-sha
         uses: $/.github/actions/mint-app-token
         with:
           client-id: ${{ vars.TF_AUTOMATION_APP_ID }}
@@ -85,6 +86,7 @@ jobs:
         id: secrets-token
         if: steps.app-token.outcome == 'success'
         continue-on-error: true
+        # nosemgrep: third-party-action-not-pinned-to-commit-sha
         uses: $/.github/actions/mint-app-token
         with:
           client-id: ${{ vars.TF_AUTOMATION_APP_ID }}
@@ -141,6 +143,7 @@ jobs:
         id: variables-token
         if: steps.app-token.outcome == 'success'
         continue-on-error: true
+        # nosemgrep: third-party-action-not-pinned-to-commit-sha
         uses: $/.github/actions/mint-app-token
         with:
           client-id: ${{ vars.TF_AUTOMATION_APP_ID }}

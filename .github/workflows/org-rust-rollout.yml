@@ -101,6 +101,7 @@ jobs:
           path: org-rust-artifacts
       - name: Mint a token for exactly this public repository
         id: app
+        # nosemgrep: third-party-action-not-pinned-to-commit-sha
         uses: $/.github/actions/mint-app-token
         with:
           client-id: ${{ vars.TF_AUTOMATION_APP_ID }}
@@ -162,6 +163,7 @@ jobs:
         run: python3 .github/org-rust/cli.py preflight --expected-policy-commit "$POLICY_SHA" --output central-source.json
       - name: Request the actual installed capability without ref writes
         id: app
+        # nosemgrep: third-party-action-not-pinned-to-commit-sha
         uses: $/.github/actions/mint-app-token
         with:
           client-id: ${{ vars.TF_AUTOMATION_APP_ID }}

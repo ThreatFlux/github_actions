@@ -82,6 +82,7 @@ jobs:
           path: org-rust-artifacts
       - name: Mint only central-policy PR permissions
         id: app
+        # nosemgrep: third-party-action-not-pinned-to-commit-sha
         uses: $/.github/actions/mint-app-token
         with:
           client-id: ${{ vars.TF_AUTOMATION_APP_ID }}
