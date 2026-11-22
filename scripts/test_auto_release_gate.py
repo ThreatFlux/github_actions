@@ -262,5 +262,6 @@ class AutoReleaseGateTests(unittest.TestCase):
         self.assertIn("if: steps.verified_runtime.outputs.ready_to_tag == 'true'", publish)
         self.assertIn("expected-head: ${{ needs.check.outputs.target_sha }}", publish)
         self.assertIn("phase: tag", publish)
+        self.assertIn('create-pr: "true"', publish)
         self.assertNotIn("extra-files:", publish)
         self.assertNotIn("git/refs/heads/main", source)

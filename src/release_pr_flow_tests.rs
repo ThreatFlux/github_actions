@@ -9,19 +9,18 @@
 //! exactly once, the following run is a no-op, and a dry run of either step
 //! writes nothing.
 
-use std::path::Path;
+use std::{fs, path::Path};
 
 use mockito::{Matcher, Mock, Server, ServerGuard};
 
 use super::{
-    mock_build_chain, mock_head_ref, mock_tag_lookup, mock_tags, options, publisher,
+    FIX_THEN_MERGED_RELEASE, mock_build_chain, mock_build_chain_with_parents, mock_head_ref,
+    mock_missing_release_branch, mock_tag_lookup, mock_tags, options, publisher,
     write_fixture_repo,
 };
-use crate::{ReleaseOptions, ReleaseOutcome, ReleaseReport};
+use crate::{BumpLevel, ReleaseOptions, ReleaseOutcome, ReleaseReport};
 
-/// The range a run sees right after the 0.2.3 release pull request merged:
-/// the fix it shipped, then its squash-merged release commit.
-const FIX_THEN_MERGED_RELEASE: &str = r#"{"total_commits":2,"commits":[{"sha":"fixbbbbbbbb","commit":{"message":"fix(testkit): stop log capture racing"},"parents":[{}]},{"sha":"releasecccc","commit":{"message":"chore: release v0.2.3 (#86)"},"parents":[{}]}]}"#;
+const BREAKING_AFTER_RELEASE: &str = r#"{"total_commits":3,"commits":[{"sha":"fixbbbbbbbb","commit":{"message":"fix(testkit): stop log capture racing"},"parents":[{}]},{"sha":"releasecccc","commit":{"message":"chore: release v0.2.3 (#86)"},"parents":[{}]},{"sha":"breakingddd","commit":{"message":"feat(api)!: remove the legacy endpoint"},"parents":[{}]}]}"#;
 /// What lands after the merged release is tagged: tooling-only commits.
 const CI_ONLY: &str = r#"{"total_commits":1,"commits":[{"sha":"ciddddddddd","commit":{"message":"ci: repin release automation"},"parents":[{}]}]}"#;
 const NEXT_FIX: &str = r#"{"total_commits":1,"commits":[{"sha":"fixeeeeeeee","commit":{"message":"fix: repair another thing"},"parents":[{}]}]}"#;
@@ -29,6 +28,8 @@ const EMPTY_RANGE: &str = r#"{"total_commits":0,"commits":[]}"#;
 const TAGS_V022: &str = r#"[{"name":"v0.2.2","commit":{"sha":"tag022sha"}}]"#;
 const TAGS_V023_V022: &str = r#"[{"name":"v0.2.3","commit":{"sha":"basecommitsha"}},{"name":"v0.2.2","commit":{"sha":"tag022sha"}}]"#;
 const NOT_FOUND: &str = r#"{"message":"Not Found"}"#;
+const FIND_RELEASE_PR: &str =
+    "/repos/acme/demo/pulls?state=open&head=acme%3Aautomation%2Frelease&base=main&per_page=100";
 
 /// Read-side mocks: the head ref (read `head_hits` times), the tag listing,
 /// and the range from `base_tag` to the head.
@@ -82,6 +83,17 @@ fn mock_no_writes(server: &mut ServerGuard) -> Vec<Mock> {
             ("PATCH", "/repos/acme/demo/git/refs/heads/automation/release"),
             ("POST", "/repos/acme/demo/releases"),
             ("POST", "/repos/acme/demo/pulls"),
+        ],
+    )
+}
+
+fn mock_no_tagging(server: &mut ServerGuard) -> Vec<Mock> {
+    mock_never(
+        server,
+        &[
+            ("POST", "/repos/acme/demo/git/tags"),
+            ("POST", "/repos/acme/demo/releases"),
+            ("PATCH", "/repos/acme/demo/git/refs/heads/main"),
         ],
     )
 }
@@ -158,16 +170,10 @@ fn mock_tag_and_release_v023(server: &mut ServerGuard) -> Vec<Mock> {
 }
 
 /// A missing release branch, its creation at the bump commit, and a new
-/// pull request titled for v0.2.4.
-fn mock_open_release_pull_request_v024(server: &mut ServerGuard) -> Vec<Mock> {
-    let find_pull_request =
-        "/repos/acme/demo/pulls?state=open&head=acme%3Aautomation%2Frelease&base=main&per_page=100";
+/// pull request titled for the selected version.
+fn mock_open_release_pull_request(server: &mut ServerGuard, version: &str) -> Vec<Mock> {
     vec![
-        server
-            .mock("GET", "/repos/acme/demo/git/ref/heads/automation/release")
-            .with_status(404)
-            .with_body(NOT_FOUND)
-            .create(),
+        mock_missing_release_branch(server),
         mock_once(
             server,
             "POST",
@@ -175,12 +181,12 @@ fn mock_open_release_pull_request_v024(server: &mut ServerGuard) -> Vec<Mock> {
             &[r#""ref":"refs/heads/automation/release".*"sha":"newcommitsha""#],
             r#"{"ref":"refs/heads/automation/release"}"#,
         ),
-        server.mock("GET", find_pull_request).with_status(200).with_body("[]").create(),
+        server.mock("GET", FIND_RELEASE_PR).with_status(200).with_body("[]").create(),
         mock_once(
             server,
             "POST",
             "/repos/acme/demo/pulls",
-            &[r#""title":"chore\(release\): v0\.2\.4""#],
+            &[&format!(r#""title":"chore\(release\): v{}""#, regex::escape(version))],
             r#"{"number":88,"html_url":"https://github.com/acme/demo/pull/88"}"#,
         ),
     ]
@@ -252,6 +258,173 @@ fn merged_release_pull_request_is_tagged_once_and_the_next_run_is_a_no_op() {
     run_after_the_tag(temp_dir.path());
 }
 
+#[test]
+fn breaking_commit_after_the_release_pull_request_opens_a_corrected_proposal() {
+    let temp_dir = write_fixture_repo();
+    let mut server = Server::new();
+    let range = mock_range(&mut server, 2, TAGS_V022, "v0.2.2", BREAKING_AFTER_RELEASE);
+    let tag_missing = mock_tag_lookup(&mut server, "v1.0.0", 404, NOT_FOUND);
+    let build = mock_build_chain(&mut server);
+    let pull_request = mock_open_release_pull_request(&mut server, "1.0.0");
+    let no_tagging = mock_no_tagging(&mut server);
+
+    let report = run(&server, temp_dir.path(), false);
+
+    assert_eq!(report.outcome, ReleaseOutcome::PullRequestCreated);
+    assert_eq!(report.next_version.as_deref(), Some("1.0.0"));
+    assert_eq!(report.pull_request_number, Some(88));
+    tag_missing.assert();
+    assert_all(&range);
+    assert_all(&build);
+    assert_all(&pull_request);
+    assert_all(&no_tagging);
+}
+
+#[test]
+fn incomplete_release_range_blocks_tagging_the_manifest_version() {
+    let temp_dir = write_fixture_repo();
+    let mut server = Server::new();
+    let range =
+        mock_range(&mut server, 1, TAGS_V022, "v0.2.2", r#"{"total_commits":1,"commits":[]}"#);
+    let no_writes = mock_no_writes(&mut server);
+
+    let error = publisher(&server)
+        .release(&create_pr_options(temp_dir.path(), false))
+        .expect_err("an incomplete comparison cannot establish the required version");
+
+    assert!(error.to_string().contains("incomplete commit range"), "{error}");
+    assert_all(&range);
+    assert_all(&no_writes);
+}
+
+#[test]
+fn pre_v1_opt_in_tags_a_reviewed_minor_covering_a_breaking_change() {
+    let temp_dir = write_fixture_repo();
+    fs::write(
+        temp_dir.path().join("Cargo.toml"),
+        "[package]\nname = \"demo\"\nversion = \"0.3.0\"\n",
+    )
+    .expect("write reviewed manifest");
+    let mut server = Server::new();
+    let range = mock_range(&mut server, 1, TAGS_V022, "v0.2.2", BREAKING_AFTER_RELEASE);
+    let tag_missing = mock_tag_lookup(&mut server, "v0.3.0", 404, NOT_FOUND);
+    let no_writes = mock_no_writes(&mut server);
+
+    let report = publisher(&server)
+        .with_pre_v1_breaking_minor(true)
+        .release(&create_pr_options(temp_dir.path(), true))
+        .expect("reviewed minor is sufficient");
+
+    assert_eq!(report.next_version.as_deref(), Some("0.3.0"));
+    assert_eq!(
+        report.action,
+        Some(crate::ReleaseAction::TagManifestVersion { branch: "main".into() })
+    );
+    tag_missing.assert();
+    assert_all(&range);
+    assert_all(&no_writes);
+}
+
+#[test]
+fn pre_v1_opt_in_uses_minor_for_auto_and_preserves_an_explicit_major() {
+    for (forced, version) in [(None, "0.3.0"), (Some(BumpLevel::Major), "1.0.0")] {
+        let temp_dir = write_fixture_repo();
+        let mut server = Server::new();
+        let range = mock_range(&mut server, 1, TAGS_V023_V022, "v0.2.3", BREAKING_AFTER_RELEASE);
+        let tag_missing = mock_tag_lookup(&mut server, &format!("v{version}"), 404, NOT_FOUND);
+        let branch = mock_missing_release_branch(&mut server);
+        let no_writes = mock_no_writes(&mut server);
+        let mut release_options = create_pr_options(temp_dir.path(), true);
+        release_options.bump = forced;
+
+        let report = publisher(&server)
+            .with_pre_v1_breaking_minor(true)
+            .release(&release_options)
+            .expect("release proposal");
+
+        assert_eq!(report.next_version.as_deref(), Some(version));
+        tag_missing.assert();
+        branch.assert();
+        assert_all(&range);
+        assert_all(&no_writes);
+    }
+}
+
+fn mock_open_major_proposal(server: &mut ServerGuard, pull_lookups: usize) -> Vec<Mock> {
+    vec![
+        server
+            .mock("GET", "/repos/acme/demo/git/ref/heads/automation/release")
+            .with_status(200)
+            .with_body(r#"{"object":{"sha":"proposalsha"}}"#)
+            .create(),
+        server
+            .mock("GET", FIND_RELEASE_PR)
+            .expect(pull_lookups)
+            .with_status(200)
+            .with_body(r#"[{"number":88,"html_url":"https://github.com/acme/demo/pull/88"}]"#)
+            .create(),
+        server
+            .mock("GET", "/repos/acme/demo/git/trees/proposalsha?recursive=1")
+            .with_status(200)
+            .with_body(r#"{"tree":[{"path":"Cargo.toml","mode":"100644","type":"blob","sha":"oldmanifestsha"}],"truncated":false}"#)
+            .create(),
+        server
+            .mock("GET", "/repos/acme/demo/git/blobs/oldmanifestsha")
+            .match_header("accept", "application/vnd.github.raw+json")
+            .with_status(200)
+            .with_body("[package]\nname = \"demo\"\nversion = \"1.0.0\"\n")
+            .create(),
+    ]
+}
+
+#[test]
+fn auto_refresh_preserves_the_open_manual_major_and_protects_concurrent_updates() {
+    for (branch_update_status, expected) in
+        [(200, ReleaseOutcome::PullRequestUpdated), (422, ReleaseOutcome::SkippedRace)]
+    {
+        let temp_dir = write_fixture_repo();
+        let mut server = Server::new();
+        let range = mock_range(&mut server, 2, TAGS_V023_V022, "v0.2.3", NEXT_FIX);
+        let tag_missing = mock_tag_lookup(&mut server, "v1.0.0", 404, NOT_FOUND);
+        let expected_success = branch_update_status == 200;
+        let proposal = mock_open_major_proposal(&mut server, if expected_success { 2 } else { 1 });
+        let build = mock_build_chain_with_parents(
+            &mut server,
+            Matcher::PartialJsonString(
+                r#"{"message":"chore: release v1.0.0","parents":["basecommitsha","proposalsha"]}"#
+                    .into(),
+            ),
+        );
+        let branch = server
+            .mock("PATCH", "/repos/acme/demo/git/refs/heads/automation/release")
+            .match_body(Matcher::JsonString(r#"{"sha":"newcommitsha","force":false}"#.into()))
+            .with_status(branch_update_status)
+            .with_body(if expected_success { "{}" } else { "Update is not a fast forward" })
+            .create();
+        let pull_request = server
+            .mock("PATCH", "/repos/acme/demo/pulls/88")
+            .expect(usize::from(expected_success))
+            .match_body(Matcher::PartialJsonString(r#"{"title":"chore(release): v1.0.0"}"#.into()))
+            .with_status(200)
+            .with_body(r#"{"number":88,"html_url":"https://github.com/acme/demo/pull/88"}"#)
+            .create();
+        let no_tagging = mock_no_tagging(&mut server);
+
+        let report = run(&server, temp_dir.path(), false);
+
+        assert_eq!(report.outcome, expected);
+        assert_eq!(report.next_version.as_deref(), Some("1.0.0"));
+        assert_eq!(report.pull_request_number, expected_success.then_some(88));
+        tag_missing.assert();
+        branch.assert();
+        pull_request.assert();
+        assert_all(&range);
+        assert_all(&proposal);
+        assert_all(&build);
+        assert_all(&no_tagging);
+    }
+}
+
 /// A second run for the same head (the CI and Security completions each start
 /// one) finds the tag the first run created via the latest-tag listing and
 /// treats the manifest as released.
@@ -303,15 +476,8 @@ fn a_fix_after_the_tagged_release_opens_the_next_release_pull_request() {
     let _range = mock_range(&mut server, 2, TAGS_V023_V022, "v0.2.3", NEXT_FIX);
     let _tag_missing = mock_tag_lookup(&mut server, "v0.2.4", 404, NOT_FOUND);
     let _build = mock_build_chain(&mut server);
-    let pull_request = mock_open_release_pull_request_v024(&mut server);
-    let no_tagging = mock_never(
-        &mut server,
-        &[
-            ("POST", "/repos/acme/demo/git/tags"),
-            ("POST", "/repos/acme/demo/releases"),
-            ("PATCH", "/repos/acme/demo/git/refs/heads/main"),
-        ],
-    );
+    let pull_request = mock_open_release_pull_request(&mut server, "0.2.4");
+    let no_tagging = mock_no_tagging(&mut server);
 
     let report = run(&server, temp_dir.path(), false);
 
@@ -351,8 +517,9 @@ fn dry_run_of_a_release_pull_request_reports_the_bump_without_writing() {
     let mut server = Server::new();
     let _range = mock_range(&mut server, 1, TAGS_V023_V022, "v0.2.3", NEXT_FIX);
     let _tag_missing = mock_tag_lookup(&mut server, "v0.2.4", 404, NOT_FOUND);
+    let branch = mock_missing_release_branch(&mut server);
     let mut forbidden = mock_no_writes(&mut server);
-    forbidden.extend(mock_no_pull_request_lookups(&mut server));
+    forbidden.extend(mock_never(&mut server, &[("GET", FIND_RELEASE_PR)]));
 
     let report = run(&server, temp_dir.path(), true);
 
@@ -362,5 +529,6 @@ fn dry_run_of_a_release_pull_request_reports_the_bump_without_writing() {
     assert_eq!(report.pull_request_number, None);
     assert_eq!(report.release_branch, None);
     assert_eq!(report.files_updated.len(), 1);
+    branch.assert();
     assert_all(&forbidden);
 }

@@ -302,7 +302,7 @@ jobs:
             -f state=open -f base=main -f "head=${GITHUB_REPOSITORY_OWNER}:${BRANCH}" \
             --jq '.[0].head.sha // empty')"
           if [[ -n "${existing}" && "${BUMP}" == auto ]]; then
-            parent="$(gh api "repos/${GITHUB_REPOSITORY}/git/commits/${existing}" --jq '.parents | if length == 1 then .[0].sha else empty end')"
+            parent="$(gh api "repos/${GITHUB_REPOSITORY}/git/commits/${existing}" --jq '.parents[0].sha // empty')"
             if [[ "${parent}" == "${TARGET_SHA}" ]]; then
               echo "reuse=true" >> "$GITHUB_OUTPUT"
             fi
@@ -351,6 +351,7 @@ jobs:
           expected-head: ${{ needs.check.outputs.target_sha }}
           update-major-alias: "true"
           phase: tag
+          create-pr: "true"
 
       # Refusals (existing tag, manifest behind latest, or changed head) must
       # never mutate registry aliases. The publisher rechecks the tag after

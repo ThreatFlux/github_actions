@@ -29,6 +29,9 @@ Releases are driven by [Conventional Commits](https://www.conventionalcommits.or
 4. Automation explicitly dispatches `release.yml` on the new tag to build and publish the release assets.
 
 A manual `auto-release.yml` dispatch with a `version_bump` choice can propose a release when no commit qualifies. Both PRs use the usual review rules.
+If commits added during review require a larger pending version, the tag phase
+stops. Dispatch the bump phase to propose the corrected version, then repeat
+the normal review steps.
 
 ## Manual Release
 

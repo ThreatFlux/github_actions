@@ -161,6 +161,7 @@ fn tag_phase_tags_the_existing_head_when_nothing_is_staged() {
 
     let mut release_options = options(temp_dir.path());
     release_options.phase = ReleasePhase::Tag;
+    release_options.create_pr = true;
     let report = publisher(&server).release(&release_options).expect("release report");
 
     assert_eq!(report.outcome, ReleaseOutcome::Released);
@@ -273,16 +274,27 @@ fn tag_phase_notes_list_maintenance_commits_without_the_bump_commit() {
 }
 
 #[test]
-fn tag_phase_pull_request_requires_files_to_review() {
+fn reviewed_tag_phase_rejects_a_version_below_its_release_range() {
     let temp_dir = write_fixture_repo();
-    let server = Server::new();
+    let mut server = Server::new();
+    let _head = super::mock_head_ref(&mut server, "basecommitsha", 1);
+    let _tags = super::mock_tags(&mut server, r#"[{"name":"v0.2.2","commit":{"sha":"tagsha"}}]"#);
+    let _compare = server
+        .mock("GET", "/repos/acme/demo/compare/v0.2.2...basecommitsha?per_page=100&page=1")
+        .with_status(200)
+        .with_body(FEAT_AND_FIX)
+        .create();
+    let no_mutations = mock_no_mutations(&mut server);
 
     let mut release_options = options(temp_dir.path());
     release_options.create_pr = true;
     release_options.phase = ReleasePhase::Tag;
     let error = publisher(&server).release(&release_options).expect_err("combination must fail");
 
-    assert!(error.to_string().contains("--extra-files"), "unexpected error: {error}");
+    assert!(error.to_string().contains("below its release range"), "unexpected error: {error}");
+    for mocked in no_mutations {
+        mocked.assert();
+    }
 }
 
 #[test]

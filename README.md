@@ -256,6 +256,7 @@ prebuilt image, so it starts in seconds instead of compiling from source.
 | `expected-head` | `release` | none | Exact validated branch commit; reject a different branch head before release analysis or writes. |
 | `analysis-sha` | `release` | none | Immutable commit for a dry-run preview; cannot enable writes or be combined with `expected-head`. |
 | `bump` | `release` | `auto` | `auto`, `major`, `minor`, or `patch`. |
+| `pre-v1-breaking-minor` | `release` | `false` | Infer a minor bump for breaking changes before 1.0. |
 | `tag-prefix` | `release` | `v` | Prefix for release tags. |
 | `tag-style` | `release` | `annotated` | `annotated` or `lightweight`. |
 | `update-major-alias` | `release` | `false` | Also move the moving major alias tag (for example `v0`). |
@@ -413,18 +414,16 @@ jobs:
           echo "${{ steps.release.outputs.release-pr-url }}"
 ```
 
-In pull-request mode no tag moves and no GitHub Release is published, so
-`released` stays `false` and `release-pr-number`/`release-pr-url`/`release-branch`
-carry the result; the tag and Release are cut by the follow-on release run
-after the pull request merges.
+A proposal returns `released=false` and reports the pull request through
+`release-pr-number`, `release-pr-url`, and `release-branch`. Automatic runs
+retain a higher version already proposed in an open release pull request.
 
-That follow-on run tags the version the merged pull request left in the
-manifest rather than bumping again. The release range is measured from the
-latest tag, so a run that bumped a second time would keep proposing new
-versions for commits the merged pull request already covered and never
-publish any of them. Once the manifest version is tagged, later runs bump
-from it as usual, and merges whose commits are only `chore:`/`docs:` produce
-no release at all — the action exits successfully with `released=false`.
+After the proposal merges, the next run checks its manifest version against
+the commits since the latest release tag. If that version covers the range,
+the action tags the validated branch head. If the range needs a larger bump,
+the action proposes a corrected version for review. An incomplete range
+prevents tagging. After a version is tagged, later runs bump from it as usual.
+Maintenance-only commits such as `chore:` and `docs:` produce no automatic bump.
 
 ### Tokens and downstream pipelines
 
@@ -703,11 +702,12 @@ What the computed version means depends on the mode:
 |---|---|---|---|
 | either | Manifest version is lower than the highest tag | None: the run fails with `Cargo.toml version <manifest> is lower than the latest release tag <tag>` | Nothing; it fails the same way |
 | push (`create-pr: false`) | Any other state | Manifest version bumped by the strongest conventional commit since the highest tag (or by `bump`) | Commit the manifest and lockfile rewrite to the base branch (fast-forward only), create the annotated tag (and the major alias when enabled), publish the GitHub Release, and run `dispatch-workflows` |
-| `create-pr: true` | Manifest version is higher than the highest tag, or there is no tag yet (a release pull request was merged) | The manifest version itself (`0.5.1 -> 0.5.1`, no `would update` lines), whatever the commits since the tag | Tag the existing base branch head with that version and publish its GitHub Release, without a new commit or pull request, then run `dispatch-workflows` |
-| `create-pr: true` | Manifest version equals the highest tag | Manifest version bumped as in push mode | Force-update `release-branch` with the version rewrite on top of the base branch head and open or update its pull request. No tag, Release, or dispatch until that pull request merges |
+| `create-pr: true` | An untagged manifest version covers the commits since the highest tag, or this is the first release | The existing manifest version | Tag the validated base branch head, publish its GitHub Release, and run `dispatch-workflows` |
+| `create-pr: true` | Later commits require a larger bump than the untagged manifest version | The corrected version computed from the highest tag, with a higher open proposal retained in automatic mode | Open or refresh a release pull request and wait for it to merge |
+| `create-pr: true` | Manifest version equals the highest tag | The version computed from the manifest, with a higher open proposal retained in automatic mode | Open or refresh a release pull request and wait for it to merge |
 
-A dry run does not look up whether the release pull request already exists,
-so in the last row it says "open or update" rather than which one.
+Automatic previews read the open release proposal when computing the version
+to report. They write release notes and outputs locally.
 
 The first row fails closed because the range starts at the highest tag while
 the bump starts from the manifest: a manifest behind that tag would propose a

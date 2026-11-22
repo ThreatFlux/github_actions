@@ -23,7 +23,12 @@ def workflow_step(name):
 
 
 class PreviewRuntimeGuardTests(unittest.TestCase):
-    def capability(self, image=IMAGE, help_text="--dry-run --analysis-sha <SHA>"):
+    def capability(
+        self,
+        image=IMAGE,
+        help_text="--dry-run --analysis-sha <SHA>",
+        pre_v1_breaking_minor=False,
+    ):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             (root / "runtime").mkdir()
@@ -44,6 +49,7 @@ class PreviewRuntimeGuardTests(unittest.TestCase):
                 ACTION_ROOT=str(root),
                 EXPECTED_IMAGE=IMAGE,
                 FAKE_HELP=help_text,
+                PRE_V1_BREAKING_MINOR=str(pre_v1_breaking_minor).lower(),
             )
             return run_gate_script(
                 workflow_step("Verify candidate-preview runtime capability"), env
@@ -57,6 +63,15 @@ class PreviewRuntimeGuardTests(unittest.TestCase):
         result = self.capability(help_text="--dry-run --expected-head <SHA>")
         self.assertNotEqual(result.returncode, 0)
         self.assertIn("cannot bind preview analysis", result.stderr)
+
+    def test_preview_requires_support_for_the_requested_pre_v1_policy(self):
+        result = self.capability(pre_v1_breaking_minor=True)
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("does not support pre-v1-breaking-minor", result.stderr)
+        supported = self.capability(
+            help_text="--analysis-sha --pre-v1-breaking-minor", pre_v1_breaking_minor=True
+        )
+        self.assertEqual(supported.returncode, 0, supported.stderr)
 
     def test_mutable_or_foreign_runtime_pins_are_refused(self):
         for image in [
