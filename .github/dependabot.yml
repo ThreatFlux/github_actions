@@ -20,7 +20,9 @@ updates:
       - rust
 
   - package-ecosystem: github-actions
-    directory: /
+    directories:
+      - /
+      - /.github/actions/mint-app-token
     patterns: ["*"]
     multi-ecosystem-group: nightly-dependencies
     labels:

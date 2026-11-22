@@ -2,6 +2,10 @@
 # stable actionlint 1.7.12 release. Preserve the reusable workflow's exact source.
 # https://github.blog/changelog/2026-09-03-github-actions-early-september-2026-updates/
 paths:
+  .github/workflows/*.yml:
+    ignore:
+      # The runner resolves $/ at the defining workflow commit. actionlint 1.7.12 predates this syntax.
+      - '^specifying action "\$/\.github/actions/mint-app-token" in invalid format because ref is missing\.'
   .github/workflows/release.yml:
     ignore:
       - '^unexpected key "queue" for "concurrency" section\. expected one of "cancel-in-progress", "group"$'

@@ -1,0 +1,58 @@
+name: Mint GitHub App token
+description: Create an installation token with the scope requested by the workflow.
+
+inputs:
+  client-id:
+    description: GitHub App client ID
+    required: true
+  private-key:
+    description: GitHub App private key
+    required: true
+  owner:
+    description: Owner of the GitHub App installation
+    required: true
+  repositories:
+    description: Repositories to include. Omit to use all repositories in the installation.
+  permission-actions:
+    description: Access to workflow runs and artifacts
+  permission-contents:
+    description: Access to repository contents
+  permission-metadata:
+    description: Access to repository metadata
+  permission-organization-actions-variables:
+    description: Access to organization Actions variables
+  permission-organization-secrets:
+    description: Access to organization secrets
+  permission-pull-requests:
+    description: Access to pull requests
+  permission-workflows:
+    description: Access to update workflow files
+
+outputs:
+  token:
+    description: GitHub installation access token
+    value: ${{ steps.mint.outputs.token }}
+  installation-id:
+    description: GitHub App installation ID
+    value: ${{ steps.mint.outputs.installation-id }}
+  app-slug:
+    description: GitHub App slug
+    value: ${{ steps.mint.outputs.app-slug }}
+
+runs:
+  using: composite
+  steps:
+    - id: mint
+      uses: actions/create-github-app-token@f418cff399f7aef4c2f0ad47e25ca7a6abbdd6fc # v3.4.0
+      with:
+        client-id: ${{ inputs.client-id }}
+        private-key: ${{ inputs.private-key }}
+        owner: ${{ inputs.owner }}
+        repositories: ${{ inputs.repositories }}
+        permission-actions: ${{ inputs.permission-actions }}
+        permission-contents: ${{ inputs.permission-contents }}
+        permission-metadata: ${{ inputs.permission-metadata }}
+        permission-organization-actions-variables: ${{ inputs.permission-organization-actions-variables }}
+        permission-organization-secrets: ${{ inputs.permission-organization-secrets }}
+        permission-pull-requests: ${{ inputs.permission-pull-requests }}
+        permission-workflows: ${{ inputs.permission-workflows }}
