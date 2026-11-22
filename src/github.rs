@@ -106,7 +106,6 @@ pub struct ReleaseInfo {
 #[derive(Debug, Deserialize)]
 struct RepositoryResponse {
     default_branch: String,
-    merge_commit_message: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -507,18 +506,13 @@ impl GitHubClient {
     }
 
     pub fn default_branch(&self, owner: &str, repository: &str) -> Result<String> {
-        Ok(self.repository(owner, repository)?.default_branch)
-    }
-
-    pub(crate) fn merge_message_uses_pr_title(
-        &self,
-        owner: &str,
-        repository: &str,
-    ) -> Result<Option<bool>> {
-        Ok(self
-            .repository(owner, repository)?
-            .merge_commit_message
-            .map(|value| value == "PR_TITLE"))
+        let response = self.get_with_retry(&format!("/repos/{owner}/{repository}"), || {
+            format!("fetch repository metadata for {owner}/{repository}")
+        })?;
+        let repository = response.json::<RepositoryResponse>().with_context(|| {
+            format!("failed to decode repository response for {owner}/{repository}")
+        })?;
+        Ok(repository.default_branch)
     }
 
     pub(crate) fn merged_pull_request_matches(
@@ -527,7 +521,7 @@ impl GitHubClient {
         repository: &str,
         number: u64,
         merge_sha: &str,
-        title: Option<&str>,
+        title: &str,
     ) -> Result<bool> {
         let response = self.get_with_retry_allowing_not_found(
             &format!("/repos/{owner}/{repository}/pulls/{number}"),
@@ -541,16 +535,7 @@ impl GitHubClient {
         })?;
         Ok(pull.merged
             && pull.merge_commit_sha.as_deref() == Some(merge_sha)
-            && title.is_none_or(|title| pull.title == title))
-    }
-
-    fn repository(&self, owner: &str, repository: &str) -> Result<RepositoryResponse> {
-        let response = self.get_with_retry(&format!("/repos/{owner}/{repository}"), || {
-            format!("fetch repository metadata for {owner}/{repository}")
-        })?;
-        response.json::<RepositoryResponse>().with_context(|| {
-            format!("failed to decode repository response for {owner}/{repository}")
-        })
+            && pull.title == title)
     }
 
     pub fn branch_head_sha(&self, owner: &str, repository: &str, branch: &str) -> Result<String> {

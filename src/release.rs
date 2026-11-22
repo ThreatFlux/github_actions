@@ -620,7 +620,9 @@ impl ReleasePublisher {
         };
         let truncated = range.truncated;
         let commits = if options.create_pr {
-            self.classify_reviewed_commits(owner, repo, &range.commits)?
+            conventional::classify_reviewed_history(&range.commits, |sha, number, title| {
+                self.github.merged_pull_request_matches(owner, repo, number, sha, title)
+            })?
         } else {
             let range = crate::github::CommitRange::from(range);
             conventional::classify_commits(&range.commits)
@@ -636,29 +638,6 @@ impl ReleasePublisher {
             last_released,
             commits,
             truncated,
-        })
-    }
-
-    fn classify_reviewed_commits(
-        &self,
-        owner: &str,
-        repo: &str,
-        commits: &[crate::github::HistoryCommit],
-    ) -> Result<Vec<ConventionalCommit>> {
-        // Read the setting only for a wrapped breaking subject. GitHub can
-        // omit it for read-only tokens, so in that case corroborate the
-        // body line against the actual merged pull request title.
-        let mut merge_setting = None;
-        conventional::classify_reviewed_history(commits, |sha, number, title| {
-            if merge_setting.is_none() {
-                merge_setting = Some(self.github.merge_message_uses_pr_title(owner, repo)?);
-            }
-            let uses_pr_title = merge_setting.flatten();
-            if uses_pr_title == Some(false) {
-                return Ok(false);
-            }
-            let expected_title = uses_pr_title.is_none().then_some(title);
-            self.github.merged_pull_request_matches(owner, repo, number, sha, expected_title)
         })
     }
 

@@ -293,9 +293,10 @@ mod tests {
 
     fn reviewed_history(
         commits: &[HistoryCommit],
-        uses_pr_title: bool,
+        confirmed_pr_title: bool,
     ) -> Vec<super::ConventionalCommit> {
-        classify_reviewed_history(commits, |_, _, _| Ok(uses_pr_title)).expect("reviewed history")
+        classify_reviewed_history(commits, |_, _, _| Ok(confirmed_pr_title))
+            .expect("reviewed history")
     }
 
     #[test]
@@ -314,7 +315,7 @@ mod tests {
     }
 
     #[test]
-    fn wrapped_breakage_requires_a_classic_merge_and_the_pr_title_setting() {
+    fn wrapped_breakage_requires_a_classic_merge_and_a_confirmed_pr_title() {
         let title = "feat(api)!: replace the endpoint";
         let message = format!("Merge pull request #28 from acme/api\n\n\n{title}\n\nSome context.");
         let history = [HistoryCommit::fixture(&message, 2)];

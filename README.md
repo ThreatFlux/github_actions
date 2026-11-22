@@ -429,9 +429,10 @@ Reviewed release analysis also counts explicit breaking markers on two-parent
 merge commits. It accepts a conventional breaking subject or a
 `BREAKING CHANGE:` / `BREAKING-CHANGE:` trailer. On repositories configured
 with `PR_TITLE` merge messages, a classic GitHub merge wrapper can carry the
-breaking subject in its first non-empty body line. The wrapper must identify
-the exact merged PR. If GitHub hides the setting, the first body line must
-also match that PR's title. Ordinary merge subjects,
+breaking subject in its first non-empty body line. Release analysis requires
+GitHub to link that exact merge SHA to the named merged PR and corroborate the
+line with its title. The repository's current merge default is irrelevant to
+that historical comparison. Ordinary merge subjects,
 including release-bump merges, still do not contribute a bump.
 
 ### Tokens and downstream pipelines
