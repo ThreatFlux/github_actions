@@ -126,6 +126,10 @@ fn mock_analysis(server: &mut ServerGuard, head_hits: usize, compare_body: &str)
 }
 
 fn mock_build_chain(server: &mut ServerGuard) -> Vec<Mock> {
+    mock_build_chain_with_parents(server, Matcher::Any)
+}
+
+fn mock_build_chain_with_parents(server: &mut ServerGuard, parents: Matcher) -> Vec<Mock> {
     vec![
         server
             .mock("GET", "/repos/acme/demo/git/commits/basecommitsha")
@@ -144,10 +148,19 @@ fn mock_build_chain(server: &mut ServerGuard) -> Vec<Mock> {
             .create(),
         server
             .mock("POST", "/repos/acme/demo/git/commits")
+            .match_body(parents)
             .with_status(201)
             .with_body(r#"{"sha":"newcommitsha"}"#)
             .create(),
     ]
+}
+
+fn mock_missing_release_branch(server: &mut ServerGuard) -> Mock {
+    server
+        .mock("GET", "/repos/acme/demo/git/ref/heads/automation/release")
+        .with_status(404)
+        .with_body(r#"{"message":"Not Found"}"#)
+        .create()
 }
 
 fn mock_finalize_chain(server: &mut ServerGuard, tag: &str) -> Vec<Mock> {

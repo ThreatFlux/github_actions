@@ -352,6 +352,7 @@ fn release_only_options_resolve_from_hyphenated_input_env() {
     with_env(
         &[
             ("INPUT_BUMP", "minor"),
+            ("INPUT_PRE-V1-BREAKING-MINOR", "true"),
             ("INPUT_TAG-PREFIX", "release-"),
             ("INPUT_TAG-STYLE", "lightweight"),
             ("INPUT_UPDATE-MAJOR-ALIAS", "true"),
@@ -363,6 +364,7 @@ fn release_only_options_resolve_from_hyphenated_input_env() {
             let args = release_args(parse(&["bin", "release"]));
 
             assert_eq!(args.bump, super::release_cli::BumpArg::Minor);
+            assert!(args.pre_v1_breaking_minor);
             assert_eq!(args.tag_prefix, "release-");
             assert_eq!(args.tag_style, TagStyleArg::Lightweight);
             assert!(args.update_major_alias);

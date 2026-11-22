@@ -186,25 +186,30 @@ impl Analysis {
         self.last_released.as_ref().is_none_or(|released| self.current > *released)
     }
 
+    fn inferred_bump(&self, pre_v1_breaking_minor: bool) -> Option<BumpLevel> {
+        let baseline = self.last_released.as_ref().unwrap_or(&self.current);
+        conventional::required_bump(&self.commits).map(|bump| {
+            if pre_v1_breaking_minor && baseline.major == 0 && bump == BumpLevel::Major {
+                BumpLevel::Minor
+            } else {
+                bump
+            }
+        })
+    }
+
     /// Recheck the merged bump against the entire release range before tagging.
-    fn ensure_manifest_covers_release_range(&self) -> Result<()> {
+    fn release_pr_correction(&self, pre_v1_breaking_minor: bool) -> Result<Option<BumpLevel>> {
         let (Some(tag), Some(previous)) = (&self.last_tag, &self.last_released) else {
-            return Ok(());
+            return Ok(None);
         };
         anyhow::ensure!(
             !self.truncated,
             "cannot tag version {} with an incomplete commit range since {tag}",
             self.current
         );
-        if let Some(bump) = conventional::required_bump(&self.commits) {
-            let required = conventional::bump_version(previous, bump);
-            anyhow::ensure!(
-                self.current >= required,
-                "Cargo.toml version {} is below required version {required} for commits since {tag}. Merge a release pull request with version {required} or newer before tagging.",
-                self.current
-            );
-        }
-        Ok(())
+        Ok(self
+            .inferred_bump(pre_v1_breaking_minor)
+            .filter(|&bump| self.current < conventional::bump_version(previous, bump)))
     }
 
     /// Refuse to release from a manifest older than the latest release tag.
@@ -235,22 +240,21 @@ struct PreparedRelease {
     next_version: Version,
     tag: String,
     file_updates: Vec<FileUpdate>,
-    /// Route the version bump through a pull request instead of publishing it.
-    /// Tagging a version the manifest already holds needs no bump, so it
-    /// publishes directly even when the caller asked for release pull requests.
-    via_pull_request: bool,
+    action: ReleaseAction,
+    release_branch_head: Option<String>,
 }
 
 #[derive(Debug, Clone)]
 pub struct ReleasePublisher {
     github: GitHubClient,
     draft_release: bool,
+    pre_v1_breaking_minor: bool,
 }
 
 impl ReleasePublisher {
     #[must_use]
     pub const fn new(github: GitHubClient) -> Self {
-        Self { github, draft_release: false }
+        Self { github, draft_release: false, pre_v1_breaking_minor: false }
     }
 
     /// Create a draft release object so a native publisher can attach and
@@ -259,6 +263,13 @@ impl ReleasePublisher {
     #[must_use]
     pub const fn with_draft_release(mut self, draft_release: bool) -> Self {
         self.draft_release = draft_release;
+        self
+    }
+
+    /// Infer a minor release for breaking changes to a 0.x package.
+    #[must_use]
+    pub const fn with_pre_v1_breaking_minor(mut self, enabled: bool) -> Self {
+        self.pre_v1_breaking_minor = enabled;
         self
     }
 
@@ -317,13 +328,17 @@ impl ReleasePublisher {
         let analysis = self.analyze(options, expected_head, analysis_sha)?;
         analysis.ensure_manifest_not_behind_latest_tag()?;
         let tag_merged_release_pr = options.create_pr && analysis.manifest_unreleased();
-        if tag_merged_release_pr {
-            analysis.ensure_manifest_covers_release_range()?;
-        }
-        let report = if options.phase == ReleasePhase::Tag || tag_merged_release_pr {
+        let correction = if tag_merged_release_pr {
+            analysis.release_pr_correction(self.pre_v1_breaking_minor)?
+        } else {
+            None
+        };
+        let report = if options.phase == ReleasePhase::Tag
+            || (tag_merged_release_pr && correction.is_none())
+        {
             self.release_manifest_version(options, analysis)?
         } else {
-            self.release_bumped_version(options, analysis)?
+            self.release_bumped_version(options, analysis, correction)?
         };
         anyhow::ensure!(
             expected_head.is_none() || report.outcome != ReleaseOutcome::SkippedRace,
@@ -339,15 +354,37 @@ impl ReleasePublisher {
         &self,
         options: &ReleaseOptions,
         analysis: Analysis,
+        correction: Option<BumpLevel>,
     ) -> Result<ReleaseReport> {
-        let bump = options.bump.or_else(|| conventional::required_bump(&analysis.commits));
+        let bump = options.bump.or_else(|| analysis.inferred_bump(self.pre_v1_breaking_minor));
+        let bump = bump.max(correction);
         let mut report = initial_report(&analysis, bump);
 
         let Some(bump_level) = bump else {
             return Ok(report);
         };
 
-        let next_version = conventional::bump_version(&analysis.current, bump_level);
+        let baseline = if correction.is_some() {
+            analysis.last_released.as_ref().context("release correction requires a previous tag")?
+        } else {
+            &analysis.current
+        };
+        let release_branch_head = if options.create_pr {
+            self.github.reference_sha(
+                &options.owner,
+                &options.repo,
+                &format!("heads/{}", options.release_branch),
+            )?
+        } else {
+            None
+        };
+        let mut next_version = conventional::bump_version(baseline, bump_level);
+        if options.bump.is_none()
+            && let Some(head) = release_branch_head.as_deref()
+            && let Some(pending) = self.pending_release_version(options, &analysis.branch, head)?
+        {
+            next_version = next_version.max(pending);
+        }
         let next = next_version.to_string();
         let tag = format!("{}{next}", options.tag_prefix);
         report.notes = Some(release_notes(options, &tag, &analysis));
@@ -374,7 +411,41 @@ impl ReleasePublisher {
         } else {
             ReleaseAction::CommitAndRelease { branch: analysis.branch.clone() }
         };
-        self.prepare_and_publish(options, analysis, next_version, tag, file_updates, action, report)
+        self.prepare_and_publish(
+            options,
+            &PreparedRelease {
+                branch: analysis.branch,
+                head_sha: analysis.head_sha,
+                next_version,
+                tag,
+                file_updates,
+                action,
+                release_branch_head,
+            },
+            report,
+        )
+    }
+
+    fn pending_release_version(
+        &self,
+        options: &ReleaseOptions,
+        base: &str,
+        head: &str,
+    ) -> Result<Option<Version>> {
+        let owner = &options.owner;
+        let repo = &options.repo;
+        if self.github.find_open_pull_request(owner, repo, &options.release_branch, base)?.is_none()
+        {
+            return Ok(None);
+        }
+        let tracked = self.github.regular_files_at_commit(owner, repo, head)?;
+        let blob = tracked.get("Cargo.toml").context("open release proposal has no Cargo.toml")?;
+        let raw = self.github.release_source_blob(owner, repo, "Cargo.toml", blob)?;
+        let version = versioning::current_version_from_source(
+            std::str::from_utf8(raw.as_ref())
+                .context("open release proposal manifest is not UTF-8")?,
+        )?;
+        Ok(Some(Version::parse(&version).context("open release proposal has an invalid version")?))
     }
 
     fn version_rewrite_plan(
@@ -446,7 +517,19 @@ impl ReleasePublisher {
         let file_updates = extra_file_updates(&options.repo_root, &options.extra_files, &[])?;
 
         let action = ReleaseAction::TagManifestVersion { branch: analysis.branch.clone() };
-        self.prepare_and_publish(options, analysis, version, tag, file_updates, action, report)
+        self.prepare_and_publish(
+            options,
+            &PreparedRelease {
+                branch: analysis.branch,
+                head_sha: analysis.head_sha,
+                next_version: version,
+                tag,
+                file_updates,
+                action,
+                release_branch_head: None,
+            },
+            report,
+        )
     }
 
     /// Record the files and the action the run takes, then stop for a dry run
@@ -454,31 +537,19 @@ impl ReleasePublisher {
     fn prepare_and_publish(
         &self,
         options: &ReleaseOptions,
-        analysis: Analysis,
-        next_version: Version,
-        tag: String,
-        file_updates: Vec<FileUpdate>,
-        action: ReleaseAction,
+        prepared: &PreparedRelease,
         mut report: ReleaseReport,
     ) -> Result<ReleaseReport> {
-        report.files_updated = file_updates.iter().map(|update| update.file.clone()).collect();
-        let via_pull_request = matches!(action, ReleaseAction::ProposeReleasePullRequest { .. });
-        report.action = Some(action);
+        report.files_updated =
+            prepared.file_updates.iter().map(|update| update.file.clone()).collect();
+        report.action = Some(prepared.action.clone());
 
         if options.dry_run {
             report.outcome = ReleaseOutcome::DryRun;
             return Ok(report);
         }
 
-        let prepared = PreparedRelease {
-            branch: analysis.branch,
-            head_sha: analysis.head_sha,
-            next_version,
-            tag,
-            file_updates,
-            via_pull_request,
-        };
-        self.publish(options, &prepared, &mut report)?;
+        self.publish(options, prepared, &mut report)?;
         Ok(report)
     }
 
@@ -604,7 +675,7 @@ impl ReleasePublisher {
         }
         report.commit_sha = Some(commit_sha.clone());
 
-        if prepared.via_pull_request {
+        if matches!(prepared.action, ReleaseAction::ProposeReleasePullRequest { .. }) {
             return self.publish_pull_request(options, prepared, &commit_sha, report);
         }
 
@@ -638,7 +709,16 @@ impl ReleasePublisher {
         let owner = &options.owner;
         let repo = &options.repo;
         let branch_ref = format!("heads/{}", options.release_branch);
-        self.update_release_branch(owner, repo, &branch_ref, commit_sha)?;
+        if !self.update_release_branch(
+            owner,
+            repo,
+            &branch_ref,
+            prepared.release_branch_head.as_deref(),
+            commit_sha,
+        )? {
+            report.outcome = ReleaseOutcome::SkippedRace;
+            return Ok(());
+        }
 
         let title = format!("chore(release): {}", prepared.tag);
         let notes = report.notes.clone().unwrap_or_default();
@@ -671,12 +751,21 @@ impl ReleasePublisher {
         owner: &str,
         repo: &str,
         branch_ref: &str,
+        previous_head: Option<&str>,
         commit_sha: &str,
-    ) -> Result<()> {
-        if self.github.reference_sha(owner, repo, branch_ref)?.is_some() {
-            self.github.update_ref(owner, repo, branch_ref, commit_sha, true)
-        } else {
-            self.github.create_ref(owner, repo, branch_ref, commit_sha)
+    ) -> Result<bool> {
+        if previous_head.is_some() {
+            return self.github.update_ref_fast_forward(owner, repo, branch_ref, commit_sha);
+        }
+        match self.github.create_ref(owner, repo, branch_ref, commit_sha) {
+            Ok(()) => Ok(true),
+            Err(error) => {
+                if self.github.reference_sha(owner, repo, branch_ref)?.is_some() {
+                    Ok(false)
+                } else {
+                    Err(error)
+                }
+            }
         }
     }
 
@@ -721,7 +810,16 @@ impl ReleasePublisher {
 
         let message =
             options.commit_message.replace("{version}", &prepared.next_version.to_string());
-        self.github.create_commit(owner, repo, &message, &tree_sha, &prepared.head_sha)
+        let mut parents = vec![prepared.head_sha.as_str()];
+        // The tree comes from the current base, but retaining the old proposal as
+        // a parent makes refreshing the automation ref a fast-forward. A competing
+        // refresh based on the same old proposal cannot replace a newer commit.
+        if let Some(previous) = prepared.release_branch_head.as_deref()
+            && previous != prepared.head_sha
+        {
+            parents.push(previous);
+        }
+        self.github.create_commit_with_parents(owner, repo, &message, &tree_sha, parents)
     }
 
     fn finalize(

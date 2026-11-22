@@ -26,6 +26,11 @@ on:
         required: false
         default: auto
         type: string
+      pre-v1-breaking-minor:
+        description: Use a minor bump for breaking changes while the current major version is zero.
+        required: false
+        default: false
+        type: boolean
       tag-prefix:
         description: Prefix for release tags.
         required: false
@@ -300,6 +305,7 @@ jobs:
       - name: Verify candidate-preview runtime capability
         env:
           ACTION_ROOT: .
+          PRE_V1_BREAKING_MINOR: ${{ inputs.pre-v1-breaking-minor }}
         run: |
           set -euo pipefail
           image="$(awk '$1 == "FROM" { print $2; exit }' "${ACTION_ROOT}/runtime/Dockerfile")"
@@ -308,6 +314,10 @@ jobs:
             exit 1
           fi
           help="$(docker run --rm "${image}" release --help)"
+          if [[ "${PRE_V1_BREAKING_MINOR:-false}" == true ]] && ! grep -Fq -- '--pre-v1-breaking-minor' <<< "${help}"; then
+            echo "the pinned runtime does not support pre-v1-breaking-minor" >&2
+            exit 1
+          fi
           if ! grep -Fq -- '--analysis-sha' <<< "${help}"; then
             echo "the pinned runtime cannot bind preview analysis to a candidate; use a released workflow with a capable runtime" >&2
             exit 1
@@ -332,6 +342,7 @@ jobs:
           expected-head: ''
           analysis-sha: ${{ needs.check.outputs.target-sha }}
           bump: ${{ inputs.bump }}
+          pre-v1-breaking-minor: ${{ inputs.pre-v1-breaking-minor }}
           tag-prefix: ${{ inputs.tag-prefix }}
           update-major-alias: ${{ inputs.update-major-alias }}
           notes-file: ${{ inputs.notes-file }}
@@ -412,6 +423,7 @@ jobs:
         if: ${{ !inputs.dry-run }}
         env:
           ACTION_ROOT: .release-action
+          PRE_V1_BREAKING_MINOR: ${{ inputs.pre-v1-breaking-minor }}
           DRAFT_RELEASE: ${{ inputs.draft-release }}
         run: |
           set -euo pipefail
@@ -421,6 +433,10 @@ jobs:
             exit 1
           fi
           help="$(docker run --rm "${image}" release --help)"
+          if [[ "${PRE_V1_BREAKING_MINOR:-false}" == true ]] && ! grep -Fq -- '--pre-v1-breaking-minor' <<< "${help}"; then
+            echo "the pinned runtime does not support pre-v1-breaking-minor" >&2
+            exit 1
+          fi
           if ! grep -Fq -- '--expected-head' <<< "${help}"; then
             echo "the pinned runtime cannot enforce expected-head; use a released workflow with a guard-capable runtime" >&2
             exit 1
@@ -465,6 +481,7 @@ jobs:
           expected-head: ${{ needs.check.outputs.target-sha }}
           token: ${{ steps.github-app-token.outputs.token || secrets.release-token || github.token }}
           bump: ${{ inputs.bump }}
+          pre-v1-breaking-minor: ${{ inputs.pre-v1-breaking-minor }}
           tag-prefix: ${{ inputs.tag-prefix }}
           update-major-alias: ${{ inputs.update-major-alias }}
           notes-file: ${{ inputs.notes-file }}

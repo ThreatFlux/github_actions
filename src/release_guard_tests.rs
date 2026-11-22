@@ -11,7 +11,8 @@ use mockito::{Matcher, Mock, Server, ServerGuard};
 
 use super::{
     CHORE_ONLY, FEAT_AND_FIX, FIX_THEN_MERGED_RELEASE, mock_analysis, mock_head_ref,
-    mock_no_mutations, mock_tag_lookup, mock_tags, options, publisher, write_fixture_repo,
+    mock_missing_release_branch, mock_no_mutations, mock_tag_lookup, mock_tags, options, publisher,
+    write_fixture_repo,
 };
 use crate::{BumpLevel, ReleaseAction, ReleaseOptions, ReleaseOutcome, ReleasePhase};
 
@@ -169,7 +170,11 @@ fn dry_run_records_the_bump_phase_action() {
 fn dry_run_records_the_release_pull_request_action() {
     let action = dry_run_action(
         |release_options| release_options.create_pr = true,
-        |server| mock_analysis(server, 1, FEAT_AND_FIX),
+        |server| {
+            let mut mocks = mock_analysis(server, 1, FEAT_AND_FIX);
+            mocks.push(mock_missing_release_branch(server));
+            mocks
+        },
     );
 
     assert_eq!(
