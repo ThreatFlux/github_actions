@@ -16,8 +16,10 @@ abort "#{manifest}: expected #{upstream} at a full commit SHA" unless pin
 inputs = wrapper.fetch("inputs").keys
 forwarded = inputs.to_h { |name| [name, "${{ inputs.#{name} }}"] }
 abort "#{manifest}: forward every input unchanged" unless mint.fetch("with") == forwarded
-wrapper.fetch("outputs").each do |name, output|
-  abort "#{manifest}: forward the upstream #{name} output" unless output.fetch("value") == "${{ steps.#{mint.fetch('id')}.outputs.#{name} }}"
+outputs = wrapper.fetch("outputs")
+%w[token app-slug installation-id].each do |name|
+  expected = "${{ steps.#{mint.fetch('id')}.outputs.#{name} }}"
+  abort "#{manifest}: forward the upstream #{name} output" unless outputs.dig(name, "value") == expected
 end
 
 workflows = Dir[".github/workflows/*.{yml,yaml}"]
