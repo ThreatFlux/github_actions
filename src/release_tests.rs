@@ -400,7 +400,7 @@ fn release_lightweight_tags_point_directly_at_the_commit() {
 }
 
 #[test]
-fn release_creates_automated_release_branch_and_pull_request() {
+fn bump_phase_creates_automated_release_branch_and_pull_request() {
     let temp_dir = write_fixture_repo();
     let mut server = Server::new();
     let _analysis = mock_analysis(&mut server, 2, FEAT_AND_FIX);
@@ -435,6 +435,7 @@ fn release_creates_automated_release_branch_and_pull_request() {
 
     let mut release_options = options(temp_dir.path());
     release_options.create_pr = true;
+    release_options.phase = ReleasePhase::Bump;
     let report = publisher(&server).release(&release_options).expect("release report");
 
     assert_eq!(report.outcome, ReleaseOutcome::PullRequestCreated);

@@ -13,7 +13,9 @@ from test_reusable_release_gate import run_gate_script
 ROOT = Path(__file__).resolve().parents[1]
 WORKFLOW = (ROOT / ".github/workflows/auto-release.yml").read_text(encoding="utf-8")
 PROMOTE = (ROOT / "scripts/promote_release_image.sh").read_text(encoding="utf-8")
+SELECT = (ROOT / "scripts/select_release_runtime.sh").read_text(encoding="utf-8")
 DIGEST = "sha256:" + "a" * 64
+HEAD_DIGEST = "sha256:" + "b" * 64
 IMAGE = "ghcr.io/threatflux/github_actions"
 PIN = f"FROM {IMAGE}:0.7.10@{DIGEST}\n"
 GH_SH = r"""#!/usr/bin/env bash
@@ -32,6 +34,13 @@ esac
 """
 DOCKER_SH = r"""#!/usr/bin/env bash
 case "$1 $2 $3" in
+  'pull '*) ;;
+  'image inspect --format')
+    if [[ "$5" == *"@$HEAD_DIGEST" ]]; then
+      printf '%s\n' "$FAKE_HEAD_REVISION"
+    else
+      printf '%s\n' "$FAKE_PIN_REVISION"
+    fi;;
   'buildx imagetools inspect') printf '%s\n' "$FAKE_DIGEST";;
   'buildx imagetools create') printf '%s\n' "$*" >> "$WRITE_LOG";;
   'run --rm '*) printf 'github-actions-maintainer %s\n' "$FAKE_CLI_VERSION";;
@@ -59,7 +68,14 @@ def encoded(text):
 def replay(script, **overrides):
     with tempfile.TemporaryDirectory() as directory:
         root = Path(directory)
-        for name, content in [("gh", GH_SH), ("docker", DOCKER_SH)]:
+        for name, content in [
+            ("gh", GH_SH), ("docker", DOCKER_SH),
+            ("cosign", '#!/usr/bin/env bash\nexit "$FAKE_SIGNATURE_STATUS"\n'),
+            ("git", '#!/usr/bin/env bash\ncase "$1" in\n'
+                    '  merge-base) exit 0;;\n'
+                    '  diff) exit "$FAKE_DIFF_STATUS";;\n'
+                    '  *) exit 73;;\nesac\n'),
+        ]:
             path = root / name
             path.write_text(content, encoding="utf-8")
             path.chmod(0o755)
@@ -86,6 +102,12 @@ def replay(script, **overrides):
             RELEASED="true",
         )
         env.update(overrides)
+        if script == SELECT:
+            for name, pin in [("runtime", "PIN_BASE64"), ("release", "RELEASE_PIN_BASE64")]:
+                (root / name).mkdir()
+                (root / name / "Dockerfile").write_bytes(base64.b64decode(env[pin]))
+            env["TEST_CHECKOUT"] = str(root)
+            script = 'cd -- "$TEST_CHECKOUT"\n' + script
         result = run_gate_script(script, env)
         return result, captured(output), captured(writes), captured(calls)
 
@@ -101,6 +123,38 @@ def promoted_aliases(writes):
 
 
 class ReleaseAliasTests(unittest.TestCase):
+    def select(self, **overrides):
+        env = dict(
+            PHASE="tag", HEAD_DIGEST=HEAD_DIGEST, TARGET_SHA="a" * 40,
+            FAKE_HEAD_REVISION="a" * 40, FAKE_PIN_REVISION="b" * 40,
+            FAKE_SIGNATURE_STATUS="0", FAKE_DIFF_STATUS="0",
+        )
+        env.update(overrides)
+        return replay(SELECT, **env)
+
+    def test_reviewed_pins_are_reused_when_build_inputs_match(self):
+        result, output, _, _ = self.select()
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(output, f"digest={DIGEST}\nready_to_tag=true\n")
+
+    def test_a_source_change_or_unmerged_pin_requires_a_new_proposal(self):
+        for overrides in [{"FAKE_DIFF_STATUS": "1"}, {"RELEASE_PIN_BASE64": encoded("FROM old\n")}]:
+            with self.subTest(overrides=overrides):
+                result, output, _, _ = self.select(**overrides)
+                self.assertEqual(result.returncode, 0, result.stderr)
+                self.assertEqual(output, f"digest={HEAD_DIGEST}\nready_to_tag=false\n")
+
+    def test_unsigned_or_mismatched_runtime_cannot_be_selected(self):
+        for overrides in [
+            {"FAKE_SIGNATURE_STATUS": "1"},
+            {"PHASE": "bump", "FAKE_HEAD_REVISION": "b" * 40},
+            {"FAKE_CLI_VERSION": "0.7.9"},
+        ]:
+            with self.subTest(overrides=overrides):
+                result, output, _, _ = self.select(**overrides)
+                self.assertNotEqual(result.returncode, 0)
+                self.assertEqual(output, "")
+
     def test_only_actual_404_is_an_absent_tag(self):
         for status in ["403", "500", "transport"]:
             with self.subTest(status=status):

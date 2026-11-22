@@ -2,7 +2,7 @@
 //!
 //! The publisher analyzes commits since the last release tag through the
 //! GitHub REST API, bumps the Cargo manifest version, and creates the release
-//! commit, tag, and GitHub Release without shelling out to git — so it runs in
+//! commit, tag, and GitHub Release without shelling out to git â€” so it runs in
 //! minimal containers. Failures after object creation but before the branch
 //! ref update leave only unreachable git objects behind, which GitHub
 //! garbage-collects; the window between tag creation and release creation is
@@ -112,7 +112,7 @@ pub enum ReleaseAction {
     /// GitHub Release, without bumping it. Only staged extra files, if any, are
     /// committed first.
     TagManifestVersion { branch: String },
-    /// Point `release_branch` at a version-bump commit on top of `base` and
+    /// Point `release_branch` at a prepared release commit on top of `base` and
     /// open or update its pull request into `base`. Nothing is tagged until the
     /// pull request merges.
     ProposeReleasePullRequest { release_branch: String, base: String },
@@ -318,11 +318,6 @@ impl ReleasePublisher {
     ) -> Result<ReleaseReport> {
         self.github.ensure_token()?;
         if options.create_pr {
-            if options.phase != ReleasePhase::All {
-                anyhow::bail!(
-                    "--create-pr cannot be combined with --phase: the release pull request already separates the version bump from the tag"
-                );
-            }
             validate_release_branch(&options.release_branch)?;
         }
         let analysis = self.analyze(options, expected_head, analysis_sha)?;
@@ -333,8 +328,20 @@ impl ReleasePublisher {
         } else {
             None
         };
+        if tag_merged_release_pr && options.phase == ReleasePhase::Bump {
+            anyhow::ensure!(
+                correction.is_some(),
+                "the manifest already holds an untagged version; complete it before proposing another bump"
+            );
+        }
+        if options.phase == ReleasePhase::Tag {
+            anyhow::ensure!(
+                correction.is_none(),
+                "the pending release version is below its release range; request phase bump to propose the correction"
+            );
+        }
         let report = if options.phase == ReleasePhase::Tag
-            || (tag_merged_release_pr && correction.is_none())
+            || (options.phase == ReleasePhase::All && tag_merged_release_pr && correction.is_none())
         {
             self.release_manifest_version(options, analysis)?
         } else {
@@ -516,7 +523,23 @@ impl ReleasePublisher {
         // tag lands on the existing head instead of an empty commit.
         let file_updates = extra_file_updates(&options.repo_root, &options.extra_files, &[])?;
 
-        let action = ReleaseAction::TagManifestVersion { branch: analysis.branch.clone() };
+        let propose_files =
+            options.create_pr && options.phase == ReleasePhase::Tag && !file_updates.is_empty();
+        let (action, release_branch_head) = if propose_files {
+            (
+                ReleaseAction::ProposeReleasePullRequest {
+                    release_branch: options.release_branch.clone(),
+                    base: analysis.branch.clone(),
+                },
+                self.github.reference_sha(
+                    &options.owner,
+                    &options.repo,
+                    &format!("heads/{}", options.release_branch),
+                )?,
+            )
+        } else {
+            (ReleaseAction::TagManifestVersion { branch: analysis.branch.clone() }, None)
+        };
         self.prepare_and_publish(
             options,
             &PreparedRelease {
@@ -526,7 +549,7 @@ impl ReleasePublisher {
                 tag,
                 file_updates,
                 action,
-                release_branch_head: None,
+                release_branch_head,
             },
             report,
         )
@@ -720,17 +743,35 @@ impl ReleasePublisher {
             return Ok(());
         }
 
-        let title = format!("chore(release): {}", prepared.tag);
+        let (title, change) = if options.phase == ReleasePhase::Tag {
+            (
+                format!("chore(release): prepare artifacts for {}", prepared.tag),
+                format!(
+                    "This PR records the release files for `{}`. After review and merge into `{}`, the release workflow revalidates the resulting commit before publishing.",
+                    prepared.tag, prepared.branch
+                ),
+            )
+        } else {
+            (
+                format!("chore(release): {}", prepared.tag),
+                format!(
+                    "This PR updates the package version from `{}` to `{}`. Merging it into `{}` allows the release workflow to publish the tag and GitHub release.",
+                    report.current_version, prepared.next_version, prepared.branch
+                ),
+            )
+        };
         let notes = report.notes.clone().unwrap_or_default();
-        let body = format!(
-            "Automated release update for `{}`.\n\nThis PR updates the package version from `{}` to `{}`. Merging it into `{}` allows the release workflow to publish the tag and GitHub release.\n\n{}\n\n<!-- automated-release-branch: {} -->",
-            prepared.tag,
-            report.current_version,
-            prepared.next_version,
-            prepared.branch,
-            notes,
-            options.release_branch,
-        );
+        let body = if options.phase == ReleasePhase::All {
+            format!(
+                "Automated release update for `{}`.\n\n{change}\n\n{notes}\n\n<!-- automated-release-branch: {} -->",
+                prepared.tag, options.release_branch,
+            )
+        } else {
+            format!(
+                "## Summary\n\n{change}\n\n## Validation\n\n- Proposal base: `{}`. Its GitHub checks and this PR's checks are reviewed separately.\n- `make ci` was not run locally.\n\n## Checklist\n\n- [ ] Review the proposed release files and their GitHub checks.\n- [ ] Review the hosted Security and Docker results.\n- [x] No documentation or template bootstrap changes are needed for this release proposal.\n\n{notes}\n\n<!-- automated-release-branch: {} -->",
+                prepared.head_sha, options.release_branch,
+            )
+        };
         let pull_request = self.upsert_release_pull_request(
             owner,
             repo,

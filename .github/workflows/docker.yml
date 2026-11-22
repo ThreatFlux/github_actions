@@ -191,6 +191,8 @@ jobs:
         uses: docker/metadata-action@dc802804100637a589fabce1cb79ff13a1411302 # v6.2.0
         with:
           images: ${{ steps.images.outputs.images }}
+          labels: |
+            org.opencontainers.image.revision=${{ github.sha }}
           tags: |
             type=ref,event=branch
             type=ref,event=pr
@@ -478,11 +480,9 @@ jobs:
           repo_name="${GITHUB_REPOSITORY#*/}"
           cosign sign --yes "${DOCKERHUB_REGISTRY}/${DOCKERHUB_NAMESPACE}/${repo_name,,}@${DIGEST}"
 
-  # Auto Release commits the version bump, then waits here: the image for the
-  # released version has to exist, be scanned, and be signed before the tag
-  # phase can pin it. A push by GITHUB_TOKEN starts no workflows and a dispatched
-  # run's completion does not reliably start one either, so hand back explicitly
-  # — workflow_dispatch is exempt from that suppression.
+  # A reviewed release merge starts Docker through the normal main push.
+  # This opt-in dispatch is also available for recovery and explicitly hands
+  # back to the tag phase after the scan, signing, and SBOM jobs finish.
   release-handoff:
     name: Hand Off to Auto Release
     needs: [build, scan, sign, sbom]

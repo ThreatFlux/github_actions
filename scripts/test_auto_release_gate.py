@@ -249,41 +249,19 @@ class AutoReleaseGateTests(unittest.TestCase):
                     output.read_text().strip(), f"should_release={expected}"
                 )
 
-    def test_version_bump_starts_all_required_workflows(self):
+    def test_release_proposals_open_pull_requests_and_publish_only_reviewed_main(self):
         source = WORKFLOW.read_text(encoding="utf-8")
-        step = source.split(
-            "      - name: Validate and publish the committed version\n", 1
-        )[1]
-        script = step.split("        run: |\n", 1)[1].split("\n      - name:", 1)[0]
-        script = "\n".join(line[10:] for line in script.splitlines())
-        for main_sha, expected in (
-            (SHA, ["ci.yml", "security.yml", "docker.yml"]),
-            ("b" * 40, []),
-        ):
-            with self.subTest(
-                main_sha=main_sha
-            ), tempfile.TemporaryDirectory() as directory:
-                root = Path(directory)
-                gh = root / "gh"
-                gh.write_text(
-                    "#!/usr/bin/env bash\n"
-                    'if [[ "$1" == api ]]; then echo "$FAKE_MAIN_SHA"; exit 0; fi\n'
-                    '[[ "$1 $2" == "workflow run" ]] || exit 21\n'
-                    'echo "$3" >> "$DISPATCH_LOG"\n',
-                    encoding="utf-8",
-                )
-                gh.chmod(0o755)
-                log = root / "dispatches"
-                env = dict(
-                    os.environ,
-                    PATH=str(root) + os.pathsep + os.environ["PATH"],
-                    COMMIT=SHA,
-                    VERSION="0.8.0",
-                    GITHUB_REPOSITORY="ThreatFlux/github_actions",
-                    FAKE_MAIN_SHA=main_sha,
-                    DISPATCH_LOG=str(log),
-                )
-                result = run_gate_script(script, env)
-                self.assertEqual(result.returncode, 0, result.stderr)
-                actual = log.read_text().splitlines() if log.exists() else []
-                self.assertEqual(actual, expected)
+        proposal = source.split("      - name: Open or refresh the reviewed release proposal\n", 1)[1]
+        proposal = proposal.split("\n      - name:", 1)[0]
+        self.assertIn('create-pr: "true"', proposal)
+        self.assertIn("token: ${{ steps.proposal_token.outputs.token }}", proposal)
+        self.assertIn("expected-head: ${{ needs.check.outputs.target_sha }}", proposal)
+        self.assertIn("steps.runtime_pin.outputs.files", proposal)
+        publish = source.split("      - name: Tag and publish the committed version\n", 1)[1]
+        publish = publish.split("\n      - name:", 1)[0]
+        self.assertIn("if: steps.verified_runtime.outputs.ready_to_tag == 'true'", publish)
+        self.assertIn("expected-head: ${{ needs.check.outputs.target_sha }}", publish)
+        self.assertIn("phase: tag", publish)
+        self.assertIn('create-pr: "true"', publish)
+        self.assertNotIn("extra-files:", publish)
+        self.assertNotIn("git/refs/heads/main", source)

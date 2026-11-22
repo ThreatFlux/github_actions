@@ -60,6 +60,22 @@ fn mock_commit_chain(server: &mut ServerGuard) -> Vec<Mock> {
     ]
 }
 
+fn mock_pending_release_analysis(
+    server: &mut ServerGuard,
+    head_reads: usize,
+    commits: &str,
+) -> Vec<Mock> {
+    vec![
+        super::mock_head_ref(server, "basecommitsha", head_reads),
+        super::mock_tags(server, r#"[{"name":"v0.2.2","commit":{"sha":"tagsha"}}]"#),
+        server
+            .mock("GET", "/repos/acme/demo/compare/v0.2.2...basecommitsha?per_page=100&page=1")
+            .with_status(200)
+            .with_body(commits)
+            .create(),
+    ]
+}
+
 #[test]
 fn bump_phase_commits_the_version_without_tagging_it() {
     let temp_dir = write_fixture_repo();
@@ -161,6 +177,7 @@ fn tag_phase_tags_the_existing_head_when_nothing_is_staged() {
 
     let mut release_options = options(temp_dir.path());
     release_options.phase = ReleasePhase::Tag;
+    release_options.create_pr = true;
     let report = publisher(&server).release(&release_options).expect("release report");
 
     assert_eq!(report.outcome, ReleaseOutcome::Released);
@@ -273,16 +290,74 @@ fn tag_phase_notes_list_maintenance_commits_without_the_bump_commit() {
 }
 
 #[test]
-fn phases_cannot_be_combined_with_the_release_pull_request_flow() {
+fn reviewed_tag_phase_rejects_a_version_below_its_release_range() {
     let temp_dir = write_fixture_repo();
-    let server = Server::new();
+    let mut server = Server::new();
+    let _analysis = mock_pending_release_analysis(&mut server, 1, FEAT_AND_FIX);
+    let no_mutations = mock_no_mutations(&mut server);
 
     let mut release_options = options(temp_dir.path());
     release_options.create_pr = true;
-    release_options.phase = ReleasePhase::Bump;
+    release_options.phase = ReleasePhase::Tag;
     let error = publisher(&server).release(&release_options).expect_err("combination must fail");
 
-    assert!(error.to_string().contains("--phase"), "unexpected error: {error}");
+    assert!(error.to_string().contains("below its release range"), "unexpected error: {error}");
+    for mocked in no_mutations {
+        mocked.assert();
+    }
+}
+
+#[test]
+fn tag_phase_proposes_pins_without_advancing_main_or_publishing() {
+    let temp_dir = write_fixture_repo();
+    fs::write(temp_dir.path().join("runtime.Dockerfile"), "FROM example@sha256:abc\n")
+        .expect("write runtime pin");
+    let mut server = Server::new();
+    let _analysis = mock_pending_release_analysis(&mut server, 2, super::FIX_THEN_MERGED_RELEASE);
+    let _tag = server
+        .mock("GET", "/repos/acme/demo/git/ref/tags/v0.2.3")
+        .with_status(404)
+        .with_body(r#"{"message":"Not Found"}"#)
+        .create();
+    let _chain = mock_commit_chain(&mut server);
+    let _branch = super::mock_missing_release_branch(&mut server);
+    let create_branch = server
+        .mock("POST", "/repos/acme/demo/git/refs")
+        .match_body(Matcher::Regex(r#""ref":"refs/heads/automation/release""#.into()))
+        .with_status(201)
+        .with_body(r#"{"ref":"refs/heads/automation/release"}"#)
+        .create();
+    let _find = server
+        .mock(
+            "GET",
+            "/repos/acme/demo/pulls?state=open&head=acme%3Aautomation%2Frelease&base=main&per_page=100",
+        )
+        .with_status(200)
+        .with_body("[]")
+        .create();
+    let create_pr = server
+        .mock("POST", "/repos/acme/demo/pulls")
+        .with_status(201)
+        .with_body(r#"{"number":42,"html_url":"https://github.com/acme/demo/pull/42"}"#)
+        .create();
+    let no_advance =
+        server.mock("PATCH", "/repos/acme/demo/git/refs/heads/main").expect(0).create();
+    let no_tag = server.mock("POST", "/repos/acme/demo/git/tags").expect(0).create();
+    let no_release = server.mock("POST", "/repos/acme/demo/releases").expect(0).create();
+
+    let mut release_options = options(temp_dir.path());
+    release_options.create_pr = true;
+    release_options.phase = ReleasePhase::Tag;
+    release_options.extra_files = vec![PathBuf::from("runtime.Dockerfile")];
+    let report = publisher(&server).release(&release_options).expect("release proposal");
+
+    assert_eq!(report.outcome, ReleaseOutcome::PullRequestCreated);
+    assert_eq!(report.next_version.as_deref(), Some("0.2.3"));
+    assert_eq!(report.pull_request_number, Some(42));
+    assert_eq!(report.files_updated.len(), 1);
+    for mocked in [create_branch, create_pr, no_advance, no_tag, no_release] {
+        mocked.assert();
+    }
 }
 
 #[test]
