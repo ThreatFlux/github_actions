@@ -5,12 +5,18 @@ on:
     branches: [main]
     paths:
       - .github/org-rust/**
-      - .github/workflows/org-rust-*.yml
+      - .github/workflows/**
+      - '**/action.yml'
+      - '**/action.yaml'
+      - .github/actions/mint-app-token/verify-pin.rb
   push:
     branches: [main]
     paths:
       - .github/org-rust/**
-      - .github/workflows/org-rust-*.yml
+      - .github/workflows/**
+      - '**/action.yml'
+      - '**/action.yaml'
+      - .github/actions/mint-app-token/verify-pin.rb
   workflow_dispatch:
 
 permissions:
@@ -30,3 +36,5 @@ jobs:
           python-version: '3.15.2'
       - name: Exercise official-source, adapter, permission and expected-head boundaries
         run: python3 -m unittest discover -s .github/org-rust/tests -p 'test_*.py' -v
+      - name: Verify the shared mint pin against its upstream release
+        run: ruby .github/actions/mint-app-token/verify-pin.rb

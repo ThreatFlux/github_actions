@@ -251,14 +251,12 @@ class CliTests(unittest.TestCase):
             rollout.split("  permission-probe:", 1)[1],
             discovery.split("  propose:", 1)[1],
         ]
+        mint_step = "        uses: $/.github/actions/mint-app-token\n"
         for job in jobs:
-            before, after = job.split("uses: actions/create-github-app-token@", 1)
+            before, after = job.split(mint_step)
             self.assertIn("cli.py preflight", before)
             self.assertIn(
                 "GITHUB_APP_IDENTIFIER: ${{ vars.TF_AUTOMATION_APP_ID }}", before
-            )
-            self.assertTrue(
-                after.startswith("64ab729a6294000f5aa4a4bc0b73d1f32bc45510")
             )
             self.assertIn("client-id: ${{ vars.TF_AUTOMATION_APP_ID }}", after)
             self.assertIn("GITHUB_APP_SLUG: ${{ steps.app.outputs.app-slug }}", after)
