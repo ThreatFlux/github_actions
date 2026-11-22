@@ -427,8 +427,10 @@ Maintenance-only commits such as `chore:` and `docs:` produce no automatic bump.
 
 Reviewed release analysis also counts explicit breaking markers on two-parent
 merge commits. It accepts a conventional breaking subject or a
-`BREAKING CHANGE:` / `BREAKING-CHANGE:` trailer. On repositories configured
-with `PR_TITLE` merge messages, a classic GitHub merge wrapper can carry the
+`BREAKING CHANGE:` / `BREAKING-CHANGE:` trailer. The terminal trailer
+section may contain adjacent trailers and indented continuation paragraphs
+separated by blank lines. Markers inside Markdown code are ignored.
+With `PR_TITLE` merge messages, a classic GitHub merge wrapper can carry the
 breaking subject in its first non-empty body line. Release analysis requires
 GitHub to link that exact merge SHA to the named merged PR and corroborate the
 line with its title. The repository's current merge default is irrelevant to

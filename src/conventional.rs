@@ -5,9 +5,11 @@
 //! changes are detected from a `!` marker in the subject or a
 //! `BREAKING CHANGE` / `BREAKING-CHANGE` footer at the start of a body line.
 
+use std::cell::LazyCell;
 use std::sync::LazyLock;
 
 use anyhow::Result;
+use pulldown_cmark::{Event, Parser, Tag};
 use regex::Regex;
 use semver::Version;
 
@@ -132,53 +134,45 @@ fn classify_breaking_merge(
 }
 
 fn has_breaking_trailer(message: &str) -> bool {
-    let lines: Vec<_> = message.trim_end().lines().collect();
+    let lines: Vec<_> = message
+        .trim_end()
+        .split_inclusive('\n')
+        .scan(0, |offset, line| {
+            let start = *offset;
+            *offset += line.len();
+            Some((start, line.trim_end_matches(['\r', '\n'])))
+        })
+        .collect();
+    let code = LazyCell::new(|| {
+        Parser::new(message)
+            .into_offset_iter()
+            .filter_map(|(event, range)| match event {
+                Event::Code(_) | Event::Start(Tag::CodeBlock(_)) => Some(range),
+                _ => None,
+            })
+            .collect::<Vec<_>>()
+    });
+
     let mut end = lines.len();
-    while let Some(separator) = lines[..end].iter().rposition(|line| line.trim().is_empty()) {
-        let start = separator + 1;
-        let paragraph = &lines[start..end];
-        if let Some(first) = paragraph.first() {
-            if !TRAILER_RE.is_match(first) {
+    while let Some(separator) = lines[..end].iter().rposition(|(_, line)| line.trim().is_empty()) {
+        let paragraph = &lines[separator + 1..end];
+        if let Some((_, first)) = paragraph.first() {
+            if TRAILER_RE.is_match(first) {
+                if paragraph.iter().any(|(offset, line)| {
+                    BREAKING_TRAILER_RE.is_match(line)
+                        && !code.iter().any(|range| range.contains(offset))
+                }) {
+                    return true;
+                }
+            } else if !paragraph.iter().all(|(_, line)| line.starts_with([' ', '\t'])) {
                 break;
             }
-            if paragraph.iter().enumerate().any(|(offset, line)| {
-                BREAKING_TRAILER_RE.is_match(line)
-                    && !inside_markdown_fence(&lines[..start + offset])
-            }) {
-                return true;
-            }
         }
-        // A blank line can separate two trailers, including a multiline value.
+        // Adjacent trailers and explicitly indented continuation paragraphs
+        // can be separated by blank lines.
         end = separator;
     }
     false
-}
-
-/// A terminal paragraph in an unfinished code block is still quoted text.
-fn inside_markdown_fence(lines: &[&str]) -> bool {
-    let mut fence = None;
-    for line in lines {
-        let text = line.trim_start_matches(' ');
-        if line.len() - text.len() > 3 {
-            continue;
-        }
-        let Some(marker @ (b'`' | b'~')) = text.as_bytes().first().copied() else {
-            continue;
-        };
-        let length = text.bytes().take_while(|byte| *byte == marker).count();
-        match fence {
-            Some((opener, minimum))
-                if marker == opener && length >= minimum && text[length..].trim().is_empty() =>
-            {
-                fence = None;
-            }
-            None if length >= 3 && (marker == b'~' || !text[length..].contains('`')) => {
-                fence = Some((marker, length));
-            }
-            _ => {}
-        }
-    }
-    fence.is_some()
 }
 
 fn classify_message(subject: &str, message: &str) -> CommitKind {
@@ -317,6 +311,9 @@ mod tests {
             "Merge branch 'api'\n\n```call `old()` before migration```\n\nBREAKING CHANGE: remove old()",
             "Merge branch 'api'\n\nThe new route is documented.\n\nBREAKING CHANGE: use the new route\nUpdate the token scope as well.",
             "Merge branch 'api'\n\nBREAKING CHANGE: remove the old endpoint.\n\nRefs: #28",
+            "Merge branch 'api'\n\nBREAKING CHANGE: use the new endpoint.\n\n  Existing callers also need a new token.\n  Update both settings.",
+            "Merge branch 'api'\n\n- ```text\n  example\n  ```\n\nBREAKING CHANGE: remove old()",
+            "Merge branch 'api'\n\nRefs: a literal unmatched `\nBREAKING CHANGE: replace the endpoint",
             "fix(api): replace the endpoint\r\n\r\nRefs: #28\r\nBREAKING-CHANGE: switch to the new route\r\n  and update the token scope\r\nAcked-by: Maintainers",
         ] {
             let commits = reviewed_history(&[HistoryCommit::fixture(message, 2)], false);
@@ -353,6 +350,7 @@ mod tests {
             "Merge branch 'api'\n\nBREAKING CHANGE: an old heading\n\nLater context with no trailer.",
             "Merge branch 'api'\n\nBREAKING CHANGE: an old heading\n\nLater unrelated prose.\n\nRefs: #28",
             "Merge branch 'api'\n\n```text\n\nBREAKING CHANGE: quoted history\n\nRefs: #28",
+            "Merge branch 'api'\n\nRefs: `example\nBREAKING CHANGE: quoted history\nend of example`",
             "Merge branch 'api'\n\nBREAKING CHANGE:",
         ] {
             let commits = reviewed_history(&[HistoryCommit::fixture(message, 2)], true);
