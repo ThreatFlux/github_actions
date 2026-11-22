@@ -186,6 +186,27 @@ impl Analysis {
         self.last_released.as_ref().is_none_or(|released| self.current > *released)
     }
 
+    /// Recheck the merged bump against the entire release range before tagging.
+    fn ensure_manifest_covers_release_range(&self) -> Result<()> {
+        let (Some(tag), Some(previous)) = (&self.last_tag, &self.last_released) else {
+            return Ok(());
+        };
+        anyhow::ensure!(
+            !self.truncated,
+            "cannot tag version {} with an incomplete commit range since {tag}",
+            self.current
+        );
+        if let Some(bump) = conventional::required_bump(&self.commits) {
+            let required = conventional::bump_version(previous, bump);
+            anyhow::ensure!(
+                self.current >= required,
+                "Cargo.toml version {} is below required version {required} for commits since {tag}. Merge a release pull request with version {required} or newer before tagging.",
+                self.current
+            );
+        }
+        Ok(())
+    }
+
     /// Refuse to release from a manifest older than the latest release tag.
     ///
     /// The commit range starts at the highest tag, but the next version is
@@ -295,13 +316,11 @@ impl ReleasePublisher {
         }
         let analysis = self.analyze(options, expected_head, analysis_sha)?;
         analysis.ensure_manifest_not_behind_latest_tag()?;
-        // A merged release pull request leaves the bump on the base branch with
-        // no tag. Bumping again would open a fresh pull request for a version
-        // nobody asked for and leave the merged one unreleased forever, so the
-        // version already on the branch is what gets tagged.
-        let report = if options.phase == ReleasePhase::Tag
-            || (options.create_pr && analysis.manifest_unreleased())
-        {
+        let tag_merged_release_pr = options.create_pr && analysis.manifest_unreleased();
+        if tag_merged_release_pr {
+            analysis.ensure_manifest_covers_release_range()?;
+        }
+        let report = if options.phase == ReleasePhase::Tag || tag_merged_release_pr {
             self.release_manifest_version(options, analysis)?
         } else {
             self.release_bumped_version(options, analysis)?

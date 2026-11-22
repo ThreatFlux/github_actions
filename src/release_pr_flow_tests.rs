@@ -14,14 +14,12 @@ use std::path::Path;
 use mockito::{Matcher, Mock, Server, ServerGuard};
 
 use super::{
-    mock_build_chain, mock_head_ref, mock_tag_lookup, mock_tags, options, publisher,
-    write_fixture_repo,
+    FIX_THEN_MERGED_RELEASE, mock_build_chain, mock_head_ref, mock_tag_lookup, mock_tags, options,
+    publisher, write_fixture_repo,
 };
 use crate::{ReleaseOptions, ReleaseOutcome, ReleaseReport};
 
-/// The range a run sees right after the 0.2.3 release pull request merged:
-/// the fix it shipped, then its squash-merged release commit.
-const FIX_THEN_MERGED_RELEASE: &str = r#"{"total_commits":2,"commits":[{"sha":"fixbbbbbbbb","commit":{"message":"fix(testkit): stop log capture racing"},"parents":[{}]},{"sha":"releasecccc","commit":{"message":"chore: release v0.2.3 (#86)"},"parents":[{}]}]}"#;
+const BREAKING_AFTER_RELEASE: &str = r#"{"total_commits":3,"commits":[{"sha":"fixbbbbbbbb","commit":{"message":"fix(testkit): stop log capture racing"},"parents":[{}]},{"sha":"releasecccc","commit":{"message":"chore: release v0.2.3 (#86)"},"parents":[{}]},{"sha":"breakingddd","commit":{"message":"feat(api)!: remove the legacy endpoint"},"parents":[{}]}]}"#;
 /// What lands after the merged release is tagged: tooling-only commits.
 const CI_ONLY: &str = r#"{"total_commits":1,"commits":[{"sha":"ciddddddddd","commit":{"message":"ci: repin release automation"},"parents":[{}]}]}"#;
 const NEXT_FIX: &str = r#"{"total_commits":1,"commits":[{"sha":"fixeeeeeeee","commit":{"message":"fix: repair another thing"},"parents":[{}]}]}"#;
@@ -250,6 +248,39 @@ fn merged_release_pull_request_is_tagged_once_and_the_next_run_is_a_no_op() {
     let temp_dir = write_fixture_repo();
     tag_the_merged_release(temp_dir.path());
     run_after_the_tag(temp_dir.path());
+}
+
+#[test]
+fn breaking_commit_after_the_release_pull_request_blocks_the_patch_tag() {
+    let temp_dir = write_fixture_repo();
+    let mut server = Server::new();
+    let range = mock_range(&mut server, 1, TAGS_V022, "v0.2.2", BREAKING_AFTER_RELEASE);
+    let no_writes = mock_no_writes(&mut server);
+
+    let error = publisher(&server)
+        .release(&create_pr_options(temp_dir.path(), false))
+        .expect_err("the stale patch bump must not be tagged");
+
+    assert!(error.to_string().contains("required version 1.0.0"), "{error}");
+    assert_all(&range);
+    assert_all(&no_writes);
+}
+
+#[test]
+fn incomplete_release_range_blocks_tagging_the_manifest_version() {
+    let temp_dir = write_fixture_repo();
+    let mut server = Server::new();
+    let range =
+        mock_range(&mut server, 1, TAGS_V022, "v0.2.2", r#"{"total_commits":1,"commits":[]}"#);
+    let no_writes = mock_no_writes(&mut server);
+
+    let error = publisher(&server)
+        .release(&create_pr_options(temp_dir.path(), false))
+        .expect_err("an incomplete comparison cannot establish the required version");
+
+    assert!(error.to_string().contains("incomplete commit range"), "{error}");
+    assert_all(&range);
+    assert_all(&no_writes);
 }
 
 /// A second run for the same head (the CI and Security completions each start

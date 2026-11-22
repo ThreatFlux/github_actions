@@ -10,8 +10,8 @@
 use mockito::{Matcher, Mock, Server, ServerGuard};
 
 use super::{
-    CHORE_ONLY, FEAT_AND_FIX, mock_analysis, mock_head_ref, mock_no_mutations, mock_tag_lookup,
-    mock_tags, options, publisher, write_fixture_repo,
+    CHORE_ONLY, FEAT_AND_FIX, FIX_THEN_MERGED_RELEASE, mock_analysis, mock_head_ref,
+    mock_no_mutations, mock_tag_lookup, mock_tags, options, publisher, write_fixture_repo,
 };
 use crate::{BumpLevel, ReleaseAction, ReleaseOptions, ReleaseOutcome, ReleasePhase};
 
@@ -191,7 +191,7 @@ fn dry_run_records_the_merged_release_tag_action() {
             vec![
                 mock_head_ref(server, "basecommitsha", 1),
                 mock_tags(server, r#"[{"name":"v0.2.2","commit":{"sha":"tagsha"}}]"#),
-                mock_compare_from(server, "v0.2.2", FEAT_AND_FIX),
+                mock_compare_from(server, "v0.2.2", FIX_THEN_MERGED_RELEASE),
                 mock_tag_lookup(server, "v0.2.3", 404, r#"{"message":"Not Found"}"#),
             ]
         },
